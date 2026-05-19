@@ -1,1 +1,120 @@
-// history module
+// src/history.rs
+use crate::project::{Project, Rgba};
+
+pub const MAX_UNDO: usize = 100;
+
+#[derive(Debug, Clone)]
+pub enum Command {
+    PaintPixels {
+        animation_id: usize,
+        frame_id: usize,
+        layer_id: usize,
+        edits: Vec<(u32, u32, Rgba, Rgba)>, // (x, y, old, new)
+    },
+    AddFrame {
+        animation_id: usize,
+        index: usize,
+    },
+    DeleteFrame {
+        animation_id: usize,
+        index: usize,
+        snapshot: crate::project::Frame,
+    },
+    AddLayer {
+        animation_id: usize,
+        frame_id: usize,
+        index: usize,
+    },
+    DeleteLayer {
+        animation_id: usize,
+        frame_id: usize,
+        index: usize,
+        snapshot: crate::project::Layer,
+    },
+}
+
+pub struct UndoStack {
+    commands: Vec<Command>,
+    cursor: usize, // points to next empty slot
+}
+
+impl UndoStack {
+    pub fn new() -> Self {
+        Self { commands: Vec::new(), cursor: 0 }
+    }
+
+    pub fn can_undo(&self) -> bool { self.cursor > 0 }
+    pub fn can_redo(&self) -> bool { self.cursor < self.commands.len() }
+
+    pub fn push(&mut self, cmd: Command) {
+        // Drop any redo history
+        self.commands.truncate(self.cursor);
+        self.commands.push(cmd);
+        if self.commands.len() > MAX_UNDO {
+            self.commands.remove(0);
+        } else {
+            self.cursor += 1;
+        }
+    }
+
+    pub fn undo(&mut self, project: &mut Project) {
+        if !self.can_undo() { return; }
+        self.cursor -= 1;
+        let cmd = self.commands[self.cursor].clone();
+        apply_command(project, &cmd, Direction::Backward);
+    }
+
+    pub fn redo(&mut self, project: &mut Project) {
+        if !self.can_redo() { return; }
+        let cmd = self.commands[self.cursor].clone();
+        self.cursor += 1;
+        apply_command(project, &cmd, Direction::Forward);
+    }
+}
+
+enum Direction { Forward, Backward }
+
+fn apply_command(project: &mut Project, cmd: &Command, dir: Direction) {
+    match cmd {
+        Command::PaintPixels { animation_id, frame_id, layer_id, edits } => {
+            let layer = &mut project.animations[*animation_id]
+                .frames[*frame_id]
+                .layers[*layer_id];
+            for &(x, y, old, new) in edits {
+                let color = match dir { Direction::Forward => new, Direction::Backward => old };
+                layer.set_pixel(x, y, color);
+            }
+            project.animations[*animation_id].frames[*frame_id].dirty = true;
+        }
+        Command::AddFrame { animation_id, index } => {
+            let (w, h) = (project.canvas_width, project.canvas_height);
+            let anim = &mut project.animations[*animation_id];
+            match dir {
+                Direction::Forward  => anim.frames.insert(*index, crate::project::Frame::new(w, h)),
+                Direction::Backward => { anim.frames.remove(*index); }
+            }
+        }
+        Command::DeleteFrame { animation_id, index, snapshot } => {
+            let anim = &mut project.animations[*animation_id];
+            match dir {
+                Direction::Forward  => { anim.frames.remove(*index); }
+                Direction::Backward => anim.frames.insert(*index, snapshot.clone()),
+            }
+        }
+        Command::AddLayer { animation_id, frame_id, index } => {
+            let (w, h) = (project.canvas_width, project.canvas_height);
+            let frame = &mut project.animations[*animation_id].frames[*frame_id];
+            match dir {
+                Direction::Forward  => frame.layers.insert(*index, crate::project::Layer::new("Layer".into(), w, h)),
+                Direction::Backward => { frame.layers.remove(*index); }
+            }
+        }
+        Command::DeleteLayer { animation_id, frame_id, index, snapshot } => {
+            let frame = &mut project.animations[*animation_id].frames[*frame_id];
+            match dir {
+                Direction::Forward  => { frame.layers.remove(*index); }
+                Direction::Backward => frame.layers.insert(*index, snapshot.clone()),
+            }
+        }
+    }
+}
