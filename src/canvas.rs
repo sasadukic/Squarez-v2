@@ -51,13 +51,13 @@ impl CanvasState {
             canvas_rect.min + self.offset,
             Vec2::new(width as f32 * self.zoom, height as f32 * self.zoom),
         );
-        // Checkerboard
+        // Checkerboard — use panel/surface so transparency is visible but subtle
         let cell = self.zoom.max(1.0);
         let cols = (canvas_screen_rect.width() / cell).ceil() as u32;
         let rows = (canvas_screen_rect.height() / cell).ceil() as u32;
         for row in 0..rows {
             for col in 0..cols {
-                let color = if (row + col) % 2 == 0 { theme.mid } else { theme.light };
+                let color = if (row + col) % 2 == 0 { theme.panel } else { theme.surface };
                 let rect = Rect::from_min_size(
                     Pos2::new(
                         canvas_screen_rect.min.x + col as f32 * cell,
