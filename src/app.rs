@@ -118,6 +118,10 @@ pub struct App {
     sidebar_press_start: Option<(Panel, f64)>,
     // Icon row rects recorded each frame for hit-testing (screen space)
     sidebar_icon_rects: Vec<(Panel, egui::Rect)>,
+    /// Sprite sheet for the animated logo (16 frames horizontal, 16×16 each). Loaded on first draw.
+    logo_sprite: Option<egui::TextureHandle>,
+    /// When `Some(start_time)`, the logo plays its animation once. Cleared after last frame.
+    logo_anim_start: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -264,6 +268,8 @@ impl App {
             sidebar_drag_over_idx: None,
             sidebar_press_start: None,
             sidebar_icon_rects: Vec::new(),
+            logo_sprite: None,
+            logo_anim_start: None,
         }
     }
 
@@ -395,7 +401,7 @@ impl App {
                 ui.set_height(TOP_BAR_HEIGHT);
                 ui.spacing_mut().item_spacing = Vec2::ZERO;
                 ui.horizontal(|ui| {
-                    draw_logo(ui, &theme);
+                    self.draw_logo(ui, &theme);
                     ui.add_space(MENU_LEFT_GAP);
 
                     // Compute screen-space rects for all menu zones (before laying them out)
@@ -1288,13 +1294,14 @@ impl App {
         }
 
         // Visible: section_header handles collapse/expand (same pattern as Layers/Animations)
-        let (show, _, _) = section_header(
+        let (show, _, _) = section_header_with_add(
             ui,
             &self.theme,
             &mut self.ui_state,
             Panel::Color,
             egui::include_image!("../assets/icons/color_mixer.svg"),
             None,
+            false,  // No add button for Color picker
         );
         if !show { return; }
 
@@ -3050,6 +3057,77 @@ impl App {
                 });
             });
     }
+
+    /// Animated logo (sprite sheet, 16 frames horizontal, 16×16 each).
+    ///
+    /// Frame 0 is shown by default. Clicking the icon OR the "SQUAREZ" text
+    /// plays frames 0..15 once at 30 FPS, then returns to frame 0.
+    fn draw_logo(&mut self, ui: &mut egui::Ui, theme: &Theme) {
+        // Lazy-load the sprite sheet once.
+        if self.logo_sprite.is_none() {
+            let bytes = include_bytes!("../assets/logo_sprite.png");
+            if let Ok(img) = image::load_from_memory(bytes) {
+                let rgba = img.to_rgba8();
+                let (w, h) = (rgba.width() as usize, rgba.height() as usize);
+                let color_image = egui::ColorImage::from_rgba_unmultiplied([w, h], rgba.as_raw());
+                self.logo_sprite = Some(ui.ctx().load_texture(
+                    "logo_sprite",
+                    color_image,
+                    egui::TextureOptions::NEAREST,
+                ));
+            }
+        }
+
+        const FRAMES: usize = 16;
+        const FPS: f64 = 21.0;  // 30% slower than 30 FPS
+        let now = ui.ctx().input(|i| i.time);
+        let frame_idx: usize = match self.logo_anim_start {
+            Some(start) => {
+                let elapsed = now - start;
+                let idx = (elapsed * FPS) as usize;
+                if idx >= FRAMES {
+                    self.logo_anim_start = None;
+                    0
+                } else {
+                    idx
+                }
+            }
+            None => 0,
+        };
+        if self.logo_anim_start.is_some() {
+            ui.ctx().request_repaint();
+        }
+
+        ui.allocate_ui_with_layout(
+            Vec2::new(BRAND_WIDTH, TOP_BAR_HEIGHT),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.spacing_mut().item_spacing = Vec2::ZERO;
+                ui.add_space(10.0);
+
+                // Icon: 20×20 clickable rect, painted with one sprite frame.
+                let (icon_rect, icon_resp) = ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::click());
+                if let Some(tex) = &self.logo_sprite {
+                    let u0 = frame_idx as f32 / FRAMES as f32;
+                    let u1 = (frame_idx + 1) as f32 / FRAMES as f32;
+                    let uv = egui::Rect::from_min_max(Pos2::new(u0, 0.0), Pos2::new(u1, 1.0));
+                    ui.painter().image(tex.id(), icon_rect, uv, Color32::WHITE);
+                }
+
+                ui.add_space(7.0);
+
+                // Text: also clickable.
+                let text = RichText::new("SQUAREZ")
+                    .color(theme.fg)
+                    .font(FontId::new(MENU_FONT_SIZE, FontFamily::Name("bold".into())));
+                let text_resp = ui.add(egui::Label::new(text).sense(egui::Sense::click()));
+
+                if (icon_resp.clicked() || text_resp.clicked()) && self.logo_anim_start.is_none() {
+                    self.logo_anim_start = Some(now);
+                }
+            },
+        );
+    }
 }
 
 impl eframe::App for App {
@@ -3113,23 +3191,6 @@ fn rich(text: &str, color: Color32, size: f32) -> RichText {
         .color(color)
 }
 
-fn draw_logo(ui: &mut egui::Ui, theme: &Theme) {
-    ui.allocate_ui_with_layout(Vec2::new(BRAND_WIDTH, TOP_BAR_HEIGHT), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-        ui.spacing_mut().item_spacing = Vec2::ZERO;
-        ui.add_space(10.0);
-        ui.add(
-            Image::new(egui::include_image!("../assets/logo.png"))
-                .fit_to_exact_size(Vec2::splat(20.0)),
-        );
-        ui.add_space(7.0);
-        ui.label(
-            RichText::new("SQUAREZ")
-                .color(theme.fg)
-                .font(FontId::new(MENU_FONT_SIZE, FontFamily::Name("bold".into()))),
-        );
-    });
-}
-
 fn top_menu_zone(ui: &mut egui::Ui, theme: &Theme, label: &str, selected: bool) -> egui::Response {
     let size = Vec2::new(menu_zone_width(label), TOP_BAR_HEIGHT);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
@@ -3191,6 +3252,10 @@ fn window_check(visible: bool) -> Option<&'static str> {
 
 /// Returns `(show_content, add_clicked)`.
 fn section_header(ui: &mut egui::Ui, theme: &Theme, state: &mut UiState, panel: Panel, icon: ImageSource<'static>, extra_btn: Option<ImageSource<'static>>) -> (bool, bool, bool) {
+    section_header_with_add(ui, theme, state, panel, icon, extra_btn, true)
+}
+
+fn section_header_with_add(ui: &mut egui::Ui, theme: &Theme, state: &mut UiState, panel: Panel, icon: ImageSource<'static>, extra_btn: Option<ImageSource<'static>>, show_add: bool) -> (bool, bool, bool) {
     if !state.is_visible(panel) {
         return (false, false, false);
     }
@@ -3210,13 +3275,15 @@ fn section_header(ui: &mut egui::Ui, theme: &Theme, state: &mut UiState, panel: 
             state.toggle_collapsed(panel);
         }
         if !collapsed {
-            // Right: "+" add button
-            let plus_rect = egui::Rect::from_center_size(Pos2::new(rect.right() - 8.0, rect.center().y), Vec2::splat(16.0));
-            let plus_resp = ui.interact(plus_rect, egui::Id::new(("hdr_plus", panel)), egui::Sense::click());
-            let plus_color = if plus_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
-            painter.text(plus_rect.center(), egui::Align2::CENTER_CENTER, "+", FontId::new(16.0, FontFamily::Proportional), plus_color);
-            if plus_resp.clicked() {
-                add_clicked = true;
+            // Right: "+" add button (optional)
+            if show_add {
+                let plus_rect = egui::Rect::from_center_size(Pos2::new(rect.right() - 8.0, rect.center().y), Vec2::splat(16.0));
+                let plus_resp = ui.interact(plus_rect, egui::Id::new(("hdr_plus", panel)), egui::Sense::click());
+                let plus_color = if plus_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                painter.text(plus_rect.center(), egui::Align2::CENTER_CENTER, "+", FontId::new(16.0, FontFamily::Proportional), plus_color);
+                if plus_resp.clicked() {
+                    add_clicked = true;
+                }
             }
             // Optional extra button (folder/group icon), placed left of "+"
             if let Some(extra_icon) = extra_btn {
