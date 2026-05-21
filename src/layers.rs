@@ -7,6 +7,8 @@ pub fn composite_frame(frame: &Frame, width: u32, height: u32) -> Vec<u8> {
     let mut out = vec![0u8; size];
     for layer in &frame.layers {
         if !layer.visible { continue; }
+        if layer.is_group { continue; } // group layers have no pixel data
+        if layer.pixels.is_empty() { continue; }
         let alpha_factor = layer.opacity as f32 / 255.0;
         for i in 0..(width * height) as usize {
             let idx = i * 4;
@@ -52,7 +54,7 @@ mod tests {
 
     #[test]
     fn opaque_layer_covers_transparent_background() {
-        let mut frame = Frame::new(2, 2);
+        let mut frame = Frame::new(2, 2, 1);
         frame.layers[0].set_pixel(0, 0, [255, 0, 0, 255]);
         let result = composite_frame(&frame, 2, 2);
         assert_eq!(&result[0..4], &[255, 0, 0, 255]);
@@ -60,7 +62,7 @@ mod tests {
 
     #[test]
     fn invisible_layer_is_skipped() {
-        let mut frame = Frame::new(2, 2);
+        let mut frame = Frame::new(2, 2, 1);
         frame.layers[0].visible = false;
         frame.layers[0].set_pixel(0, 0, [255, 0, 0, 255]);
         let result = composite_frame(&frame, 2, 2);

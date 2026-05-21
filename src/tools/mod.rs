@@ -25,6 +25,7 @@ pub enum ActiveTool {
     Line,
     RectSelect,
     Move,
+    Zoom,
 }
 
 #[derive(Debug, Clone)]

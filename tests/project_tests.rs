@@ -20,6 +20,12 @@ fn frame_default_has_one_layer() {
 }
 
 #[test]
+fn layer_starts_unlocked() {
+    let layer = Layer::new("Layer 1".to_string(), 32, 32);
+    assert!(!layer.locked);
+}
+
+#[test]
 fn layer_pixel_buffer_correct_size() {
     let layer = Layer::new("Layer 1".to_string(), 32, 32);
     assert_eq!(layer.pixels.len(), 32 * 32 * 4);

@@ -60,3 +60,21 @@ fn push_clears_redo_stack() {
     stack.push(Command::PaintPixels { animation_id:0, frame_id:0, layer_id:0, edits: vec![(1,0,[0,0,0,0],[2,0,0,255])] });
     assert!(!stack.can_redo());
 }
+
+#[test]
+fn duplicate_frame_can_be_undone_and_redone_with_snapshot() {
+    let mut project = Project::new(8, 8, "t".to_string());
+    project.animations[0].frames[0].layers[0].set_pixel(2, 2, [7, 8, 9, 255]);
+    let snapshot = project.animations[0].frames[0].clone();
+    let mut stack = UndoStack::new();
+
+    project.animations[0].frames.insert(1, snapshot.clone());
+    stack.push(Command::DuplicateFrame { animation_id: 0, index: 1, snapshot });
+
+    stack.undo(&mut project);
+    assert_eq!(project.animations[0].frames.len(), 1);
+
+    stack.redo(&mut project);
+    assert_eq!(project.animations[0].frames.len(), 2);
+    assert_eq!(project.animations[0].frames[1].layers[0].get_pixel(2, 2), [7, 8, 9, 255]);
+}

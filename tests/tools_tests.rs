@@ -1,6 +1,6 @@
 // tests/tools_tests.rs
-use squarez::tools::{ToolInput, apply_pencil, apply_eraser, apply_fill};
-use squarez::project::{Layer, Project};
+use squarez::tools::{apply_pencil, apply_eraser, apply_fill};
+use squarez::project::Layer;
 
 #[test]
 fn pencil_paints_single_pixel() {

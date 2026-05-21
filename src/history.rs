@@ -20,10 +20,17 @@ pub enum Command {
         index: usize,
         snapshot: crate::project::Frame,
     },
-    AddLayer {
+    DuplicateFrame {
         animation_id: usize,
-        frame_id: usize,
         index: usize,
+        snapshot: crate::project::Frame,
+    },
+    /// Adds/removes a blank layer at `index` across ALL animations and ALL frames.
+    /// Keeps layer structure in sync so every animation always has the same layers.
+    AddLayer {
+        index: usize,
+        name: String,
+        id: u64,
     },
     DeleteLayer {
         animation_id: usize,
@@ -90,7 +97,7 @@ fn apply_command(project: &mut Project, cmd: &Command, dir: Direction) {
             let (w, h) = (project.canvas_width, project.canvas_height);
             let anim = &mut project.animations[*animation_id];
             match dir {
-                Direction::Forward  => anim.frames.insert(*index, crate::project::Frame::new(w, h)),
+                Direction::Forward  => anim.frames.insert(*index, crate::project::Frame::new(w, h, 0)),
                 Direction::Backward => { anim.frames.remove(*index); }
             }
         }
@@ -101,12 +108,23 @@ fn apply_command(project: &mut Project, cmd: &Command, dir: Direction) {
                 Direction::Backward => anim.frames.insert(*index, snapshot.clone()),
             }
         }
-        Command::AddLayer { animation_id, frame_id, index } => {
-            let (w, h) = (project.canvas_width, project.canvas_height);
-            let frame = &mut project.animations[*animation_id].frames[*frame_id];
+        Command::DuplicateFrame { animation_id, index, snapshot } => {
+            let anim = &mut project.animations[*animation_id];
             match dir {
-                Direction::Forward  => frame.layers.insert(*index, crate::project::Layer::new("Layer".into(), w, h)),
-                Direction::Backward => { frame.layers.remove(*index); }
+                Direction::Forward => anim.frames.insert(*index, snapshot.clone()),
+                Direction::Backward => { anim.frames.remove(*index); }
+            }
+        }
+        Command::AddLayer { index, name, id } => {
+            let (w, h) = (project.canvas_width, project.canvas_height);
+            // Layer structure is global: every animation and every frame stays in sync.
+            for anim in &mut project.animations {
+                for frame in &mut anim.frames {
+                    match dir {
+                        Direction::Forward  => frame.layers.insert(*index, crate::project::Layer::new(name.clone(), w, h, *id)),
+                        Direction::Backward => { if frame.layers.len() > *index { frame.layers.remove(*index); } }
+                    }
+                }
             }
         }
         Command::DeleteLayer { animation_id, frame_id, index, snapshot } => {

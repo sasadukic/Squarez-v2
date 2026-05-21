@@ -14,7 +14,7 @@ pub struct ColorState {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum PickerMode { Hsv, OkLab }
+pub enum PickerMode { Hsv, OkLab, Rgb }
 
 impl Default for ColorState {
     fn default() -> Self {

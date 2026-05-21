@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 eframe = { version = "0.31", features = ["default"] }
 egui = "0.31"
+egui_extras = { version = "0.31", features = ["svg", "image"] }
 serde = { version = "1", features = ["derive"] }
 bincode = "1"
 lz4_flex = { version = "0.11", features = ["frame"] }
@@ -13,6 +14,9 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 gif = "0.13"
 palette = { version = "0.7", features = ["std"] }
 rfd = "0.15"
+
+[build-dependencies]
+winres = "0.1"
 
 [profile.release]
 opt-level = 3

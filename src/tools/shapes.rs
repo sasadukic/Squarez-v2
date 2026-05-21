@@ -2,7 +2,9 @@
 use crate::project::{Layer, Rgba};
 use super::{PixelEdit, apply_pencil};
 
-pub fn apply_rect(layer: &Layer, x0: u32, y0: u32, x1: u32, y1: u32, color: Rgba, filled: bool) -> Vec<PixelEdit> {
+/// Draw a filled or outlined rectangle.  All coordinates are unconstrained i32 —
+/// pixels that land outside the canvas are discarded by apply_pencil's bounds check.
+pub fn apply_rect(layer: &Layer, x0: i32, y0: i32, x1: i32, y1: i32, color: Rgba, filled: bool) -> Vec<PixelEdit> {
     let mut edits = Vec::new();
     let (lx, rx) = (x0.min(x1), x0.max(x1));
     let (ly, ry) = (y0.min(y1), y0.max(y1));
@@ -10,16 +12,24 @@ pub fn apply_rect(layer: &Layer, x0: u32, y0: u32, x1: u32, y1: u32, color: Rgba
         for x in lx..=rx {
             let on_border = x == lx || x == rx || y == ly || y == ry;
             if filled || on_border {
-                edits.extend(apply_pencil(layer, x, y, color));
+                if x >= 0 && y >= 0 {
+                    edits.extend(apply_pencil(layer, x as u32, y as u32, color));
+                }
             }
         }
     }
     edits
 }
 
-pub fn apply_ellipse(layer: &Layer, cx: u32, cy: u32, rx: u32, ry: u32, color: Rgba, filled: bool) -> Vec<PixelEdit> {
+/// Draw a filled or outlined ellipse.  All coordinates are unconstrained i32.
+pub fn apply_ellipse(layer: &Layer, cx: i32, cy: i32, rx: i32, ry: i32, color: Rgba, filled: bool) -> Vec<PixelEdit> {
     let mut edits = Vec::new();
-    let (cx, cy, rx, ry) = (cx as i32, cy as i32, rx as i32, ry as i32);
+    if rx == 0 && ry == 0 {
+        if cx >= 0 && cy >= 0 {
+            edits.extend(apply_pencil(layer, cx as u32, cy as u32, color));
+        }
+        return edits;
+    }
     for dy in -ry..=ry {
         for dx in -rx..=rx {
             let inside = (dx * dx) as f32 / (rx * rx) as f32 + (dy * dy) as f32 / (ry * ry) as f32 <= 1.0;
@@ -43,6 +53,7 @@ pub fn apply_ellipse(layer: &Layer, cx: u32, cy: u32, rx: u32, ry: u32, color: R
     edits
 }
 
-pub fn apply_line(layer: &Layer, x0: u32, y0: u32, x1: u32, y1: u32, color: Rgba) -> Vec<PixelEdit> {
+/// Draw a line between two unconstrained i32 canvas coordinates.
+pub fn apply_line(layer: &Layer, x0: i32, y0: i32, x1: i32, y1: i32, color: Rgba) -> Vec<PixelEdit> {
     super::bresenham_line(layer, x0, y0, x1, y1, color)
 }
