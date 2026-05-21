@@ -89,13 +89,14 @@ impl CanvasState {
         if scroll == 0.0 || !pointer_pos.is_some_and(|pos| canvas_rect.contains(pos)) {
             return;
         }
-        let factor = if scroll > 0.0 { 1.1f32 } else { 1.0 / 1.1 };
+        let factor = if scroll > 0.0 { 1.05f32 } else { 1.0 / 1.05 };
         self.zoom = (self.zoom * factor).clamp(1.0, 64.0);
     }
 
     /// Draw checkerboard background + canvas texture
     pub fn draw(&self, painter: &Painter, canvas_rect: Rect, width: u32, height: u32, theme: &Theme) {
         let canvas_screen_rect = self.art_rect(canvas_rect, width, height);
+        let clipped = painter.with_clip_rect(canvas_screen_rect);
         // Checkerboard — use panel/surface so transparency is visible but subtle
         let cell = self.zoom.max(1.0);
         let cols = (canvas_screen_rect.width() / cell).ceil() as u32;
@@ -110,12 +111,12 @@ impl CanvasState {
                     ),
                     Vec2::splat(cell),
                 );
-                painter.rect_filled(rect, 0.0, color);
+                clipped.rect_filled(rect, 0.0, color);
             }
         }
         // Canvas texture
         if let Some(tex) = &self.texture {
-            painter.image(tex.id(), canvas_screen_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+            clipped.image(tex.id(), canvas_screen_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
         }
     }
 

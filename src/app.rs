@@ -4,7 +4,8 @@ use egui::{CentralPanel, Color32, FontFamily, FontId, Frame, Image, ImageSource,
 use crate::animation::{FrameThumbnail, PlaybackState};
 use crate::canvas::CanvasState;
 use crate::color::hsv::{hsv_to_rgba, rgba_to_hsv};
-use crate::color::oklab::{oklab_to_rgba, rgba_to_oklab};
+use crate::color::oklab::{oklab_to_rgba, rgba_to_oklab, oklch_to_rgba, rgba_to_oklch, generate_ramp, generate_ramp_hsv};
+use crate::color::RampAnchor;
 use crate::color::{ColorState, PickerMode};
 use crate::history::{Command, UndoStack};
 use crate::io::export::{export, ExportFormat, ExportOptions};
@@ -19,6 +20,13 @@ use crate::top_bar::{
 use crate::tools::{apply_eraser, apply_eyedropper, apply_ellipse, apply_fill, apply_line, apply_pencil, apply_rect, ActiveTool};
 use crate::ui_metrics::{COLOR_SLIDER_TRACK_HEIGHT, RIGHT_SECTION_STACK_GAP};
 use crate::ui_state::{Panel, UiState};
+
+/// Which slider parameter the right-click popup controls.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SliderParam {
+    HueShift,
+    SatCurve,
+}
 
 pub struct App {
     pub project: Project,
@@ -39,10 +47,26 @@ pub struct App {
     new_height: u32,
     new_name: String,
     frame_menu: Option<(usize, Pos2, f64)>,  // (frame_idx, screen_pos, opened_at_time)
+    /// Right-click menu on OKL tab: position + time it was opened.
+    ramp_size_menu: Option<(Pos2, f64)>,
+    /// Right-click menu on a slider label: which param + pos + opened time.
+    slider_param_menu: Option<(SliderParam, Pos2, f64)>,
     layer_ctx_menu: Option<(usize, Pos2, f64)>,  // (layer_idx, screen_pos, opened_at_time)
     top_menu_open: Option<(TopMenu, Pos2)>,
     toolbar_anim_y: f32,
     toolbar_anim_vel: f32,
+    // Currently displayed tool for each grouped slot (persisted)
+    pen_group_current: ActiveTool,    // Pencil or Eraser
+    bucket_group_current: ActiveTool, // Fill or Eyedropper
+    shape_group_current: ActiveTool,  // Rectangle | Ellipse | Line
+    select_group_current: ActiveTool, // RectSelect or Move
+    // Which group submenu is open (slot index 0=pen, 1=bucket, 2=shape, 3=select), if any
+    open_tool_submenu: Option<usize>,
+    pen_slot_rect: Option<egui::Rect>,
+    bucket_slot_rect: Option<egui::Rect>,
+    shape_slot_rect: Option<egui::Rect>,
+    select_slot_rect: Option<egui::Rect>,
+    alt_was_down: bool,
     top_menu_hover_left: Option<f64>,
     top_menu_opened_at: f64,
     // Spring-animated sliding highlight in the top menu bar
@@ -70,10 +94,30 @@ pub struct App {
     layer_drag_over: Option<usize>,
     // Manual double-click detection for zoom tool
     last_zoom_click_time: f64,
+    // Double-click on zoom tool button → fit canvas on next canvas render
+    last_zoom_tool_btn_click: f64,
+    pending_zoom_fit: bool,
     // Manual double-click detection for layer rename: (layer_idx, click_time)
     last_layer_click: Option<(usize, f64)>,
     // Real-time preview pixels for shape tools (overlaid during drag, cleared on commit)
     shape_preview: Vec<(u32, u32, Rgba)>,
+    // Accumulated scroll delta for timeline frame navigation (slows down scroll speed)
+    timeline_scroll_accum: f32,
+    // View > Show sub-menu open state
+    view_show_open: bool,
+    // Screen-space right-top of the "Show" row, used to position side submenu
+    view_show_pos: Option<egui::Pos2>,
+    // Alpha for the anim toolbar fade (0 = hidden, 1 = fully visible)
+    anim_toolbar_alpha: f32,
+    // Sidebar section order (drag-to-reorder)
+    sidebar_order: Vec<Panel>,
+    // Drag-to-reorder state (only active in narrow/all-collapsed mode with Cmd held)
+    sidebar_drag: Option<Panel>,
+    sidebar_drag_over_idx: Option<usize>,
+    // Long-press timer: (panel under pointer, time of initial press)
+    sidebar_press_start: Option<(Panel, f64)>,
+    // Icon row rects recorded each frame for hit-testing (screen space)
+    sidebar_icon_rects: Vec<(Panel, egui::Rect)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,6 +141,23 @@ impl TopMenu {
             Self::Windows => "Windows",
         }
     }
+
+    /// Pixel width of this menu's hit zone in the top bar.
+    fn zone_width(self) -> f32 {
+        match self {
+            Self::File | Self::Edit => 38.0, // icon buttons, no text
+            _ => menu_zone_width(self.label()),
+        }
+    }
+}
+
+
+const LAYOUT_STORAGE_KEY: &str = "squarez_layout_v1";
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct LayoutState {
+    ui_state: UiState,
+    sidebar_order: Vec<Panel>,
 }
 
 impl App {
@@ -104,6 +165,11 @@ impl App {
         // 1.5× zoom on top of OS DPI scaling for 4K displays.
         cc.egui_ctx.set_zoom_factor(1.5);
         egui_extras::install_image_loaders(&cc.egui_ctx);
+
+        // Load persisted layout (panel visibility, collapse, order) if available
+        let layout: Option<LayoutState> = cc.storage
+            .and_then(|s| s.get_string(LAYOUT_STORAGE_KEY))
+            .and_then(|json| serde_json::from_str(&json).ok());
         load_fonts(&cc.egui_ctx);
         let project = Project::new(16, 16, "Untitled".to_string());
         let thumbnails = project
@@ -126,7 +192,7 @@ impl App {
             playback: PlaybackState::default(),
             thumbnails,
             current_path: None,
-            ui_state: UiState::default(),
+            ui_state: layout.as_ref().map(|l| l.ui_state.clone()).unwrap_or_default(),
             drag_start: None,
             stroke_edits: Vec::new(),
             canvas_dirty: true,
@@ -135,9 +201,21 @@ impl App {
             new_height: 16,
             new_name: "Untitled".to_string(),
             frame_menu: None,
+            ramp_size_menu: None,
+            slider_param_menu: None,
             layer_ctx_menu: None,            top_menu_open: None,
             toolbar_anim_y: 0.0,
             toolbar_anim_vel: 0.0,
+            pen_group_current: ActiveTool::Pencil,
+            bucket_group_current: ActiveTool::Fill,
+            shape_group_current: ActiveTool::Rectangle { filled: false },
+            select_group_current: ActiveTool::RectSelect,
+            open_tool_submenu: None,
+            pen_slot_rect: None,
+            bucket_slot_rect: None,
+            shape_slot_rect: None,
+            select_slot_rect: None,
+            alt_was_down: false,
             top_menu_hover_left: None,
             top_menu_opened_at: 0.0,
             menu_anim_x: 0.0,
@@ -156,8 +234,19 @@ impl App {
             layer_drag: None,
             layer_drag_over: None,
             last_zoom_click_time: -1.0,
+            last_zoom_tool_btn_click: -1.0,
+            pending_zoom_fit: false,
             last_layer_click: None,
             shape_preview: Vec::new(),
+            timeline_scroll_accum: 0.0,
+            view_show_open: false,
+            view_show_pos: None,
+            anim_toolbar_alpha: 1.0,
+            sidebar_order: layout.map(|l| l.sidebar_order).unwrap_or_else(|| vec![Panel::Palette, Panel::Color, Panel::Layers, Panel::Animations, Panel::Preview]),
+            sidebar_drag: None,
+            sidebar_drag_over_idx: None,
+            sidebar_press_start: None,
+            sidebar_icon_rects: Vec::new(),
         }
     }
 
@@ -188,17 +277,55 @@ impl App {
 
     fn active_tool_index(&self) -> usize {
         match self.active_tool {
-            ActiveTool::Pencil              => 0,
-            ActiveTool::Eraser              => 1,
-            ActiveTool::Fill                => 2,
-            ActiveTool::Eyedropper          => 3,
-            ActiveTool::Rectangle { .. }    => 4,
-            ActiveTool::Ellipse { .. }      => 5,
-            ActiveTool::Line                => 6,
-            ActiveTool::RectSelect          => 7,
-            ActiveTool::Move                => 8,
-            ActiveTool::Zoom                => 9,
+            ActiveTool::Pencil | ActiveTool::Eraser           => 0, // pen group
+            ActiveTool::Fill   | ActiveTool::Eyedropper       => 1, // bucket group
+            ActiveTool::Rectangle { .. }
+            | ActiveTool::Ellipse { .. }
+            | ActiveTool::Line                                => 2, // shape group
+            ActiveTool::RectSelect | ActiveTool::Move         => 3, // select group
+            ActiveTool::Zoom                                  => 4,
         }
+    }
+
+    fn is_group_selected(&self, slot: usize) -> bool {
+        match slot {
+            0 => matches!(self.active_tool, ActiveTool::Pencil | ActiveTool::Eraser),
+            1 => matches!(self.active_tool, ActiveTool::Fill | ActiveTool::Eyedropper),
+            2 => matches!(self.active_tool, ActiveTool::Rectangle { .. } | ActiveTool::Ellipse { .. } | ActiveTool::Line),
+            3 => matches!(self.active_tool, ActiveTool::RectSelect | ActiveTool::Move),
+            _ => false,
+        }
+    }
+
+    /// Cycle to the next tool within the current tool's group (Alt-flip).
+    fn cycle_tool_in_group(&mut self) {
+        let new_tool = match &self.active_tool {
+            ActiveTool::Pencil => ActiveTool::Eraser,
+            ActiveTool::Eraser => ActiveTool::Pencil,
+            ActiveTool::Fill => ActiveTool::Eyedropper,
+            ActiveTool::Eyedropper => ActiveTool::Fill,
+            ActiveTool::Rectangle { .. } => ActiveTool::Ellipse { filled: false },
+            ActiveTool::Ellipse { .. } => ActiveTool::Line,
+            ActiveTool::Line => ActiveTool::Rectangle { filled: false },
+            ActiveTool::RectSelect => ActiveTool::Move,
+            ActiveTool::Move => ActiveTool::RectSelect,
+            _ => return,
+        };
+        self.set_active_tool(new_tool);
+    }
+
+    /// Set active tool and sync the group's "current" display.
+    fn set_active_tool(&mut self, t: ActiveTool) {
+        match &t {
+            ActiveTool::Pencil | ActiveTool::Eraser => self.pen_group_current = t.clone(),
+            ActiveTool::Fill | ActiveTool::Eyedropper => self.bucket_group_current = t.clone(),
+            ActiveTool::Rectangle { .. } | ActiveTool::Ellipse { .. } | ActiveTool::Line => {
+                self.shape_group_current = t.clone();
+            }
+            ActiveTool::RectSelect | ActiveTool::Move => self.select_group_current = t.clone(),
+            _ => {}
+        }
+        self.active_tool = t;
     }
 
     fn rebuild_canvas_texture(&mut self, ctx: &egui::Context) {
@@ -240,7 +367,7 @@ impl App {
 
     fn draw_top_bar(&mut self, ctx: &egui::Context) {
         let dt = ctx.input(|i| i.unstable_dt).min(0.05);
-        let all_menus = [TopMenu::File, TopMenu::Edit, TopMenu::View, TopMenu::Layer, TopMenu::Animation, TopMenu::Windows];
+        let all_menus = [TopMenu::File, TopMenu::Edit];
 
         TopBottomPanel::top("top_bar")
             .exact_height(TOP_BAR_HEIGHT)
@@ -259,7 +386,7 @@ impl App {
                     let bar_rect = ui.max_rect(); // full panel rect — correct y/height regardless of cursor
                     let mut x_off = 0.0f32;
                     let menu_rects: Vec<egui::Rect> = all_menus.iter().map(|m| {
-                        let w = menu_zone_width(m.label());
+                        let w = m.zone_width();
                         let r = egui::Rect::from_min_size(
                             Pos2::new(origin_x + x_off, bar_rect.top()),
                             Vec2::new(w, bar_rect.height()),
@@ -310,7 +437,29 @@ impl App {
                     // Lay out the menu zones (no fill drawn inside them)
                     for menu in all_menus.iter() {
                         let selected = self.top_menu_open.is_some_and(|(open, _)| open == *menu);
-                        let response = top_menu_zone(ui, &theme, menu.label(), selected);
+                        let response = if *menu == TopMenu::File {
+                            // File: file.svg icon — use the pre-computed menu_rect so it lines up with the highlight
+                            let i = all_menus.iter().position(|m| m == menu).unwrap();
+                            let zone_rect = menu_rects[i];
+                            let resp = ui.allocate_rect(zone_rect, egui::Sense::click());
+                            let is_active = selected || resp.hovered();
+                            let tint = if is_active { theme.fg } else { theme.fg_desc };
+                            let icon_rect = egui::Rect::from_center_size(zone_rect.center(), Vec2::splat(16.0));
+                            ui.put(icon_rect, Image::new(egui::include_image!("../assets/icons/file.svg")).tint(tint).fit_to_exact_size(Vec2::splat(16.0)));
+                            resp
+                        } else if *menu == TopMenu::Edit {
+                            // Edit: tools.svg icon — use the pre-computed menu_rect so it lines up with the highlight
+                            let i = all_menus.iter().position(|m| m == menu).unwrap();
+                            let zone_rect = menu_rects[i];
+                            let resp = ui.allocate_rect(zone_rect, egui::Sense::click());
+                            let is_active = selected || resp.hovered();
+                            let tint = if is_active { theme.fg } else { theme.fg_desc };
+                            let icon_rect = egui::Rect::from_center_size(zone_rect.center(), Vec2::splat(16.0));
+                            ui.put(icon_rect, Image::new(egui::include_image!("../assets/icons/tools.svg")).tint(tint).fit_to_exact_size(Vec2::splat(16.0)));
+                            resp
+                        } else {
+                            top_menu_zone(ui, &theme, menu.label(), selected)
+                        };
                         if response.clicked() {
                             let pos = Pos2::new(response.rect.left(), response.rect.bottom() + DROPDOWN_TOP_GAP);
                             if selected {
@@ -319,6 +468,7 @@ impl App {
                                 self.top_menu_open    = Some((*menu, pos));
                                 self.top_menu_opened_at = ctx.input(|i| i.time);
                                 self.top_menu_hover_left = None;
+                                self.view_show_open = false;
                                 // Reset dropdown open animation
                                 self.dropdown_clip_h   = 0.0;
                                 self.dropdown_clip_vel = 0.0;
@@ -383,7 +533,10 @@ impl App {
                     })
                     .inner_margin(Margin::same(0))
                     .show(ui, |ui| {
-                        ui.set_width(DROPDOWN_WIDTH);
+                        // File menu sizes to its own content; others use fixed DROPDOWN_WIDTH
+                        if menu != TopMenu::File {
+                            ui.set_width(DROPDOWN_WIDTH);
+                        }
 
                         // Apply clip for open animation.
                         // On frame 1 full_h is 0 → clip to 0 (hides content, but layout still
@@ -404,65 +557,78 @@ impl App {
 
                         match menu {
                             TopMenu::File => {
-                                if dropdown_row(ui, &theme, "New", None, true).clicked() {
-                                    self.show_new_dialog = true;
-                                    close_menu = true;
-                                }
-                                if dropdown_row(ui, &theme, "Open", None, true).clicked() {
-                                    if let Some(path) = rfd_open() {
-                                        if let Ok(p) = load_sqr(&path) {
-                                            self.project = p;
-                                            self.canvas_dirty = true;
-                                            self.current_path = Some(path);
-                                        }
-                                    }
-                                    close_menu = true;
-                                }
-                                if dropdown_row(ui, &theme, "Save project", None, true).clicked() {
-                                    let path = self.current_path.clone().unwrap_or_else(|| std::path::PathBuf::from("untitled.sqr"));
-                                    let _ = save_sqr(&self.project, &path);
-                                    close_menu = true;
-                                }
-                                if dropdown_row(ui, &theme, "Save As", None, true).clicked() {
-                                    if let Some(path) = rfd_save() {
-                                        let _ = save_sqr(&self.project, &path);
-                                        self.current_path = Some(path);
-                                    }
-                                    close_menu = true;
-                                }
-                                if dropdown_row(ui, &theme, "Export PNG", None, true).clicked() {
-                                    let opts = ExportOptions { format: ExportFormat::Png, scale: 1, animation_index: self.project.active_animation };
-                                    let _ = export(&self.project, std::path::Path::new("export.png"), opts);
-                                    close_menu = true;
-                                }
-                                if dropdown_row(ui, &theme, "Export GIF", None, true).clicked() {
-                                    let opts = ExportOptions { format: ExportFormat::Gif, scale: 1, animation_index: self.project.active_animation };
-                                    let _ = export(&self.project, std::path::Path::new("export.gif"), opts);
-                                    close_menu = true;
-                                }
-                                if dropdown_row(ui, &theme, "Export spritesheet", None, true).clicked() {
-                                    let opts = ExportOptions { format: ExportFormat::Spritesheet, scale: 1, animation_index: self.project.active_animation };
-                                    let _ = export(&self.project, std::path::Path::new("spritesheet.png"), opts);
-                                    close_menu = true;
-                                }
-                                if dropdown_row(ui, &theme, "Exit", None, true).clicked() {
-                                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                                }
+                                // Horizontal icon row: New | Open | Save | Exit
+                                // Layout: inner_margin(8) each side + 4×36px buttons + 3×8px gaps = 184px
+                                const BTN: f32 = 36.0;
+                                Frame::new()
+                                    .inner_margin(Margin::same(8))
+                                    .show(ui, |ui| {
+                                        ui.spacing_mut().item_spacing = Vec2::splat(8.0);
+                                        ui.horizontal(|ui| {
+                                            // New
+                                            let (r, resp) = ui.allocate_exact_size(Vec2::splat(BTN), egui::Sense::click());
+                                            if resp.hovered() { ui.painter().rect_filled(r, 0.0, theme.accent); }
+                                            let tint = if resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                                            ui.put(egui::Rect::from_center_size(r.center(), Vec2::splat(20.0)),
+                                                Image::new(egui::include_image!("../assets/icons/new.svg")).tint(tint).fit_to_exact_size(Vec2::splat(20.0)));
+                                            if resp.clicked() { self.show_new_dialog = true; close_menu = true; }
+
+                                            // Open
+                                            let (r, resp) = ui.allocate_exact_size(Vec2::splat(BTN), egui::Sense::click());
+                                            if resp.hovered() { ui.painter().rect_filled(r, 0.0, theme.accent); }
+                                            let tint = if resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                                            ui.put(egui::Rect::from_center_size(r.center(), Vec2::splat(20.0)),
+                                                Image::new(egui::include_image!("../assets/icons/open.svg")).tint(tint).fit_to_exact_size(Vec2::splat(20.0)));
+                                            if resp.clicked() {
+                                                if let Some(path) = rfd_open() {
+                                                    if let Ok(p) = load_sqr(&path) {
+                                                        self.project = p;
+                                                        self.canvas_dirty = true;
+                                                        self.current_path = Some(path);
+                                                    }
+                                                }
+                                                close_menu = true;
+                                            }
+
+                                            // Save
+                                            let (r, resp) = ui.allocate_exact_size(Vec2::splat(BTN), egui::Sense::click());
+                                            if resp.hovered() { ui.painter().rect_filled(r, 0.0, theme.accent); }
+                                            let tint = if resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                                            ui.put(egui::Rect::from_center_size(r.center(), Vec2::splat(20.0)),
+                                                Image::new(egui::include_image!("../assets/icons/save.svg")).tint(tint).fit_to_exact_size(Vec2::splat(20.0)));
+                                            if resp.clicked() {
+                                                let path = self.current_path.clone().unwrap_or_else(|| std::path::PathBuf::from("untitled.sqr"));
+                                                let _ = save_sqr(&self.project, &path);
+                                                close_menu = true;
+                                            }
+
+                                            // Exit
+                                            let (r, resp) = ui.allocate_exact_size(Vec2::splat(BTN), egui::Sense::click());
+                                            if resp.hovered() { ui.painter().rect_filled(r, 0.0, theme.accent); }
+                                            let tint = if resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                                            ui.put(egui::Rect::from_center_size(r.center(), Vec2::splat(20.0)),
+                                                Image::new(egui::include_image!("../assets/icons/exit.svg")).tint(tint).fit_to_exact_size(Vec2::splat(20.0)));
+                                            if resp.clicked() { ctx.send_viewport_cmd(egui::ViewportCommand::Close); }
+                                        });
+                                    });
                             }
                             TopMenu::Edit => {
-                                if dropdown_row(ui, &theme, "Undo", Some("Ctrl+Z"), true).clicked() {
-                                    self.undo_stack.undo(&mut self.project);
-                                    self.canvas_dirty = true;
-                                    close_menu = true;
-                                }
-                                if dropdown_row(ui, &theme, "Redo", Some("Ctrl+Y"), true).clicked() {
-                                    self.undo_stack.redo(&mut self.project);
-                                    self.canvas_dirty = true;
-                                    close_menu = true;
-                                }
+                                dropdown_row(ui, &theme, "Rotate", None, false);
+                                dropdown_row(ui, &theme, "Flip Horizontal", None, false);
+                                dropdown_row(ui, &theme, "Flip Vertical", None, false);
+                                dropdown_row(ui, &theme, "Transform", None, false);
+                                dropdown_row(ui, &theme, "Replace Color", None, false);
                             }
                             TopMenu::View => {
                                 let _ = dropdown_row(ui, &theme, "Zoom with mouse wheel", None, false);
+                                let show_resp = dropdown_row(ui, &theme, "Show ▸", None, true);
+                                if show_resp.clicked() {
+                                    self.view_show_open = !self.view_show_open;
+                                    self.dropdown_full_h = 0.0;
+                                }
+                                // Store right-top of the Show row so the side submenu can be
+                                // positioned next to it on this and subsequent frames.
+                                self.view_show_pos = Some(show_resp.rect.right_top());
                             }
                             TopMenu::Layer => {
                                 let ai = self.project.active_animation;
@@ -563,6 +729,56 @@ impl App {
             ctx.request_repaint(); // ensure spring ticks
         }
 
+        // ── Side submenu: View > Show ─────────────────────────────────────
+        let mut side_submenu_rect: Option<egui::Rect> = None;
+        if !close_menu && matches!(menu, TopMenu::View) && self.view_show_open {
+            if let Some(show_top_right) = self.view_show_pos {
+                let sub_pos = Pos2::new(show_top_right.x + 2.0, show_top_right.y);
+                let sub_resp = egui::Area::new(egui::Id::new("view_show_submenu"))
+                    .order(egui::Order::Foreground)
+                    .fixed_pos(sub_pos)
+                    .show(ctx, |ui| {
+                        Frame::new()
+                            .fill(theme.panel)
+                            .corner_radius(egui::CornerRadius::same(DROPDOWN_CORNER_RADIUS))
+                            .shadow(egui::Shadow {
+                                offset: [0, 14],
+                                blur: 36,
+                                spread: 0,
+                                color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
+                            })
+                            .inner_margin(Margin::same(0))
+                            .show(ui, |ui| {
+                                ui.set_width(DROPDOWN_WIDTH);
+                                if dropdown_row(ui, &theme, "Palette", window_check(self.ui_state.is_visible(Panel::Palette)), true).clicked() {
+                                    self.ui_state.toggle_visible(Panel::Palette);
+                                }
+                                if dropdown_row(ui, &theme, "Color Mixer", window_check(self.ui_state.is_visible(Panel::Color)), true).clicked() {
+                                    self.ui_state.toggle_visible(Panel::Color);
+                                }
+                                if dropdown_row(ui, &theme, "Preview", window_check(self.ui_state.is_visible(Panel::Preview)), true).clicked() {
+                                    self.ui_state.toggle_visible(Panel::Preview);
+                                }
+                                if dropdown_row(ui, &theme, "Layers", window_check(self.ui_state.is_visible(Panel::Layers)), true).clicked() {
+                                    self.ui_state.toggle_visible(Panel::Layers);
+                                }
+                                if dropdown_row(ui, &theme, "Animations", window_check(self.ui_state.is_visible(Panel::Animations)), true).clicked() {
+                                    self.ui_state.toggle_visible(Panel::Animations);
+                                }
+                                if dropdown_row(ui, &theme, "Timeline", window_check(self.ui_state.is_visible(Panel::Timeline)), true).clicked() {
+                                    self.ui_state.toggle_visible(Panel::Timeline);
+                                }
+                                if dropdown_row(ui, &theme, "Reset layout", None, true).clicked() {
+                                    self.ui_state = UiState::default();
+                                    self.view_show_open = false;
+                                    close_menu = true;
+                                }
+                            });
+                    });
+                side_submenu_rect = Some(sub_resp.response.rect);
+            }
+        }
+
         if close_menu {
             self.top_menu_open = None;
             self.top_menu_hover_left = None;
@@ -576,7 +792,10 @@ impl App {
         let dropdown_rect = area_response.response.rect;
         if menu_age > 0.15 && ctx.input(|i| i.pointer.any_click()) {
             let outside = ctx.input(|i| i.pointer.interact_pos())
-                .map_or(true, |p| !dropdown_rect.contains(p));
+                .map_or(true, |p| {
+                    !dropdown_rect.contains(p)
+                    && !side_submenu_rect.map_or(false, |r| r.contains(p))
+                });
             if outside {
                 self.top_menu_open = None;
                 self.top_menu_hover_left = None;
@@ -586,7 +805,10 @@ impl App {
 
         // Hover timeout: close if mouse has been outside the dropdown for >= 2 s
         let pointer_inside = ctx.input(|i| i.pointer.hover_pos())
-            .map_or(false, |p| dropdown_rect.contains(p));
+            .map_or(false, |p| {
+                dropdown_rect.contains(p)
+                || side_submenu_rect.map_or(false, |r| r.contains(p))
+            });
         if pointer_inside {
             self.top_menu_hover_left = None;
         } else {
@@ -632,7 +854,7 @@ impl App {
                 ui.spacing_mut().item_spacing = Vec2::ZERO;
 
                 // Vertically center the button stack
-                const TOOL_COUNT: f32 = 10.0;
+                const TOOL_COUNT: f32 = 5.0;
                 let tools_h = TOOL_COUNT * 38.0;
                 let top_pad = ((ui.available_height() - tools_h) / 2.0).max(0.0);
                 ui.add_space(top_pad);
@@ -656,43 +878,409 @@ impl App {
                 );
                 ui.painter().with_clip_rect(toolbar_bg).rect_filled(sel_rect, 0.0, self.theme.accent);
 
-                // Tool buttons — transparent fill so accent rect shows through
-                tool_btn(ui, &mut self.active_tool, &self.theme, ActiveTool::Pencil,                    egui::include_image!("../assets/icons/pencil.svg"));
-                tool_btn(ui, &mut self.active_tool, &self.theme, ActiveTool::Eraser,                    egui::include_image!("../assets/icons/eraser.svg"));
-                tool_btn(ui, &mut self.active_tool, &self.theme, ActiveTool::Fill,                      egui::include_image!("../assets/icons/fill.svg"));
-                tool_btn(ui, &mut self.active_tool, &self.theme, ActiveTool::Eyedropper,                egui::include_image!("../assets/icons/eyedropper.svg"));
-                tool_btn(ui, &mut self.active_tool, &self.theme, ActiveTool::Rectangle { filled: false }, egui::include_image!("../assets/icons/rectangle.svg"));
-                tool_btn(ui, &mut self.active_tool, &self.theme, ActiveTool::Ellipse { filled: false },   egui::include_image!("../assets/icons/ellipse.svg"));
-                tool_btn(ui, &mut self.active_tool, &self.theme, ActiveTool::Line,                      egui::include_image!("../assets/icons/line.svg"));
-                tool_btn(ui, &mut self.active_tool, &self.theme, ActiveTool::RectSelect,                egui::include_image!("../assets/icons/select.svg"));
-                tool_btn(ui, &mut self.active_tool, &self.theme, ActiveTool::Move,                      egui::include_image!("../assets/icons/move.svg"));
-                tool_btn(ui, &mut self.active_tool, &self.theme, ActiveTool::Zoom,                      egui::include_image!("../assets/icons/zoom.svg"));
+                // ── Grouped tool slots ──────────────────────────────────────
+                // Slot 0: Pen group (Pencil/Eraser)
+                let pen_icon = tool_icon(&self.pen_group_current);
+                let pen_resp = tool_btn_raw(ui, &self.theme, self.is_group_selected(0), pen_icon);
+                let pen_rect = pen_resp.rect;
+                if pen_resp.clicked() {
+                    if self.is_group_selected(0) {
+                        self.open_tool_submenu = if self.open_tool_submenu == Some(0) { None } else { Some(0) };
+                    } else {
+                        self.active_tool = self.pen_group_current.clone();
+                        self.open_tool_submenu = None;
+                    }
+                }
+
+                // Slot 1: Bucket group (Fill/Eyedropper)
+                let bucket_icon = tool_icon(&self.bucket_group_current);
+                let bucket_resp = tool_btn_raw(ui, &self.theme, self.is_group_selected(1), bucket_icon);
+                let bucket_rect = bucket_resp.rect;
+                if bucket_resp.clicked() {
+                    if self.is_group_selected(1) {
+                        self.open_tool_submenu = if self.open_tool_submenu == Some(1) { None } else { Some(1) };
+                    } else {
+                        self.active_tool = self.bucket_group_current.clone();
+                        self.open_tool_submenu = None;
+                    }
+                }
+
+                // Slot 2: Shape group (Rectangle/Ellipse/Line)
+                let shape_icon = tool_icon(&self.shape_group_current);
+                let shape_resp = tool_btn_raw(ui, &self.theme, self.is_group_selected(2), shape_icon);
+                let shape_rect = shape_resp.rect;
+                if shape_resp.clicked() {
+                    if self.is_group_selected(2) {
+                        self.open_tool_submenu = if self.open_tool_submenu == Some(2) { None } else { Some(2) };
+                    } else {
+                        self.active_tool = self.shape_group_current.clone();
+                        self.open_tool_submenu = None;
+                    }
+                }
+
+                // Slot 3: Select group (RectSelect/Move)
+                let select_icon = tool_icon(&self.select_group_current);
+                let select_resp = tool_btn_raw(ui, &self.theme, self.is_group_selected(3), select_icon);
+                let select_rect = select_resp.rect;
+                if select_resp.clicked() {
+                    if self.is_group_selected(3) {
+                        self.open_tool_submenu = if self.open_tool_submenu == Some(3) { None } else { Some(3) };
+                    } else {
+                        self.active_tool = self.select_group_current.clone();
+                        self.open_tool_submenu = None;
+                    }
+                }
+
+                // Slot 4: Zoom (ungrouped)
+                let zoom_resp = tool_btn(ui, &mut self.active_tool, &self.theme, ActiveTool::Zoom, egui::include_image!("../assets/icons/zoom.svg"));
+                if zoom_resp.clicked() {
+                    let now = ctx.input(|i| i.time);
+                    if now - self.last_zoom_tool_btn_click < 0.4 {
+                        self.pending_zoom_fit = true;
+                        self.last_zoom_tool_btn_click = -1.0;
+                    } else {
+                        self.last_zoom_tool_btn_click = now;
+                    }
+                }
+
+                // Ungrouped clicks should close any open submenu
+                if zoom_resp.clicked() { self.open_tool_submenu = None; }
+
+                // Stash slot rects for the submenu overlay drawn after this panel
+                self.pen_slot_rect = Some(pen_rect);
+                self.bucket_slot_rect = Some(bucket_rect);
+                self.shape_slot_rect = Some(shape_rect);
+                self.select_slot_rect = Some(select_rect);
             });
+    }
+
+    fn draw_tool_submenu(&mut self, ctx: &egui::Context) {
+        let Some(slot) = self.open_tool_submenu else { return; };
+        let (slot_rect, current, others): (egui::Rect, ActiveTool, Vec<ActiveTool>) = match slot {
+            0 => {
+                let Some(r) = self.pen_slot_rect else { return; };
+                let cur = self.pen_group_current.clone();
+                let others = match cur {
+                    ActiveTool::Pencil => vec![ActiveTool::Eraser],
+                    _                  => vec![ActiveTool::Pencil],
+                };
+                (r, cur, others)
+            }
+            1 => {
+                let Some(r) = self.bucket_slot_rect else { return; };
+                let cur = self.bucket_group_current.clone();
+                let others = match cur {
+                    ActiveTool::Fill => vec![ActiveTool::Eyedropper],
+                    _                => vec![ActiveTool::Fill],
+                };
+                (r, cur, others)
+            }
+            2 => {
+                let Some(r) = self.shape_slot_rect else { return; };
+                let cur = self.shape_group_current.clone();
+                let all = vec![
+                    ActiveTool::Rectangle { filled: false },
+                    ActiveTool::Ellipse { filled: false },
+                    ActiveTool::Line,
+                ];
+                let others: Vec<ActiveTool> = all.into_iter().filter(|t| {
+                    std::mem::discriminant(t) != std::mem::discriminant(&cur)
+                }).collect();
+                (r, cur, others)
+            }
+            3 => {
+                let Some(r) = self.select_slot_rect else { return; };
+                let cur = self.select_group_current.clone();
+                let others = match cur {
+                    ActiveTool::RectSelect => vec![ActiveTool::Move],
+                    _                      => vec![ActiveTool::RectSelect],
+                };
+                (r, cur, others)
+            }
+            _ => return,
+        };
+
+        let theme = self.theme.clone();
+        let pos = Pos2::new(slot_rect.right(), slot_rect.top());
+        let mut clicked_tool: Option<ActiveTool> = None;
+
+        let resp = egui::Area::new(egui::Id::new(("tool_submenu", slot)))
+            .order(egui::Order::Foreground)
+            .fixed_pos(pos)
+            .show(ctx, |ui| {
+                Frame::new()
+                    .fill(theme.panel)
+                    .shadow(egui::Shadow {
+                        offset: [6, 0],
+                        blur: 20,
+                        spread: 0,
+                        color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
+                    })
+                    .inner_margin(Margin::same(0))
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing = Vec2::ZERO;
+                        ui.horizontal(|ui| {
+                            for t in &others {
+                                let icon = tool_icon(t);
+                                let r = tool_btn_raw(ui, &theme, false, icon);
+                                if r.clicked() {
+                                    clicked_tool = Some(t.clone());
+                                }
+                            }
+                        });
+                    });
+            });
+
+        if let Some(t) = clicked_tool {
+            self.set_active_tool(t);
+            self.open_tool_submenu = None;
+        }
+
+        // Click outside both submenu and originating slot → close
+        let clicked_outside = ctx.input(|i| i.pointer.any_click()) && {
+            let hover = ctx.input(|i| i.pointer.hover_pos());
+            match hover {
+                Some(p) => !resp.response.rect.contains(p) && !slot_rect.contains(p),
+                None => false,
+            }
+        };
+        if clicked_outside {
+            self.open_tool_submenu = None;
+        }
+
+        let _ = current; // silence unused if we don't need it elsewhere
     }
 
     fn draw_right_sidebar(&mut self, ctx: &egui::Context) {
+        let sidebar_order = self.sidebar_order.clone();
+
+        // Narrow mode: every visible panel is collapsed (only icon rows visible)
+        let all_narrow = sidebar_order.iter().all(|&p| {
+            !self.ui_state.is_visible(p) || self.ui_state.is_collapsed(p)
+        });
+        let sidebar_w = if all_narrow { 38.0 } else { 176.0 };
+
+        let mut new_icon_rects: Vec<(Panel, egui::Rect)> = Vec::new();
+
         SidePanel::right("right_sidebar")
-            .exact_width(176.0)
+            .exact_width(sidebar_w)
             .resizable(false)
-            .frame(Frame::new().fill(self.theme.panel)) // panel color fills the full column height
+            .frame(Frame::new().fill(self.theme.panel))
             .show_separator_line(false)
             .show(ctx, |ui| {
-                ui.set_width(176.0);
-                ui.set_max_width(176.0);
+                ui.set_width(sidebar_w);
+                ui.set_max_width(sidebar_w);
                 ui.spacing_mut().item_spacing = Vec2::ZERO;
-                self.draw_palette(ui);
-                ui.add_space(RIGHT_SECTION_STACK_GAP);
-                self.draw_color_picker(ui);
-                ui.add_space(1.0);
-                self.draw_layers_section(ui);
-                ui.add_space(RIGHT_SECTION_STACK_GAP);
-                self.draw_animations_section(ui);
-                ui.add_space(RIGHT_SECTION_STACK_GAP);
-                self.draw_preview_section(ui);
+                egui::ScrollArea::vertical()
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                    .show(ui, |ui| {
+                        ui.set_width(sidebar_w);
+                        ui.set_max_width(sidebar_w);
+                        ui.spacing_mut().item_spacing = Vec2::ZERO;
+
+                        let sidebar_x = ui.next_widget_position().x;
+                        let dragging = self.sidebar_drag;
+
+                        for (i, &panel) in sidebar_order.iter().enumerate() {
+                            if i > 0 {
+                                ui.add_space(RIGHT_SECTION_STACK_GAP);
+                            }
+
+                            let y_before = ui.next_widget_position().y;
+
+                            if dragging == Some(panel) {
+                                // Placeholder for the section being dragged
+                                let theme = self.theme.clone();
+                                Frame::new().fill(theme.panel).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        Vec2::new(ui.available_width(), 26.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    ui.painter().rect_stroke(
+                                        rect.shrink(3.0),
+                                        4.0,
+                                        egui::Stroke::new(1.0, theme.fg_muted),
+                                        egui::StrokeKind::Inside,
+                                    );
+                                });
+                            } else {
+                                match panel {
+                                    Panel::Palette    => self.draw_palette(ui),
+                                    Panel::Color      => self.draw_color_picker(ui),
+                                    Panel::Layers     => self.draw_layers_section(ui),
+                                    Panel::Animations => self.draw_animations_section(ui),
+                                    Panel::Preview    => self.draw_preview_section(ui),
+                                    Panel::Timeline   => {},
+                                }
+                            }
+
+                            let y_after = ui.next_widget_position().y;
+                            if y_after > y_before {
+                                new_icon_rects.push((panel, egui::Rect::from_min_size(
+                                    egui::pos2(sidebar_x, y_before),
+                                    egui::vec2(sidebar_w, y_after - y_before),
+                                )));
+                            }
+                        }
+                    });
             });
+
+        // Update stored rects with this frame's positions
+        self.sidebar_icon_rects = new_icon_rects;
+
+        // ── Long-press drag-to-reorder state machine (narrow mode only) ──
+        const LONG_PRESS_SECS: f64 = 0.4;
+        let now             = ctx.input(|i| i.time);
+        let pointer_pos     = ctx.input(|i| i.pointer.hover_pos());
+        let primary_pressed  = ctx.input(|i| i.pointer.primary_pressed());
+        let primary_released = ctx.input(|i| i.pointer.primary_released());
+        let primary_down     = ctx.input(|i| i.pointer.primary_down());
+
+        if !all_narrow {
+            // Left narrow mode — cancel everything
+            self.sidebar_drag       = None;
+            self.sidebar_drag_over_idx = None;
+            self.sidebar_press_start   = None;
+        } else {
+            // Record press start on icon row
+            if primary_pressed {
+                if let Some(pos) = pointer_pos {
+                    for &(panel, rect) in &self.sidebar_icon_rects {
+                        if rect.contains(pos) {
+                            self.sidebar_press_start = Some((panel, now));
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Promote to drag after long-press threshold
+            if let Some((panel, t0)) = self.sidebar_press_start {
+                if primary_down && now - t0 >= LONG_PRESS_SECS && self.sidebar_drag.is_none() {
+                    self.sidebar_drag       = Some(panel);
+                    self.sidebar_drag_over_idx = None;
+                    self.sidebar_press_start   = None;
+                } else if !primary_down {
+                    // Released before threshold — normal click, clear timer
+                    self.sidebar_press_start = None;
+                } else {
+                    // Still within threshold — keep repainting so we hit it
+                    ctx.request_repaint();
+                }
+            }
+
+            // Update drop position while dragging
+            if self.sidebar_drag.is_some() {
+                if let Some(pos) = pointer_pos {
+                    let mut drop_idx = self.sidebar_icon_rects.len();
+                    for (i, &(_, rect)) in self.sidebar_icon_rects.iter().enumerate() {
+                        if pos.y < rect.center().y {
+                            drop_idx = i;
+                            break;
+                        }
+                    }
+                    self.sidebar_drag_over_idx = Some(drop_idx);
+                }
+                ctx.request_repaint();
+            }
+        }
+
+        // Commit on release
+        if primary_released {
+            if let (Some(dragged), Some(drop_idx)) = (self.sidebar_drag.take(), self.sidebar_drag_over_idx.take()) {
+                if let Some(from_idx) = self.sidebar_order.iter().position(|&p| p == dragged) {
+                    let effective = if drop_idx > from_idx { drop_idx - 1 } else { drop_idx };
+                    let effective = effective.min(self.sidebar_order.len() - 1);
+                    self.sidebar_order.remove(from_idx);
+                    self.sidebar_order.insert(effective, dragged);
+                }
+            }
+        }
+
+        // ── Ghost icon at cursor ──────────────────────────────────────────
+        if let (Some(dragged_panel), Some(pos)) = (self.sidebar_drag, pointer_pos) {
+            let icon_src = panel_icon(dragged_panel);
+            egui::Area::new(egui::Id::new("sidebar_drag_ghost"))
+                .order(egui::Order::Tooltip)
+                .fixed_pos(pos - Vec2::splat(8.0))
+                .show(ctx, |ui| {
+                    ui.add(Image::new(icon_src).tint(Color32::WHITE).fit_to_exact_size(Vec2::splat(16.0)));
+                });
+        }
+
+        // ── Drop indicator line ───────────────────────────────────────────
+        if let (Some(drop_idx), Some(_)) = (self.sidebar_drag_over_idx, self.sidebar_drag) {
+            let indicator_y = if self.sidebar_icon_rects.is_empty() {
+                None
+            } else if drop_idx == 0 {
+                Some(self.sidebar_icon_rects[0].1.top())
+            } else if drop_idx >= self.sidebar_icon_rects.len() {
+                Some(self.sidebar_icon_rects.last().unwrap().1.bottom())
+            } else {
+                let above = self.sidebar_icon_rects[drop_idx - 1].1.bottom();
+                let below = self.sidebar_icon_rects[drop_idx].1.top();
+                Some((above + below) / 2.0)
+            };
+            if let Some(y) = indicator_y {
+                let x0 = self.sidebar_icon_rects.first().map_or(0.0, |(_, r)| r.left());
+                let x1 = self.sidebar_icon_rects.first().map_or(38.0, |(_, r)| r.right());
+                let painter = ctx.layer_painter(egui::LayerId::new(
+                    egui::Order::Foreground,
+                    egui::Id::new("sidebar_drop_indicator"),
+                ));
+                painter.line_segment(
+                    [egui::pos2(x0, y), egui::pos2(x1, y)],
+                    egui::Stroke::new(2.0, Color32::WHITE),
+                );
+            }
+        }
     }
 
     fn draw_color_picker(&mut self, ui: &mut egui::Ui) {
+        // Not visible: render a standalone header-row icon (same geometry as section_header)
+        // so the user can click it to bring the section back.
+        if !self.ui_state.is_visible(Panel::Color) {
+            let theme = self.theme.clone();
+            Frame::new().fill(theme.panel).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
+                let (rect, _) = ui.allocate_exact_size(
+                    Vec2::new(ui.available_width(), 26.0),
+                    egui::Sense::hover(),
+                );
+                let icon_size = Vec2::splat(16.0);
+                let icon_rect = egui::Rect::from_center_size(
+                    Pos2::new(rect.left() + 8.0, rect.center().y),
+                    icon_size,
+                );
+                let icon_resp = ui.interact(
+                    icon_rect,
+                    ui.id().with("color_mixer_toggle"),
+                    egui::Sense::click(),
+                );
+                let icon_tint = if icon_resp.hovered() { Color32::WHITE } else { theme.fg };
+                ui.put(
+                    icon_rect,
+                    Image::new(egui::include_image!("../assets/icons/color_mixer.svg"))
+                        .tint(icon_tint)
+                        .fit_to_exact_size(icon_size),
+                );
+                if icon_resp.clicked() {
+                    self.ui_state.toggle_visible(Panel::Color);
+                }
+            });
+            return;
+        }
+
+        // Visible: section_header handles collapse/expand (same pattern as Layers/Animations)
+        let (show, _, _) = section_header(
+            ui,
+            &self.theme,
+            &mut self.ui_state,
+            Panel::Color,
+            egui::include_image!("../assets/icons/color_mixer.svg"),
+            None,
+        );
+        if !show { return; }
+
         let theme = self.theme.clone();
         let fg = self.color_state.foreground;
         Frame::new().fill(theme.panel).inner_margin(Margin::symmetric(10, 8)).show(ui, |ui| {
@@ -708,8 +1296,13 @@ impl App {
                 ui.add_space(8.0); // explicit gap, no extra item_spacing added
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
-                        if tab_button(ui, &theme, self.color_state.active_picker == PickerMode::OkLab, "OKL").clicked() {
+                        let okl_resp = tab_button(ui, &theme, self.color_state.active_picker == PickerMode::OkLab, "OKL");
+                        if okl_resp.clicked() {
                             self.color_state.active_picker = PickerMode::OkLab;
+                        }
+                        if okl_resp.secondary_clicked() {
+                            let now = ui.ctx().input(|i| i.time);
+                            self.ramp_size_menu = Some((okl_resp.rect.left_bottom(), now));
                         }
                         if tab_button(ui, &theme, self.color_state.active_picker == PickerMode::Hsv, "HSV").clicked() {
                             self.color_state.active_picker = PickerMode::Hsv;
@@ -734,23 +1327,226 @@ impl App {
             match self.color_state.active_picker {
                 PickerMode::Hsv => {
                     let (mut h, mut s, mut v) = rgba_to_hsv(fg);
+                    let n = self.color_state.ramp_size;
                     let mut changed = false;
-                    changed |= value_slider(ui, &theme, "H", &mut h, 0.0..=360.0);
-                    changed |= value_slider(ui, &theme, "S", &mut s, 0.0..=1.0);
-                    changed |= value_slider(ui, &theme, "V", &mut v, 0.0..=1.0);
+                    let now = ui.ctx().input(|i| i.time);
+                    let out_h = value_slider_snap(ui, &theme, "H", &mut h, 0.0..=360.0,
+                        &mut self.color_state.snap_hsv_h, (0.0, 360.0), n);
+                    let out_s = value_slider_snap(ui, &theme, "S", &mut s, 0.0..=1.0,
+                        &mut self.color_state.snap_hsv_s, (0.0, 1.0), n);
+                    let out_v = value_slider_snap(ui, &theme, "V", &mut v, 0.0..=1.0,
+                        &mut self.color_state.snap_hsv_v, (0.20, 0.95), n);
+                    changed |= out_h.changed | out_s.changed | out_v.changed;
+                    if let Some(pos) = out_h.label_rclick {
+                        self.slider_param_menu = Some((SliderParam::HueShift, pos, now));
+                    }
+                    if let Some(pos) = out_s.label_rclick {
+                        self.slider_param_menu = Some((SliderParam::SatCurve, pos, now));
+                    }
                     if changed {
                         self.color_state.foreground = hsv_to_rgba(h, s, v, fg[3]);
                     }
+
+                    // Ramp strip + push-to-palette button (mirror of OKL branch)
+                    ui.add_space(6.0);
+                    let ramp_hsv = generate_ramp_hsv(h, s, v, n, self.color_state.ramp_anchor,
+                        self.color_state.hue_shift_deg, self.color_state.sat_curve_depth);
+                    let ramp_rgba: Vec<crate::project::Rgba> = ramp_hsv.iter()
+                        .map(|&(h, s, v)| hsv_to_rgba(h, s, v, 255))
+                        .collect();
+                    let anchor_idx = match self.color_state.ramp_anchor {
+                        RampAnchor::Middle    => n / 2,
+                        RampAnchor::BaseStep3 => 2.min(n.saturating_sub(1)),
+                        RampAnchor::Endpoints => 0,
+                    };
+                    ui.horizontal(|ui| {
+                        ui.style_mut().spacing.item_spacing = Vec2::ZERO;
+                        let avail = ui.available_width();
+                        const ADD_BTN_W: f32 = 18.0;
+                        const GAP: f32 = 4.0;
+                        let strip_w = (avail - ADD_BTN_W - GAP).max(0.0);
+                        const STRIP_H: f32 = 18.0;
+                        const MARKER_H: f32 = 4.0;
+                        let row_h = STRIP_H + MARKER_H;
+                        let strip_size = Vec2::new(strip_w, row_h);
+                        let (strip_rect, strip_resp) = ui.allocate_exact_size(strip_size, egui::Sense::click());
+                        let cell_w = strip_w / (n.max(1) as f32);
+                        let cells_top = strip_rect.top();
+                        let cells_bot = strip_rect.top() + STRIP_H;
+                        for (i, rgba) in ramp_rgba.iter().enumerate() {
+                            let x0 = strip_rect.left() + cell_w * i as f32;
+                            let x1 = strip_rect.left() + cell_w * (i + 1) as f32;
+                            let cell = egui::Rect::from_min_max(
+                                Pos2::new(x0, cells_top),
+                                Pos2::new(x1, cells_bot),
+                            );
+                            ui.painter().rect_filled(cell, 0.0, Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]));
+                        }
+                        let anchor_cx = strip_rect.left() + cell_w * (anchor_idx as f32 + 0.5);
+                        let tri_top_y = cells_bot + 1.0;
+                        let tri_bot_y = cells_bot + MARKER_H;
+                        let half_w = 3.0;
+                        ui.painter().add(egui::Shape::convex_polygon(
+                            vec![
+                                Pos2::new(anchor_cx, tri_top_y),
+                                Pos2::new(anchor_cx - half_w, tri_bot_y),
+                                Pos2::new(anchor_cx + half_w, tri_bot_y),
+                            ],
+                            theme.fg,
+                            egui::Stroke::NONE,
+                        ));
+                        if strip_resp.secondary_clicked() {
+                            self.color_state.ramp_anchor = match self.color_state.ramp_anchor {
+                                RampAnchor::Middle    => RampAnchor::BaseStep3,
+                                RampAnchor::BaseStep3 => RampAnchor::Endpoints,
+                                RampAnchor::Endpoints => RampAnchor::Middle,
+                            };
+                        }
+                        if strip_resp.clicked() {
+                            if let Some(pos) = strip_resp.interact_pointer_pos() {
+                                let rel = (pos.x - strip_rect.left()).clamp(0.0, strip_rect.width() - 0.001);
+                                let idx = (rel / cell_w) as usize;
+                                if let Some(picked) = ramp_rgba.get(idx) {
+                                    self.color_state.foreground = *picked;
+                                }
+                            }
+                        }
+                        ui.add_space(GAP);
+                        let (btn_rect, btn_resp) = ui.allocate_exact_size(Vec2::splat(ADD_BTN_W), egui::Sense::click());
+                        let bg = if btn_resp.hovered() { theme.accent } else { theme.bg };
+                        ui.painter().rect_filled(btn_rect, 0.0, bg);
+                        let tint = if btn_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                        ui.painter().text(
+                            btn_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "+",
+                            FontId::new(14.0, FontFamily::Proportional),
+                            tint,
+                        );
+                        if btn_resp.clicked() {
+                            for rgba in &ramp_rgba {
+                                if !self.project.palette.contains(rgba) {
+                                    self.project.palette.push(*rgba);
+                                }
+                            }
+                        }
+                    });
                 }
                 PickerMode::OkLab => {
-                    let (mut l, mut a, mut b) = rgba_to_oklab(fg);
+                    let (mut l, mut c, mut h) = rgba_to_oklch(fg);
+                    // Preserve prior hue when chroma collapses (achromatic colors have undefined H).
+                    if c < 1e-4 { h = self.color_state.last_oklch_h; }
+                    let n = self.color_state.ramp_size;
                     let mut changed = false;
-                    changed |= value_slider(ui, &theme, "L", &mut l, 0.0..=1.0);
-                    changed |= value_slider(ui, &theme, "a", &mut a, -0.5..=0.5);
-                    changed |= value_slider(ui, &theme, "b", &mut b, -0.5..=0.5);
-                    if changed {
-                        self.color_state.foreground = oklab_to_rgba(l, a, b, fg[3]);
+                    let now = ui.ctx().input(|i| i.time);
+                    let out_l = value_slider_snap(ui, &theme, "L", &mut l, 0.0..=1.0,
+                        &mut self.color_state.snap_oklch_l, (0.15, 0.90), n);
+                    let out_c = value_slider_snap(ui, &theme, "C", &mut c, 0.0..=0.4,
+                        &mut self.color_state.snap_oklch_c, (0.0, 0.4), n);
+                    let out_h = value_slider_snap(ui, &theme, "H", &mut h, 0.0..=360.0,
+                        &mut self.color_state.snap_oklch_h, (0.0, 360.0), n);
+                    changed |= out_l.changed | out_c.changed | out_h.changed;
+                    // Right-click on H label → hue-shift popup; on C label → sat-curve popup.
+                    if let Some(pos) = out_h.label_rclick {
+                        self.slider_param_menu = Some((SliderParam::HueShift, pos, now));
                     }
+                    if let Some(pos) = out_c.label_rclick {
+                        self.slider_param_menu = Some((SliderParam::SatCurve, pos, now));
+                    }
+                    if changed {
+                        self.color_state.last_oklch_h = h;
+                        self.color_state.foreground = oklch_to_rgba(l, c, h, fg[3]);
+                    }
+
+                    // Ramp strip + push-to-palette button
+                    ui.add_space(6.0);
+                    let ramp_lch = generate_ramp(l, c, h, n, self.color_state.ramp_anchor,
+                        self.color_state.hue_shift_deg, self.color_state.sat_curve_depth);
+                    let ramp_rgba: Vec<crate::project::Rgba> = ramp_lch.iter()
+                        .map(|&(l, c, h)| oklch_to_rgba(l, c, h, 255))
+                        .collect();
+                    let anchor_idx = match self.color_state.ramp_anchor {
+                        RampAnchor::Middle    => n / 2,
+                        RampAnchor::BaseStep3 => 2.min(n.saturating_sub(1)),
+                        RampAnchor::Endpoints => 0,
+                    };
+                    ui.horizontal(|ui| {
+                        ui.style_mut().spacing.item_spacing = Vec2::ZERO;
+                        // Strip: full available width minus add button (18px) and 4px gap.
+                        let avail = ui.available_width();
+                        const ADD_BTN_W: f32 = 18.0;
+                        const GAP: f32 = 4.0;
+                        let strip_w = (avail - ADD_BTN_W - GAP).max(0.0);
+                        const STRIP_H: f32 = 18.0;
+                        const MARKER_H: f32 = 4.0;
+                        let row_h = STRIP_H + MARKER_H;
+                        let strip_size = Vec2::new(strip_w, row_h);
+                        let (strip_rect, strip_resp) = ui.allocate_exact_size(strip_size, egui::Sense::click());
+                        let cell_w = strip_w / (n.max(1) as f32);
+                        let cells_top = strip_rect.top();
+                        let cells_bot = strip_rect.top() + STRIP_H;
+                        for (i, rgba) in ramp_rgba.iter().enumerate() {
+                            let x0 = strip_rect.left() + cell_w * i as f32;
+                            let x1 = strip_rect.left() + cell_w * (i + 1) as f32;
+                            let cell = egui::Rect::from_min_max(
+                                Pos2::new(x0, cells_top),
+                                Pos2::new(x1, cells_bot),
+                            );
+                            ui.painter().rect_filled(cell, 0.0, Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]));
+                        }
+                        // Anchor indicator: small triangle pointing up under the anchored cell.
+                        let anchor_cx = strip_rect.left() + cell_w * (anchor_idx as f32 + 0.5);
+                        let tri_top_y = cells_bot + 1.0;
+                        let tri_bot_y = cells_bot + MARKER_H;
+                        let half_w = 3.0;
+                        ui.painter().add(egui::Shape::convex_polygon(
+                            vec![
+                                Pos2::new(anchor_cx, tri_top_y),
+                                Pos2::new(anchor_cx - half_w, tri_bot_y),
+                                Pos2::new(anchor_cx + half_w, tri_bot_y),
+                            ],
+                            theme.fg,
+                            egui::Stroke::NONE,
+                        ));
+                        // Right-click cycles anchor mode.
+                        if strip_resp.secondary_clicked() {
+                            self.color_state.ramp_anchor = match self.color_state.ramp_anchor {
+                                RampAnchor::Middle    => RampAnchor::BaseStep3,
+                                RampAnchor::BaseStep3 => RampAnchor::Endpoints,
+                                RampAnchor::Endpoints => RampAnchor::Middle,
+                            };
+                        }
+                        // Left-click cell sets FG to that color.
+                        if strip_resp.clicked() {
+                            if let Some(pos) = strip_resp.interact_pointer_pos() {
+                                let rel = (pos.x - strip_rect.left()).clamp(0.0, strip_rect.width() - 0.001);
+                                let idx = (rel / cell_w) as usize;
+                                if let Some(picked) = ramp_rgba.get(idx) {
+                                    self.color_state.foreground = *picked;
+                                }
+                            }
+                        }
+                        ui.add_space(GAP);
+                        // "+" add-to-palette button
+                        let (btn_rect, btn_resp) = ui.allocate_exact_size(Vec2::splat(ADD_BTN_W), egui::Sense::click());
+                        let bg = if btn_resp.hovered() { theme.accent } else { theme.bg };
+                        ui.painter().rect_filled(btn_rect, 0.0, bg);
+                        let tint = if btn_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                        ui.painter().text(
+                            btn_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "+",
+                            FontId::new(14.0, FontFamily::Proportional),
+                            tint,
+                        );
+                        if btn_resp.clicked() {
+                            for rgba in &ramp_rgba {
+                                if !self.project.palette.contains(rgba) {
+                                    self.project.palette.push(*rgba);
+                                }
+                            }
+                        }
+                    });
                 }
                 PickerMode::Rgb => {
                     let mut r = fg[0] as f32;
@@ -770,6 +1566,38 @@ impl App {
     }
 
     fn draw_palette(&mut self, ui: &mut egui::Ui) {
+        // Collapsed: show section-header-style icon row; click to expand.
+        if self.ui_state.is_collapsed(Panel::Palette) {
+            let theme = self.theme.clone();
+            Frame::new().fill(theme.panel).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
+                let (rect, _) = ui.allocate_exact_size(
+                    Vec2::new(ui.available_width(), 26.0),
+                    egui::Sense::hover(),
+                );
+                let icon_size = Vec2::splat(16.0);
+                let icon_rect = egui::Rect::from_center_size(
+                    Pos2::new(rect.left() + 8.0, rect.center().y),
+                    icon_size,
+                );
+                let icon_resp = ui.interact(
+                    icon_rect,
+                    ui.id().with("palette_icon"),
+                    egui::Sense::click(),
+                );
+                let icon_tint = if icon_resp.hovered() { Color32::WHITE } else { theme.fg };
+                ui.put(
+                    icon_rect,
+                    Image::new(egui::include_image!("../assets/icons/colors.svg"))
+                        .tint(icon_tint)
+                        .fit_to_exact_size(icon_size),
+                );
+                if icon_resp.clicked() {
+                    self.ui_state.toggle_collapsed(Panel::Palette);
+                }
+            });
+            return;
+        }
+
         let theme = self.theme.clone();
         const GRID_SIZE: f32 = 176.0;
 
@@ -894,6 +1722,15 @@ impl App {
                             egui::Stroke::new(2.0, theme.fg),
                             egui::StrokeKind::Outside,
                         );
+                    }
+                }
+            }
+
+            // --- Ctrl+Click anywhere in the palette grid to collapse ---
+            if ui.input(|i| i.modifiers.ctrl && i.pointer.any_click()) {
+                if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+                    if grid_rect.contains(pos) {
+                        self.ui_state.toggle_collapsed(Panel::Palette);
                     }
                 }
             }
@@ -1198,7 +2035,14 @@ impl App {
 
     fn draw_animations_section(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme.clone();
+        let was_collapsed = self.ui_state.is_collapsed(Panel::Animations);
         let (show, add_clicked, _) = section_header(ui, &self.theme, &mut self.ui_state, Panel::Animations, egui::include_image!("../assets/icons/animation.svg"), None);
+        let now_collapsed = self.ui_state.is_collapsed(Panel::Animations);
+
+        // When the animation icon is clicked, sync timeline visibility with the section.
+        if now_collapsed != was_collapsed {
+            self.ui_state.show_timeline = !now_collapsed;
+        }
         if !show { return; }
 
         if add_clicked {
@@ -1230,6 +2074,7 @@ impl App {
             .id_salt("animations_scroll")
             .max_height(MAX_VISIBLE * ROW_H)
             .auto_shrink([false, false])
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
             .show(ui, |ui| {
                 let list_width = list_width;
                 let list_height = (anim_count as f32 * ROW_H).max(MAX_VISIBLE * ROW_H);
@@ -1308,6 +2153,8 @@ impl App {
     }
 
     fn draw_anim_toolbar(&mut self, ctx: &egui::Context) {
+        if self.ui_state.is_collapsed(Panel::Animations) { return; }
+
         let theme = self.theme.clone();
         TopBottomPanel::bottom("anim_toolbar")
             .exact_height(TOP_BAR_HEIGHT)
@@ -1410,7 +2257,7 @@ impl App {
                                 let menu_outer_h = 44.0;
                                 let x = response.rect.center().x - menu_outer_w / 2.0;
                                 let y = response.rect.top() - menu_outer_h - 4.0;
-                                let now = ctx.input(|i| i.time);
+                    let now = ui.ctx().input(|i| i.time);
                                 self.frame_menu = Some((i, Pos2::new(x, y), now));
                                 self.canvas_dirty = true;
                             }
@@ -1429,19 +2276,27 @@ impl App {
         let hovered = ctx.pointer_hover_pos().map(|p| timeline_rect.contains(p)).unwrap_or(false);
         if hovered {
             let delta = ctx.input(|i| i.raw_scroll_delta.y);
+            self.timeline_scroll_accum += delta;
             let total = self.project.active_anim().frames.len();
             if total > 0 {
-                if delta > 1.0 {
+                while self.timeline_scroll_accum > 30.0 {
+                    self.timeline_scroll_accum -= 30.0;
                     self.project.active_frame = (self.project.active_frame + total - 1) % total;
                     self.canvas_dirty = true;
-                } else if delta < -1.0 {
+                }
+                while self.timeline_scroll_accum < -30.0 {
+                    self.timeline_scroll_accum += 30.0;
                     self.project.active_frame = (self.project.active_frame + 1) % total;
                     self.canvas_dirty = true;
                 }
             }
+        } else {
+            self.timeline_scroll_accum = 0.0;
         }
 
         self.draw_frame_menu(ctx);
+        self.draw_ramp_size_menu(ctx);
+        self.draw_slider_param_menu(ctx);
     }
 
     fn draw_layer_context_menu(&mut self, ctx: &egui::Context) {
@@ -1658,6 +2513,115 @@ impl App {
         }
     }
 
+    fn draw_ramp_size_menu(&mut self, ctx: &egui::Context) {
+        let Some((pos, opened_at)) = self.ramp_size_menu else { return; };
+        let theme = self.theme.clone();
+        let now = ctx.input(|i| i.time);
+        let inner = egui::Area::new(egui::Id::new("ramp_size_menu"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(pos)
+            .show(ctx, |ui| {
+                Frame::new()
+                    .fill(theme.panel)
+                    .inner_margin(Margin::same(4))
+                    .shadow(egui::Shadow {
+                        offset: [0, 14],
+                        blur: 36,
+                        spread: 0,
+                        color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
+                    })
+                    .show(ui, |ui| {
+                        ui.style_mut().spacing.item_spacing = Vec2::ZERO;
+                        ui.horizontal(|ui| {
+                            ui.style_mut().spacing.item_spacing = Vec2::ZERO;
+                            ui.visuals_mut().override_text_color = Some(theme.fg_desc);
+                            let mut n = self.color_state.ramp_size as u8;
+                            ui.add_sized(
+                                Vec2::new(32.0, 36.0),
+                                egui::DragValue::new(&mut n).range(3..=9),
+                            );
+                            ui.visuals_mut().override_text_color = None;
+                            self.color_state.ramp_size = n as usize;
+                        });
+                    });
+            });
+        let is_hovered = ctx.pointer_hover_pos()
+            .map(|p| inner.response.rect.contains(p))
+            .unwrap_or(false);
+        let menu_id = egui::Id::new("ramp_size_menu_timer");
+        let should_close = ctx.data_mut(|d| {
+            let last: &mut f64 = d.get_temp_mut_or_insert_with(menu_id, || now);
+            if now - opened_at < 0.15 || is_hovered { *last = now; false } else { now - *last > 2.0 }
+        });
+        ctx.request_repaint();
+        if should_close || (now - opened_at > 0.15 && ctx.input(|i| i.pointer.any_click()) && !is_hovered) {
+            self.ramp_size_menu = None;
+        }
+    }
+
+    fn draw_slider_param_menu(&mut self, ctx: &egui::Context) {
+        let Some((param, pos, opened_at)) = self.slider_param_menu else { return; };
+        let theme = self.theme.clone();
+        let now = ctx.input(|i| i.time);
+        let inner = egui::Area::new(egui::Id::new("slider_param_menu"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(pos)
+            .show(ctx, |ui| {
+                Frame::new()
+                    .fill(theme.panel)
+                    .inner_margin(Margin::same(4))
+                    .shadow(egui::Shadow {
+                        offset: [0, 14],
+                        blur: 36,
+                        spread: 0,
+                        color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
+                    })
+                    .show(ui, |ui| {
+                        ui.style_mut().spacing.item_spacing = Vec2::ZERO;
+                        ui.horizontal(|ui| {
+                            ui.style_mut().spacing.item_spacing = Vec2::ZERO;
+                            ui.visuals_mut().override_text_color = Some(theme.fg_desc);
+                            match param {
+                                SliderParam::HueShift => {
+                                    let mut deg = self.color_state.hue_shift_deg;
+                                    ui.add_sized(
+                                        Vec2::new(52.0, 36.0),
+                                        egui::DragValue::new(&mut deg)
+                                            .range(0.0..=60.0)
+                                            .speed(0.5)
+                                            .suffix("°"),
+                                    );
+                                    self.color_state.hue_shift_deg = deg;
+                                }
+                                SliderParam::SatCurve => {
+                                    let mut pct = (self.color_state.sat_curve_depth * 100.0).round() as i32;
+                                    ui.add_sized(
+                                        Vec2::new(52.0, 36.0),
+                                        egui::DragValue::new(&mut pct)
+                                            .range(0..=80)
+                                            .suffix("%"),
+                                    );
+                                    self.color_state.sat_curve_depth = pct as f32 / 100.0;
+                                }
+                            }
+                            ui.visuals_mut().override_text_color = None;
+                        });
+                    });
+            });
+        let is_hovered = ctx.pointer_hover_pos()
+            .map(|p| inner.response.rect.contains(p))
+            .unwrap_or(false);
+        let menu_id = egui::Id::new("slider_param_menu_timer");
+        let should_close = ctx.data_mut(|d| {
+            let last: &mut f64 = d.get_temp_mut_or_insert_with(menu_id, || now);
+            if now - opened_at < 0.15 || is_hovered { *last = now; false } else { now - *last > 2.0 }
+        });
+        ctx.request_repaint();
+        if should_close || (now - opened_at > 0.15 && ctx.input(|i| i.pointer.any_click()) && !is_hovered) {
+            self.slider_param_menu = None;
+        }
+    }
+
     fn draw_workspace(&mut self, ctx: &egui::Context) {
         CentralPanel::default()
             .frame(Frame::new().fill(self.theme.bg))
@@ -1666,6 +2630,10 @@ impl App {
                     self.rebuild_canvas_texture(ctx);
                 }
                 let canvas_rect = ui.available_rect_before_wrap();
+                if self.pending_zoom_fit {
+                    self.canvas.zoom_to_fit(canvas_rect, self.project.canvas_width, self.project.canvas_height);
+                    self.pending_zoom_fit = false;
+                }
                 let painter = ui.painter_at(canvas_rect);
                 self.canvas.draw(
                     &painter,
@@ -1696,6 +2664,7 @@ impl App {
     fn draw_preview_section(&mut self, ui: &mut egui::Ui) {
         if !self.ui_state.is_visible(Panel::Preview) { return; }
 
+        let collapsed = self.ui_state.is_collapsed(Panel::Preview);
         let theme = self.theme.clone();
         // Header — same visual as section_header but without the "+" button.
         Frame::new().fill(theme.panel).inner_margin(egui::Margin::symmetric(10, 3)).show(ui, |ui| {
@@ -1704,10 +2673,17 @@ impl App {
             let icon_rect = egui::Rect::from_center_size(
                 egui::pos2(rect.left() + 8.0, rect.center().y), icon_size,
             );
+            let icon_resp = ui.interact(icon_rect, egui::Id::new("hdr_icon_preview"), egui::Sense::click());
+            let tint = if icon_resp.hovered() { Color32::WHITE } else { theme.fg };
             ui.put(icon_rect, egui::Image::new(egui::include_image!("../assets/icons/visibility.svg"))
-                .tint(theme.fg)
+                .tint(tint)
                 .fit_to_exact_size(icon_size));
+            if icon_resp.clicked() {
+                self.ui_state.toggle_collapsed(Panel::Preview);
+            }
         });
+
+        if collapsed { return; }
 
         let pixels = self.composite_active_frame();
         let tex = ui.ctx().load_texture(
@@ -2018,6 +2994,16 @@ impl App {
 }
 
 impl eframe::App for App {
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        let state = LayoutState {
+            ui_state: self.ui_state.clone(),
+            sidebar_order: self.sidebar_order.clone(),
+        };
+        if let Ok(json) = serde_json::to_string(&state) {
+            storage.set_string(LAYOUT_STORAGE_KEY, json);
+        }
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.theme.apply(ctx);
 
@@ -2026,6 +3012,13 @@ impl eframe::App for App {
         if self.playback.tick(fps, &mut self.project.active_frame, total) {
             self.canvas_dirty = true;
         }
+
+        // Alt → cycle to next tool in the active tool's group (detect on rising edge)
+        let alt_now = ctx.input(|i| i.modifiers.alt);
+        if alt_now && !self.alt_was_down {
+            self.cycle_tool_in_group();
+        }
+        self.alt_was_down = alt_now;
 
         let ctrl_z = ctx.input(|i| i.key_pressed(egui::Key::Z) && i.modifiers.ctrl);
         let ctrl_y = ctx.input(|i| i.key_pressed(egui::Key::Y) && i.modifiers.ctrl);
@@ -2043,6 +3036,7 @@ impl eframe::App for App {
         self.draw_right_sidebar(ctx); // claims full right column (topbar → anim toolbar)
         self.draw_timeline(ctx);      // gets x=0..W-176, frames start at left edge
         self.draw_left_toolbar(ctx);  // occupies left strip above timeline only
+        self.draw_tool_submenu(ctx);  // floating tool group submenu (right of toolbar)
         self.draw_workspace(ctx);
         self.draw_layer_context_menu(ctx);
         self.draw_new_project_dialog(ctx);
@@ -2092,12 +3086,21 @@ fn top_menu_zone(ui: &mut egui::Ui, theme: &Theme, label: &str, selected: bool) 
     response
 }
 
+fn dropdown_separator(ui: &mut egui::Ui, theme: &Theme) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(DROPDOWN_WIDTH, 9.0), egui::Sense::hover());
+    let y = rect.center().y;
+    ui.painter().line_segment(
+        [Pos2::new(rect.left() + 14.0, y), Pos2::new(rect.right() - 14.0, y)],
+        egui::Stroke::new(1.0, theme.surface),
+    );
+}
+
 fn dropdown_row(ui: &mut egui::Ui, theme: &Theme, label: &str, right: Option<&str>, enabled: bool) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(
         Vec2::new(DROPDOWN_WIDTH, DROPDOWN_ROW_HEIGHT),
         if enabled { egui::Sense::click() } else { egui::Sense::hover() },
     );
-    if enabled && response.hovered() {
+    if response.hovered() {
         ui.painter().rect_filled(rect, 0.0, theme.accent);
     }
 
@@ -2116,7 +3119,7 @@ fn dropdown_row(ui: &mut egui::Ui, theme: &Theme, label: &str, right: Option<&st
             egui::Align2::RIGHT_CENTER,
             right,
             FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
-            theme.fg,
+            color,
         );
     }
     response
@@ -2131,37 +3134,140 @@ fn section_header(ui: &mut egui::Ui, theme: &Theme, state: &mut UiState, panel: 
     if !state.is_visible(panel) {
         return (false, false, false);
     }
+    let collapsed = state.is_collapsed(panel);
     let mut add_clicked = false;
     let mut extra_clicked = false;
     Frame::new().fill(theme.panel).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
         let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), egui::Sense::hover());
         let painter = ui.painter_at(rect);
-        // Left: section icon
+        // Left: section icon — clickable to collapse/expand
         let icon_size = Vec2::splat(16.0);
         let icon_rect = egui::Rect::from_center_size(Pos2::new(rect.left() + 8.0, rect.center().y), icon_size);
-        ui.put(icon_rect, Image::new(icon).tint(theme.fg).fit_to_exact_size(icon_size));
-        // Right: "+" add button
-        let plus_rect = egui::Rect::from_center_size(Pos2::new(rect.right() - 8.0, rect.center().y), Vec2::splat(16.0));
-        let plus_resp = ui.interact(plus_rect, egui::Id::new(("hdr_plus", panel)), egui::Sense::click());
-        let plus_color = if plus_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
-        painter.text(plus_rect.center(), egui::Align2::CENTER_CENTER, "+", FontId::new(16.0, FontFamily::Proportional), plus_color);
-        if plus_resp.clicked() {
-            add_clicked = true;
+        let icon_resp = ui.interact(icon_rect, egui::Id::new(("hdr_icon", panel)), egui::Sense::click());
+        let icon_tint = if icon_resp.hovered() { Color32::WHITE } else { theme.fg };
+        ui.put(icon_rect, Image::new(icon).tint(icon_tint).fit_to_exact_size(icon_size));
+        if icon_resp.clicked() {
+            state.toggle_collapsed(panel);
         }
-        // Optional extra button (folder/group icon), placed left of "+"
-        if let Some(extra_icon) = extra_btn {
-            let extra_rect = egui::Rect::from_center_size(Pos2::new(rect.right() - 28.0, rect.center().y), Vec2::splat(14.0));
-            let extra_resp = ui.interact(extra_rect, egui::Id::new(("hdr_extra", panel)), egui::Sense::click());
-            let tint = if extra_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
-            ui.put(extra_rect, Image::new(extra_icon).tint(tint).fit_to_exact_size(Vec2::splat(14.0)));
-            if extra_resp.clicked() { extra_clicked = true; }
+        if !collapsed {
+            // Right: "+" add button
+            let plus_rect = egui::Rect::from_center_size(Pos2::new(rect.right() - 8.0, rect.center().y), Vec2::splat(16.0));
+            let plus_resp = ui.interact(plus_rect, egui::Id::new(("hdr_plus", panel)), egui::Sense::click());
+            let plus_color = if plus_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+            painter.text(plus_rect.center(), egui::Align2::CENTER_CENTER, "+", FontId::new(16.0, FontFamily::Proportional), plus_color);
+            if plus_resp.clicked() {
+                add_clicked = true;
+            }
+            // Optional extra button (folder/group icon), placed left of "+"
+            if let Some(extra_icon) = extra_btn {
+                let extra_rect = egui::Rect::from_center_size(Pos2::new(rect.right() - 28.0, rect.center().y), Vec2::splat(14.0));
+                let extra_resp = ui.interact(extra_rect, egui::Id::new(("hdr_extra", panel)), egui::Sense::click());
+                let tint = if extra_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                ui.put(extra_rect, Image::new(extra_icon).tint(tint).fit_to_exact_size(Vec2::splat(14.0)));
+                if extra_resp.clicked() { extra_clicked = true; }
+            }
         }
     });
-    (true, add_clicked, extra_clicked)
+    (!collapsed, add_clicked, extra_clicked)
 }
 
-fn value_slider(ui: &mut egui::Ui, theme: &Theme, label: &str, value: &mut f32, range: std::ops::RangeInclusive<f32>) -> bool {
+/// Slider with optional quantized snapping.
+/// - Ctrl+click on track toggles `snap_on` (does NOT change value on that click).
+/// - When `snap_on`: value snaps to the nearest of `n_steps` evenly spaced positions
+///   across `snap_range` (which may be a subrange of `range`).
+/// - When `snap_on`: tick marks are drawn at each step position on the track.
+/// Returns true if `value` or `snap_on` changed (caller should treat either as a redraw trigger;
+/// value-change is the only one that should rewrite the color).
+/// Outcome of a slider tick.
+struct SliderOut {
+    /// Value or snap state changed this frame.
+    changed: bool,
+    /// If the slider's label was right-clicked this frame, contains the screen-space click position.
+    label_rclick: Option<Pos2>,
+}
+
+fn value_slider_snap(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    label: &str,
+    value: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    snap_on: &mut bool,
+    snap_range: (f32, f32),
+    n_steps: usize,
+) -> SliderOut {
     ui.horizontal(|ui| {
+        // Label as its own clickable rect (so we can detect right-click on it).
+        const LABEL_W: f32 = 8.0;
+        let (label_rect, label_resp) = ui.allocate_exact_size(
+            Vec2::new(LABEL_W, COLOR_SLIDER_TRACK_HEIGHT),
+            egui::Sense::click(),
+        );
+        ui.painter().text(
+            label_rect.left_center(),
+            egui::Align2::LEFT_CENTER,
+            label,
+            FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
+            theme.fg_muted,
+        );
+        let label_rclick = if label_resp.secondary_clicked() {
+            Some(label_resp.rect.left_bottom())
+        } else { None };
+
+        ui.add_space(4.0);
+        let desired_size = Vec2::new((ui.available_width() - 4.0).max(24.0), COLOR_SLIDER_TRACK_HEIGHT);
+        let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click_and_drag());
+        let start = *range.start();
+        let end = *range.end();
+        let span = end - start;
+        if span <= 0.0 { return SliderOut { changed: false, label_rclick }; }
+
+        let t = ((*value - start) / span).clamp(0.0, 1.0);
+        ui.painter().rect_filled(rect, 0.0, theme.bg);
+        let fill_rect = egui::Rect::from_min_max(
+            rect.left_top(),
+            Pos2::new(rect.left() + rect.width() * t, rect.bottom()),
+        );
+        ui.painter().rect_filled(fill_rect, 0.0, theme.accent);
+
+        if *snap_on && n_steps >= 2 {
+            let (sn_lo, sn_hi) = snap_range;
+            for i in 0..n_steps {
+                let s_val = sn_lo + (sn_hi - sn_lo) * (i as f32 / (n_steps - 1) as f32);
+                let s_t = ((s_val - start) / span).clamp(0.0, 1.0);
+                let x = rect.left() + rect.width() * s_t;
+                ui.painter().line_segment(
+                    [Pos2::new(x, rect.bottom() - 3.0), Pos2::new(x, rect.bottom())],
+                    egui::Stroke::new(1.0, theme.fg_muted),
+                );
+            }
+        }
+
+        let mut changed = false;
+        if let Some(pos) = response.interact_pointer_pos() {
+            if response.secondary_clicked() {
+                *snap_on = !*snap_on;
+                changed = true;
+            } else if response.dragged() || response.clicked() {
+                let new_t = ((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
+                let mut new_v = start + span * new_t;
+                if *snap_on && n_steps >= 2 {
+                    let (sn_lo, sn_hi) = snap_range;
+                    let step = (sn_hi - sn_lo) / (n_steps - 1) as f32;
+                    let idx = ((new_v - sn_lo) / step).round().clamp(0.0, (n_steps - 1) as f32);
+                    new_v = sn_lo + step * idx;
+                }
+                if (new_v - *value).abs() > f32::EPSILON {
+                    *value = new_v;
+                    changed = true;
+                }
+            }
+        }
+        SliderOut { changed, label_rclick }
+    }).inner
+}
+
+fn value_slider(ui: &mut egui::Ui, theme: &Theme, label: &str, value: &mut f32, range: std::ops::RangeInclusive<f32>) -> bool {    ui.horizontal(|ui| {
         ui.label(rich(label, theme.fg_muted, FONT_SIZE_SM));
         ui.add_space(4.0); // gap between label letter and slider track
         let desired_size = Vec2::new((ui.available_width() - 4.0).max(24.0), COLOR_SLIDER_TRACK_HEIGHT);
@@ -2193,15 +3299,23 @@ fn value_slider(ui: &mut egui::Ui, theme: &Theme, label: &str, value: &mut f32, 
 fn tab_button(ui: &mut egui::Ui, theme: &Theme, selected: bool, label: &str) -> egui::Response {
     // Width = hex outer (94 inner + 6*2 margin = 106) / 3 tabs, spacing already 0.
     const TAB_W: f32 = (94.0 + 12.0) / 3.0;
-    ui.add_sized(
-        Vec2::new(TAB_W, 18.0),
-        egui::Button::new(rich(label, if selected { theme.fg } else { theme.fg_desc }, FONT_SIZE_SM))
-            .fill(if selected { theme.accent } else { theme.surface })
-            .stroke(egui::Stroke::NONE),
-    )
+    // Use allocate_exact_size so the FULL rect (including text pixels) owns the response.
+    // egui::Button only senses over its background, missing clicks on text glyphs.
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(TAB_W, 18.0), egui::Sense::click());
+    let bg = if selected { theme.accent } else if response.hovered() { theme.surface } else { theme.surface };
+    ui.painter().rect_filled(rect, 0.0, bg);
+    let text_color = if selected { theme.fg } else { theme.fg_desc };
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        label,
+        FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
+        text_color,
+    );
+    response
 }
 
-fn tool_btn(ui: &mut egui::Ui, active_tool: &mut ActiveTool, theme: &Theme, tool: ActiveTool, icon: ImageSource<'static>) {
+fn tool_btn(ui: &mut egui::Ui, active_tool: &mut ActiveTool, theme: &Theme, tool: ActiveTool, icon: ImageSource<'static>) -> egui::Response {
     let selected = *active_tool == tool;
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(38.0), egui::Sense::click());
     let tint = if selected {
@@ -2214,6 +3328,37 @@ fn tool_btn(ui: &mut egui::Ui, active_tool: &mut ActiveTool, theme: &Theme, tool
     ui.put(rect, Image::new(icon).fit_to_exact_size(Vec2::splat(18.0)).tint(tint));
     if response.clicked() {
         *active_tool = tool;
+    }
+    response
+}
+
+/// Stateless tool button (no auto-selection). Caller decides what click does.
+fn tool_btn_raw(ui: &mut egui::Ui, theme: &Theme, selected: bool, icon: ImageSource<'static>) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(38.0), egui::Sense::click());
+    let tint = if selected {
+        theme.fg
+    } else if response.hovered() {
+        Color32::WHITE
+    } else {
+        theme.fg_desc
+    };
+    ui.put(rect, Image::new(icon).fit_to_exact_size(Vec2::splat(18.0)).tint(tint));
+    response
+}
+
+/// Map a tool variant to its icon image.
+fn tool_icon(tool: &ActiveTool) -> ImageSource<'static> {
+    match tool {
+        ActiveTool::Pencil           => egui::include_image!("../assets/icons/pencil.svg"),
+        ActiveTool::Eraser           => egui::include_image!("../assets/icons/eraser.svg"),
+        ActiveTool::Fill             => egui::include_image!("../assets/icons/fill.svg"),
+        ActiveTool::Eyedropper       => egui::include_image!("../assets/icons/eyedropper.svg"),
+        ActiveTool::Rectangle { .. } => egui::include_image!("../assets/icons/rectangle.svg"),
+        ActiveTool::Ellipse { .. }   => egui::include_image!("../assets/icons/ellipse.svg"),
+        ActiveTool::Line             => egui::include_image!("../assets/icons/line.svg"),
+        ActiveTool::RectSelect       => egui::include_image!("../assets/icons/select.svg"),
+        ActiveTool::Move             => egui::include_image!("../assets/icons/move.svg"),
+        ActiveTool::Zoom             => egui::include_image!("../assets/icons/zoom.svg"),
     }
 }
 
@@ -2240,6 +3385,17 @@ fn menu_item(ui: &mut egui::Ui, theme: &Theme, label: &str) -> egui::Response {
             .stroke(egui::Stroke::NONE)
             .min_size(Vec2::new(132.0, 28.0)),
     )
+}
+
+fn panel_icon(panel: Panel) -> egui::ImageSource<'static> {
+    match panel {
+        Panel::Palette    => egui::include_image!("../assets/icons/colors.svg"),
+        Panel::Color      => egui::include_image!("../assets/icons/color_mixer.svg"),
+        Panel::Layers     => egui::include_image!("../assets/icons/layer.svg"),
+        Panel::Animations => egui::include_image!("../assets/icons/animation.svg"),
+        Panel::Preview    => egui::include_image!("../assets/icons/visibility.svg"),
+        Panel::Timeline   => egui::include_image!("../assets/icons/visibility.svg"),
+    }
 }
 
 fn rfd_open() -> Option<std::path::PathBuf> {
