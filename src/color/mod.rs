@@ -55,7 +55,7 @@ impl Default for ColorState {
         Self {
             foreground: [0, 0, 0, 255],
             background: [255, 255, 255, 255],
-            active_picker: PickerMode::Hsv,
+            active_picker: PickerMode::OkLab,
             ramp_size: 5,
             snap_oklch_l: false,
             snap_oklch_c: false,
