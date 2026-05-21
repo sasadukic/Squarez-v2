@@ -95,6 +95,56 @@ pub fn generate_ramp(base_l: f32, base_c: f32, base_h: f32, n: usize, anchor: Ra
     }).collect()
 }
 
+/// Two-endpoint OKLCh ramp: L goes from `l_dark` to `l_light`. C/H use the base color.
+/// Used in `Endpoints` anchor mode where the user explicitly sets both lightness ends.
+pub fn generate_ramp_endpoints(l_dark: f32, l_light: f32, base_c: f32, base_h: f32, n: usize, hue_shift_deg: f32, sat_curve_depth: f32) -> Vec<(f32, f32, f32)> {
+    if n == 0 { return Vec::new(); }
+    let denom = (n.saturating_sub(1)).max(1) as f32;
+    let l_at = |i: usize| l_dark + (l_light - l_dark) * (i as f32 / denom);
+    let c_curve = |i: usize| {
+        let t = i as f32 / denom;
+        1.0 - ((2.0 * t - 1.0).powi(2)) * sat_curve_depth
+    };
+    // Hue drift centered on the middle of the ramp.
+    let mid = denom / 2.0;
+    let h_at = |i: usize| {
+        let t = (i as f32 - mid) / denom;
+        base_h + t * hue_shift_deg
+    };
+    // Anchor C scaling at the dark end (index 0) so user's chosen FG chroma is preserved there.
+    let c_scale = if c_curve(0).abs() < 1e-6 { 0.0 } else { base_c / c_curve(0) };
+    (0..n).map(|i| {
+        let l = l_at(i).clamp(0.0, 1.0);
+        let c = (c_curve(i) * c_scale).max(0.0);
+        let h = h_at(i).rem_euclid(360.0);
+        (l, c, h)
+    }).collect()
+}
+
+/// Two-endpoint HSV ramp: V goes from `v_dark` to `v_light`. H/S use the base color.
+pub fn generate_ramp_hsv_endpoints(base_h: f32, base_s: f32, v_dark: f32, v_light: f32, n: usize, hue_shift_deg: f32, sat_curve_depth: f32) -> Vec<(f32, f32, f32)> {
+    if n == 0 { return Vec::new(); }
+    let denom = (n.saturating_sub(1)).max(1) as f32;
+    let v_at = |i: usize| v_dark + (v_light - v_dark) * (i as f32 / denom);
+    let s_curve = |i: usize| {
+        let t = i as f32 / denom;
+        1.0 - ((2.0 * t - 1.0).powi(2)) * sat_curve_depth
+    };
+    // Pixel-art directional hue-shift: index 0 = darkest = +H (blue), last = lightest = -H (yellow).
+    let mid = denom / 2.0;
+    let h_at = |i: usize| {
+        let t = (i as f32 - mid) / denom; // negative for shadows, positive for highlights
+        base_h + (-t) * hue_shift_deg
+    };
+    let s_scale = if s_curve(0).abs() < 1e-6 { 0.0 } else { base_s / s_curve(0) };
+    (0..n).map(|i| {
+        let v = v_at(i).clamp(0.0, 1.0);
+        let s = (s_curve(i) * s_scale).clamp(0.0, 1.0);
+        let h = h_at(i).rem_euclid(360.0);
+        (h, s, v)
+    }).collect()
+}
+
 /// Generate an N-step HSV ramp anchored at the user's current color.
 ///
 /// V spans [0.20, 0.95] linearly across the ramp.

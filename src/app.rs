@@ -4,7 +4,7 @@ use egui::{CentralPanel, Color32, FontFamily, FontId, Frame, Image, ImageSource,
 use crate::animation::{FrameThumbnail, PlaybackState};
 use crate::canvas::CanvasState;
 use crate::color::hsv::{hsv_to_rgba, rgba_to_hsv};
-use crate::color::oklab::{oklab_to_rgba, rgba_to_oklab, oklch_to_rgba, rgba_to_oklch, generate_ramp, generate_ramp_hsv};
+use crate::color::oklab::{oklab_to_rgba, rgba_to_oklab, oklch_to_rgba, rgba_to_oklch, generate_ramp, generate_ramp_hsv, generate_ramp_endpoints, generate_ramp_hsv_endpoints};
 use crate::color::RampAnchor;
 use crate::color::{ColorState, PickerMode};
 use crate::history::{Command, UndoStack};
@@ -155,9 +155,21 @@ impl TopMenu {
 const LAYOUT_STORAGE_KEY: &str = "squarez_layout_v1";
 
 #[derive(serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 struct LayoutState {
     ui_state: UiState,
     sidebar_order: Vec<Panel>,
+    color_state: Option<ColorState>,
+}
+
+impl Default for LayoutState {
+    fn default() -> Self {
+        Self {
+            ui_state: UiState::default(),
+            sidebar_order: Vec::new(),
+            color_state: None,
+        }
+    }
 }
 
 impl App {
@@ -178,9 +190,14 @@ impl App {
             .map(|a| a.frames.iter().map(|_| FrameThumbnail::default()).collect())
             .collect();
         // Seed foreground from first palette color so all picker modes start in sync
-        let mut color_state = ColorState::default();
-        if let Some(first) = project.palette.first() {
-            color_state.foreground = *first;
+        let mut color_state = layout.as_ref()
+            .and_then(|l| l.color_state.clone())
+            .unwrap_or_default();
+        // If no persisted color_state had a foreground, seed it from the palette.
+        if layout.as_ref().and_then(|l| l.color_state.as_ref()).is_none() {
+            if let Some(first) = project.palette.first() {
+                color_state.foreground = *first;
+            }
         }
         Self {
             project,
@@ -1328,14 +1345,22 @@ impl App {
                 PickerMode::Hsv => {
                     let (mut h, mut s, mut v) = rgba_to_hsv(fg);
                     let n = self.color_state.ramp_size;
+                    let endpoints_mode = self.color_state.ramp_anchor == RampAnchor::Endpoints;
                     let mut changed = false;
                     let now = ui.ctx().input(|i| i.time);
                     let out_h = value_slider_snap(ui, &theme, "H", &mut h, 0.0..=360.0,
                         &mut self.color_state.snap_hsv_h, (0.0, 360.0), n);
                     let out_s = value_slider_snap(ui, &theme, "S", &mut s, 0.0..=1.0,
                         &mut self.color_state.snap_hsv_s, (0.0, 1.0), n);
-                    let out_v = value_slider_snap(ui, &theme, "V", &mut v, 0.0..=1.0,
-                        &mut self.color_state.snap_hsv_v, (0.20, 0.95), n);
+                    let out_v = if endpoints_mode {
+                        let mut light = self.color_state.light_end_v.max(v + 0.02);
+                        let out = dual_value_slider(ui, &theme, "V", &mut v, &mut light, 0.0..=1.0);
+                        self.color_state.light_end_v = light;
+                        out
+                    } else {
+                        value_slider_snap(ui, &theme, "V", &mut v, 0.0..=1.0,
+                            &mut self.color_state.snap_hsv_v, (0.20, 0.95), n)
+                    };
                     changed |= out_h.changed | out_s.changed | out_v.changed;
                     if let Some(pos) = out_h.label_rclick {
                         self.slider_param_menu = Some((SliderParam::HueShift, pos, now));
@@ -1349,8 +1374,13 @@ impl App {
 
                     // Ramp strip + push-to-palette button (mirror of OKL branch)
                     ui.add_space(6.0);
-                    let ramp_hsv = generate_ramp_hsv(h, s, v, n, self.color_state.ramp_anchor,
-                        self.color_state.hue_shift_deg, self.color_state.sat_curve_depth);
+                    let ramp_hsv = if endpoints_mode {
+                        generate_ramp_hsv_endpoints(h, s, v, self.color_state.light_end_v, n,
+                            self.color_state.hue_shift_deg, self.color_state.sat_curve_depth)
+                    } else {
+                        generate_ramp_hsv(h, s, v, n, self.color_state.ramp_anchor,
+                            self.color_state.hue_shift_deg, self.color_state.sat_curve_depth)
+                    };
                     let ramp_rgba: Vec<crate::project::Rgba> = ramp_hsv.iter()
                         .map(|&(h, s, v)| hsv_to_rgba(h, s, v, 255))
                         .collect();
@@ -1386,15 +1416,22 @@ impl App {
                         let tri_top_y = cells_bot + 1.0;
                         let tri_bot_y = cells_bot + MARKER_H;
                         let half_w = 3.0;
-                        ui.painter().add(egui::Shape::convex_polygon(
-                            vec![
-                                Pos2::new(anchor_cx, tri_top_y),
-                                Pos2::new(anchor_cx - half_w, tri_bot_y),
-                                Pos2::new(anchor_cx + half_w, tri_bot_y),
-                            ],
-                            theme.fg,
-                            egui::Stroke::NONE,
-                        ));
+                        let draw_tri = |cx: f32, ui: &mut egui::Ui| {
+                            ui.painter().add(egui::Shape::convex_polygon(
+                                vec![
+                                    Pos2::new(cx, tri_top_y),
+                                    Pos2::new(cx - half_w, tri_bot_y),
+                                    Pos2::new(cx + half_w, tri_bot_y),
+                                ],
+                                theme.fg,
+                                egui::Stroke::NONE,
+                            ));
+                        };
+                        draw_tri(anchor_cx, ui);
+                        if self.color_state.ramp_anchor == RampAnchor::Endpoints && n >= 2 {
+                            let last_cx = strip_rect.left() + cell_w * ((n - 1) as f32 + 0.5);
+                            draw_tri(last_cx, ui);
+                        }
                         if strip_resp.secondary_clicked() {
                             self.color_state.ramp_anchor = match self.color_state.ramp_anchor {
                                 RampAnchor::Middle    => RampAnchor::BaseStep3,
@@ -1437,10 +1474,20 @@ impl App {
                     // Preserve prior hue when chroma collapses (achromatic colors have undefined H).
                     if c < 1e-4 { h = self.color_state.last_oklch_h; }
                     let n = self.color_state.ramp_size;
+                    let endpoints_mode = self.color_state.ramp_anchor == RampAnchor::Endpoints;
                     let mut changed = false;
                     let now = ui.ctx().input(|i| i.time);
-                    let out_l = value_slider_snap(ui, &theme, "L", &mut l, 0.0..=1.0,
-                        &mut self.color_state.snap_oklch_l, (0.15, 0.90), n);
+                    // In Endpoints mode the L slider is a dual-thumb range slider where
+                    // the dark thumb edits FG's L and the light thumb edits `light_end_l`.
+                    let out_l = if endpoints_mode {
+                        let mut light = self.color_state.light_end_l.max(l + 0.02);
+                        let out = dual_value_slider(ui, &theme, "L", &mut l, &mut light, 0.0..=1.0);
+                        self.color_state.light_end_l = light;
+                        out
+                    } else {
+                        value_slider_snap(ui, &theme, "L", &mut l, 0.0..=1.0,
+                            &mut self.color_state.snap_oklch_l, (0.15, 0.90), n)
+                    };
                     let out_c = value_slider_snap(ui, &theme, "C", &mut c, 0.0..=0.4,
                         &mut self.color_state.snap_oklch_c, (0.0, 0.4), n);
                     let out_h = value_slider_snap(ui, &theme, "H", &mut h, 0.0..=360.0,
@@ -1460,8 +1507,13 @@ impl App {
 
                     // Ramp strip + push-to-palette button
                     ui.add_space(6.0);
-                    let ramp_lch = generate_ramp(l, c, h, n, self.color_state.ramp_anchor,
-                        self.color_state.hue_shift_deg, self.color_state.sat_curve_depth);
+                    let ramp_lch = if endpoints_mode {
+                        generate_ramp_endpoints(l, self.color_state.light_end_l, c, h, n,
+                            self.color_state.hue_shift_deg, self.color_state.sat_curve_depth)
+                    } else {
+                        generate_ramp(l, c, h, n, self.color_state.ramp_anchor,
+                            self.color_state.hue_shift_deg, self.color_state.sat_curve_depth)
+                    };
                     let ramp_rgba: Vec<crate::project::Rgba> = ramp_lch.iter()
                         .map(|&(l, c, h)| oklch_to_rgba(l, c, h, 255))
                         .collect();
@@ -1499,15 +1551,22 @@ impl App {
                         let tri_top_y = cells_bot + 1.0;
                         let tri_bot_y = cells_bot + MARKER_H;
                         let half_w = 3.0;
-                        ui.painter().add(egui::Shape::convex_polygon(
-                            vec![
-                                Pos2::new(anchor_cx, tri_top_y),
-                                Pos2::new(anchor_cx - half_w, tri_bot_y),
-                                Pos2::new(anchor_cx + half_w, tri_bot_y),
-                            ],
-                            theme.fg,
-                            egui::Stroke::NONE,
-                        ));
+                        let draw_tri = |cx: f32, ui: &mut egui::Ui| {
+                            ui.painter().add(egui::Shape::convex_polygon(
+                                vec![
+                                    Pos2::new(cx, tri_top_y),
+                                    Pos2::new(cx - half_w, tri_bot_y),
+                                    Pos2::new(cx + half_w, tri_bot_y),
+                                ],
+                                theme.fg,
+                                egui::Stroke::NONE,
+                            ));
+                        };
+                        draw_tri(anchor_cx, ui);
+                        if self.color_state.ramp_anchor == RampAnchor::Endpoints && n >= 2 {
+                            let last_cx = strip_rect.left() + cell_w * ((n - 1) as f32 + 0.5);
+                            draw_tri(last_cx, ui);
+                        }
                         // Right-click cycles anchor mode.
                         if strip_resp.secondary_clicked() {
                             self.color_state.ramp_anchor = match self.color_state.ramp_anchor {
@@ -2998,6 +3057,7 @@ impl eframe::App for App {
         let state = LayoutState {
             ui_state: self.ui_state.clone(),
             sidebar_order: self.sidebar_order.clone(),
+            color_state: Some(self.color_state.clone()),
         };
         if let Ok(json) = serde_json::to_string(&state) {
             storage.set_string(LAYOUT_STORAGE_KEY, json);
@@ -3261,6 +3321,95 @@ fn value_slider_snap(
                     *value = new_v;
                     changed = true;
                 }
+            }
+        }
+        SliderOut { changed, label_rclick }
+    }).inner
+}
+
+/// Dual-thumb range slider. `lo` and `hi` are clamped to `range` and to each other (with a small gap).
+/// Returns `(changed, label_rclick)`.
+fn dual_value_slider(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    label: &str,
+    lo: &mut f32,
+    hi: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+) -> SliderOut {
+    ui.horizontal(|ui| {
+        const LABEL_W: f32 = 8.0;
+        let (label_rect, label_resp) = ui.allocate_exact_size(
+            Vec2::new(LABEL_W, COLOR_SLIDER_TRACK_HEIGHT),
+            egui::Sense::click(),
+        );
+        ui.painter().text(
+            label_rect.left_center(),
+            egui::Align2::LEFT_CENTER,
+            label,
+            FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
+            theme.fg_muted,
+        );
+        let label_rclick = if label_resp.secondary_clicked() {
+            Some(label_resp.rect.left_bottom())
+        } else { None };
+
+        ui.add_space(4.0);
+        let desired_size = Vec2::new((ui.available_width() - 4.0).max(24.0), COLOR_SLIDER_TRACK_HEIGHT);
+        let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click_and_drag());
+        let start = *range.start();
+        let end = *range.end();
+        let span = end - start;
+        if span <= 0.0 { return SliderOut { changed: false, label_rclick }; }
+
+        let t_lo = ((*lo - start) / span).clamp(0.0, 1.0);
+        let t_hi = ((*hi - start) / span).clamp(0.0, 1.0);
+
+        // Background.
+        ui.painter().rect_filled(rect, 0.0, theme.bg);
+        // Fill between thumbs.
+        let fill_rect = egui::Rect::from_min_max(
+            Pos2::new(rect.left() + rect.width() * t_lo, rect.top()),
+            Pos2::new(rect.left() + rect.width() * t_hi, rect.bottom()),
+        );
+        ui.painter().rect_filled(fill_rect, 0.0, theme.accent);
+        // Thumb markers (2px wide vertical bars).
+        let thumb_w = 2.0;
+        let lo_x = rect.left() + rect.width() * t_lo;
+        let hi_x = rect.left() + rect.width() * t_hi;
+        ui.painter().rect_filled(
+            egui::Rect::from_min_max(Pos2::new(lo_x - thumb_w * 0.5, rect.top()), Pos2::new(lo_x + thumb_w * 0.5, rect.bottom())),
+            0.0, theme.fg,
+        );
+        ui.painter().rect_filled(
+            egui::Rect::from_min_max(Pos2::new(hi_x - thumb_w * 0.5, rect.top()), Pos2::new(hi_x + thumb_w * 0.5, rect.bottom())),
+            0.0, theme.fg,
+        );
+
+        let mut changed = false;
+        // Persist which thumb is being dragged across frames using egui memory.
+        let drag_id = ui.id().with(("dual_slider_drag", label));
+        if let Some(pos) = response.interact_pointer_pos() {
+            let new_t = ((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
+            let new_v = start + span * new_t;
+            // Determine which thumb the user grabbed (on first frame of drag) and remember it.
+            let active: u8 = if response.drag_started() || response.clicked() {
+                let d_lo = (new_t - t_lo).abs();
+                let d_hi = (new_t - t_hi).abs();
+                let pick = if d_lo <= d_hi { 0u8 } else { 1u8 };
+                ui.ctx().data_mut(|d| d.insert_temp(drag_id, pick));
+                pick
+            } else if response.dragged() {
+                ui.ctx().data(|d| d.get_temp::<u8>(drag_id)).unwrap_or(0)
+            } else {
+                255
+            };
+            if active == 0 {
+                let clamped = new_v.min(*hi - 0.01).max(start);
+                if (clamped - *lo).abs() > f32::EPSILON { *lo = clamped; changed = true; }
+            } else if active == 1 {
+                let clamped = new_v.max(*lo + 0.01).min(end);
+                if (clamped - *hi).abs() > f32::EPSILON { *hi = clamped; changed = true; }
             }
         }
         SliderOut { changed, label_rclick }

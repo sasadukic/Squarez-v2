@@ -2,11 +2,12 @@
 pub mod hsv;
 pub mod oklab;
 pub use hsv::{rgba_to_hsv, hsv_to_rgba};
-pub use oklab::{rgba_to_oklab, oklab_to_rgba, rgba_to_oklch, oklch_to_rgba, generate_ramp, generate_ramp_hsv};
+pub use oklab::{rgba_to_oklab, oklab_to_rgba, rgba_to_oklch, oklch_to_rgba, generate_ramp, generate_ramp_hsv, generate_ramp_endpoints, generate_ramp_hsv_endpoints};
 use crate::project::Rgba;
 
 /// All color picker state for the right panel
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct ColorState {
     pub foreground: Rgba,
     pub background: Rgba,
@@ -29,9 +30,14 @@ pub struct ColorState {
     pub snap_hsv_h: bool,
     pub snap_hsv_s: bool,
     pub snap_hsv_v: bool,
+    /// Endpoints mode: the L value (OKLCh) of the *light* end of the ramp.
+    /// FG anchors the dark end; this anchors the light end.
+    pub light_end_l: f32,
+    /// Endpoints mode (HSV): the V value of the *light* end of the ramp.
+    pub light_end_v: f32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum RampAnchor {
     /// FG sits at the middle index of the ramp.
     Middle,
@@ -41,7 +47,7 @@ pub enum RampAnchor {
     Endpoints,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum PickerMode { Hsv, OkLab, Rgb }
 
 impl Default for ColorState {
@@ -61,6 +67,8 @@ impl Default for ColorState {
             snap_hsv_h: false,
             snap_hsv_s: false,
             snap_hsv_v: false,
+            light_end_l: 0.90,
+            light_end_v: 0.95,
         }
     }
 }
