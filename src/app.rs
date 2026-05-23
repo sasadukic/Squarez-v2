@@ -3826,6 +3826,48 @@ impl App {
         });
         let _ = area;
     }
+
+    /// Generate preview colors for the current ramp_lab buffer.
+    /// Returns (rgba_vec, gamut_adjusted_flag)
+    fn generate_ramp_preview(&self) -> (Vec<crate::project::Rgba>, bool) {
+        use crate::project::Rgba;
+        use crate::color::{rgba_to_oklch, safe_oklch_to_rgba, generate_ramp, generate_ramp_endpoints, generate_ramp_hsv, generate_ramp_hsv_endpoints};
+        use crate::color::hsv::hsv_to_rgba;
+
+        let mut adjusted = false;
+        let mut n = self.ramp_lab_ramp_size;
+        if n < 3 { n = 3 } else if n > 9 { n = 9 }
+
+        match self.ramp_lab_mode {
+            PickerMode::OkLab => {
+                let fg = self.color_state.foreground;
+                let (base_l, base_c, base_h) = rgba_to_oklch(fg);
+                let mut ramp = generate_ramp(base_l, base_c, base_h, n, self.color_state.ramp_anchor, self.color_state.hue_shift_deg, self.color_state.sat_curve_depth, self.ramp_l_bounds().0, self.ramp_l_bounds().1, self.color_state.ramp_end_extremes);
+                // apply curves from modal buffer (approx: use luma curve fields)
+                // We'll map modal curve to temporary ColorState-like values by copying into a local copy
+                let mut rgba_out: Vec<Rgba> = Vec::new();
+                for (l, c, h) in ramp.iter() {
+                    let rgba = safe_oklch_to_rgba(*l, *c, *h, 255, true);
+                    // detect adjustment by comparing resulting oklch
+                    let (_l2, c2, _h2) = rgba_to_oklch(rgba);
+                    if (c2 - *c).abs() > 1e-3 { adjusted = true; }
+                    rgba_out.push(rgba);
+                }
+                (rgba_out, adjusted)
+            }
+            PickerMode::Hsv => {
+                let fg = self.color_state.foreground;
+                let (h, s, v) = rgba_to_hsv(fg);
+                let mut ramp_hsv = generate_ramp_hsv(h, s, v, n, self.color_state.ramp_anchor, self.color_state.hue_shift_deg, self.color_state.sat_curve_depth, self.ramp_v_bounds().0, self.ramp_v_bounds().1, self.color_state.ramp_end_extremes);
+                let mut rgba_out: Vec<Rgba> = Vec::new();
+                for (hh, ss, vv) in ramp_hsv.iter() {
+                    rgba_out.push(hsv_to_rgba(*hh, *ss, *vv, 255));
+                }
+                (rgba_out, adjusted)
+            }
+            PickerMode::Rgb => (Vec::new(), adjusted),
+        }
+    }
 }
 
 fn rich(text: &str, color: Color32, size: f32) -> RichText {
