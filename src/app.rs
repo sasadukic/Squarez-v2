@@ -3747,11 +3747,67 @@ impl App {
 
                         ui.add_space(12.0);
 
-                        // Right: controls stub
+                        // Right: controls with curve editor
                         ui.vertical(|ui| {
                             ui.label(rich("Ramp Lab", theme.fg, FONT_SIZE_SM));
-                            ui.add_space(8.0);
+                            ui.add_space(6.0);
                             ui.label(rich("Curve Editor", theme.fg_desc, FONT_SIZE_SM));
+                            ui.add_space(6.0);
+
+                            // Curve editor area
+                            let editor_size = Vec2::new(260.0, 120.0);
+                            let (editor_rect, editor_resp) = ui.allocate_exact_size(editor_size, egui::Sense::drag());
+                            ui.painter().rect_filled(editor_rect, 4.0, theme.bg);
+                            // Draw baseline grid
+                            for i in 0..5 {
+                                let y = editor_rect.top() + editor_rect.height() * (i as f32 / 4.0);
+                                ui.painter().line_segment([Pos2::new(editor_rect.left(), y), Pos2::new(editor_rect.right(), y)], egui::Stroke::new(1.0, theme.fg_muted));
+                            }
+                            // Handles at x positions 0, 0.5, 1.0
+                            let xs = [0.0, 0.5, 1.0];
+                            let ys = [
+                                self.ramp_lab_curve_start_luma,
+                                self.ramp_lab_curve_mid_luma,
+                                self.ramp_lab_curve_end_luma,
+                            ];
+                            // Draw handles and allow dragging nearest handle vertically
+                            if let Some(ptr_pos) = editor_resp.interact_pointer_pos() {
+                                if editor_resp.dragged() {
+                                    // find nearest handle by x
+                                    let rel_x = (ptr_pos.x - editor_rect.left()).clamp(0.0, editor_rect.width());
+                                    let mut nearest = 0usize;
+                                    let mut best = f32::INFINITY;
+                                    for (i, &fx) in xs.iter().enumerate() {
+                                        let hx = editor_rect.left() + fx * editor_rect.width();
+                                        let d = (hx - ptr_pos.x).abs();
+                                        if d < best { best = d; nearest = i; }
+                                    }
+                                    let new_t = 1.0 - ((ptr_pos.y - editor_rect.top()) / editor_rect.height()).clamp(0.0, 1.0);
+                                    let new_v = new_t.clamp(0.0, 1.0);
+                                    match nearest {
+                                        0 => self.ramp_lab_curve_start_luma = new_v,
+                                        1 => self.ramp_lab_curve_mid_luma = new_v,
+                                        2 => self.ramp_lab_curve_end_luma = new_v,
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            for (i, &fx) in xs.iter().enumerate() {
+                                let hx = editor_rect.left() + fx * editor_rect.width();
+                                let hy = editor_rect.top() + (1.0 - ys[i]) * editor_rect.height();
+                                ui.painter().circle_filled(Pos2::new(hx, hy), 6.0, theme.accent);
+                                ui.painter().circle_stroke(Pos2::new(hx, hy), 6.0, egui::Stroke::new(1.0, theme.fg));
+                            }
+
+                            ui.add_space(6.0);
+                            ui.horizontal(|ui| {
+                                ui.add(egui::DragValue::new(&mut self.ramp_lab_curve_start_luma).speed(0.01));
+                                ui.add_space(6.0);
+                                ui.add(egui::DragValue::new(&mut self.ramp_lab_curve_mid_luma).speed(0.01));
+                                ui.add_space(6.0);
+                                ui.add(egui::DragValue::new(&mut self.ramp_lab_curve_end_luma).speed(0.01));
+                            });
+
                             ui.add_space(8.0);
                             // Buttons row
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
