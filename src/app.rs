@@ -35,6 +35,20 @@ pub struct App {
     pub ui_state: UiState,
     // Ramp Lab modal open flag: when true, canvas/timeline input is blocked.
     pub ramp_lab_open: bool,
+    // Temporary buffer for Ramp Lab modal. Mirrors selected fields from ColorState
+    // so edits can be previewed before committing.
+    pub ramp_lab_mode: PickerMode,
+    pub ramp_lab_hue: f32,
+    pub ramp_lab_ramp_size: usize,
+    pub ramp_lab_curve_start_luma: f32,
+    pub ramp_lab_curve_mid_luma: f32,
+    pub ramp_lab_curve_end_luma: f32,
+    pub ramp_lab_curve_start_sat: f32,
+    pub ramp_lab_curve_mid_sat: f32,
+    pub ramp_lab_curve_end_sat: f32,
+    pub ramp_lab_curve_start_hue: f32,
+    pub ramp_lab_curve_mid_hue: f32,
+    pub ramp_lab_curve_end_hue: f32,
     drag_start: Option<(u32, u32)>,
     stroke_edits: Vec<crate::tools::PixelEdit>,
     canvas_dirty: bool,
@@ -287,6 +301,22 @@ impl App {
                 color_state.foreground = *first;
             }
         }
+        // Prepare initial Ramp Lab buffer values from the color_state before moving it into Self
+        let init_ramp_lab_mode = color_state.active_picker.clone();
+        let init_ramp_lab_hue = {
+            let (_l, _c, h) = rgba_to_oklch(color_state.foreground);
+            h
+        };
+        let init_ramp_lab_ramp_size = color_state.ramp_size;
+        let init_ramp_lab_curve_start_luma = color_state.ramp_curve_start_luma;
+        let init_ramp_lab_curve_mid_luma = color_state.ramp_curve_mid_luma;
+        let init_ramp_lab_curve_end_luma = color_state.ramp_curve_end_luma;
+        let init_ramp_lab_curve_start_sat = color_state.ramp_curve_start_sat;
+        let init_ramp_lab_curve_mid_sat = color_state.ramp_curve_mid_sat;
+        let init_ramp_lab_curve_end_sat = color_state.ramp_curve_end_sat;
+        let init_ramp_lab_curve_start_hue = color_state.ramp_curve_start_hue;
+        let init_ramp_lab_curve_mid_hue = color_state.ramp_curve_mid_hue;
+        let init_ramp_lab_curve_end_hue = color_state.ramp_curve_end_hue;
         Self {
             project,
             theme: Theme::default(),
@@ -354,6 +384,19 @@ impl App {
             logo_sprite: None,
             logo_anim_start: None,
             ramp_lab_open: false,
+            // Initialize ramp_lab buffers from color_state so modal opens in-sync.
+            ramp_lab_mode: init_ramp_lab_mode,
+            ramp_lab_hue: init_ramp_lab_hue,
+            ramp_lab_ramp_size: init_ramp_lab_ramp_size,
+            ramp_lab_curve_start_luma: init_ramp_lab_curve_start_luma,
+            ramp_lab_curve_mid_luma: init_ramp_lab_curve_mid_luma,
+            ramp_lab_curve_end_luma: init_ramp_lab_curve_end_luma,
+            ramp_lab_curve_start_sat: init_ramp_lab_curve_start_sat,
+            ramp_lab_curve_mid_sat: init_ramp_lab_curve_mid_sat,
+            ramp_lab_curve_end_sat: init_ramp_lab_curve_end_sat,
+            ramp_lab_curve_start_hue: init_ramp_lab_curve_start_hue,
+            ramp_lab_curve_mid_hue: init_ramp_lab_curve_mid_hue,
+            ramp_lab_curve_end_hue: init_ramp_lab_curve_end_hue,
         }
     }
 
@@ -491,6 +534,25 @@ impl App {
 
     fn label_muted(&self, text: &str) -> RichText {
         rich(text, self.theme.fg_muted, FONT_SIZE_SM)
+    }
+
+    /// Open the Ramp Lab modal, copying current color_state into the modal buffer.
+    pub fn open_ramp_lab(&mut self) {
+        let fg = self.color_state.foreground;
+        let (_l, _c, h) = rgba_to_oklch(fg);
+        self.ramp_lab_mode = self.color_state.active_picker.clone();
+        self.ramp_lab_hue = h;
+        self.ramp_lab_ramp_size = self.color_state.ramp_size;
+        self.ramp_lab_curve_start_luma = self.color_state.ramp_curve_start_luma;
+        self.ramp_lab_curve_mid_luma = self.color_state.ramp_curve_mid_luma;
+        self.ramp_lab_curve_end_luma = self.color_state.ramp_curve_end_luma;
+        self.ramp_lab_curve_start_sat = self.color_state.ramp_curve_start_sat;
+        self.ramp_lab_curve_mid_sat = self.color_state.ramp_curve_mid_sat;
+        self.ramp_lab_curve_end_sat = self.color_state.ramp_curve_end_sat;
+        self.ramp_lab_curve_start_hue = self.color_state.ramp_curve_start_hue;
+        self.ramp_lab_curve_mid_hue = self.color_state.ramp_curve_mid_hue;
+        self.ramp_lab_curve_end_hue = self.color_state.ramp_curve_end_hue;
+        self.ramp_lab_open = true;
     }
 
     fn panel_frame(&self) -> Frame {
@@ -3655,9 +3717,58 @@ impl eframe::App for App {
         self.draw_layer_context_menu(ctx);
         self.draw_new_project_dialog(ctx);
 
+        // Draw Ramp Lab modal on top if open
+        self.draw_ramp_lab_modal(ctx);
+
         if self.playback.is_playing {
             ctx.request_repaint();
         }
+    }
+}
+
+impl App {
+    /// Draw Ramp Lab modal when open. Skeleton UI: left preview stub, right controls with Apply/Cancel.
+    fn draw_ramp_lab_modal(&mut self, ctx: &egui::Context) {
+        if !self.ramp_lab_open { return; }
+        let theme = self.theme.clone();
+        let area = egui::Area::new(egui::Id::new("ramp_lab_modal")).order(egui::Order::Foreground).show(ctx, |ui| {
+            Frame::new()
+                .fill(theme.panel)
+                .corner_radius(8.0)
+                .shadow(egui::Shadow { offset: [0, 14], blur: 36, spread: 0, color: Color32::from_rgba_unmultiplied(0,0,0,89) })
+                .inner_margin(Margin::same(12))
+                .show(ui, |ui| {
+                    ui.set_width(520.0);
+                    ui.horizontal(|ui| {
+                        // Left: preview stub
+                        let (pv_rect, _pv_resp) = ui.allocate_exact_size(Vec2::new(220.0, 220.0), egui::Sense::hover());
+                        ui.painter().rect_filled(pv_rect, 4.0, theme.surface);
+                        ui.painter().text(pv_rect.center(), egui::Align2::CENTER_CENTER, "Ramp Preview", FontId::new(14.0, FontFamily::Proportional), theme.fg_desc);
+
+                        ui.add_space(12.0);
+
+                        // Right: controls stub
+                        ui.vertical(|ui| {
+                            ui.label(rich("Ramp Lab", theme.fg, FONT_SIZE_SM));
+                            ui.add_space(8.0);
+                            ui.label(rich("Curve Editor", theme.fg_desc, FONT_SIZE_SM));
+                            ui.add_space(8.0);
+                            // Buttons row
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.add(egui::Button::new("Cancel")).clicked() {
+                                    self.ramp_lab_open = false;
+                                }
+                                ui.add_space(8.0);
+                                if ui.add(egui::Button::new("Apply")).clicked() {
+                                    // Apply not implemented yet
+                                    self.ramp_lab_open = false;
+                                }
+                            });
+                        });
+                    });
+                });
+        });
+        let _ = area;
     }
 }
 
