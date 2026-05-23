@@ -49,6 +49,8 @@ pub struct App {
     pub ramp_lab_curve_start_hue: f32,
     pub ramp_lab_curve_mid_hue: f32,
     pub ramp_lab_curve_end_hue: f32,
+    // Which curve axis user is editing in the modal: 0=Luma, 1=Sat, 2=Hue
+    pub ramp_lab_curve_edit_mode: u8,
     // Whether to push generated preview to palette when applying.
     pub ramp_lab_push_to_palette: bool,
     drag_start: Option<(u32, u32)>,
@@ -267,6 +269,71 @@ impl App {
         }
     }
 
+    /// Apply the Ramp Lab buffer curves (start/mid/end for luma/sat/hue)
+    /// to an OKLCh ramp in-place.
+    fn apply_buffer_curve_to_okl_ramp(&self, ramp: &mut [(f32, f32, f32)]) {
+        if ramp.len() < 2 { return; }
+        let denom = (ramp.len() - 1) as f32;
+        let base_h = ramp[0].2;
+        for (i, (l, c, h)) in ramp.iter_mut().enumerate() {
+            let t = i as f32 / denom;
+            let lt = Self::curve_eval(
+                self.ramp_lab_curve_start_luma,
+                self.ramp_lab_curve_mid_luma,
+                self.ramp_lab_curve_end_luma,
+                t,
+            );
+            let st = Self::curve_eval(
+                self.ramp_lab_curve_start_sat,
+                self.ramp_lab_curve_mid_sat,
+                self.ramp_lab_curve_end_sat,
+                t,
+            );
+            let ht = Self::curve_eval(
+                self.ramp_lab_curve_start_hue,
+                self.ramp_lab_curve_mid_hue,
+                self.ramp_lab_curve_end_hue,
+                t,
+            );
+            *l = (*l * 0.5 + lt * 0.5).clamp(0.0, 1.0);
+            *c = (*c * (0.65 + st * 0.7)).clamp(0.0, 0.5);
+            let hue_mul = (ht - 0.5) * 2.0;
+            *h = (base_h + (*h - base_h) * (0.5 + 0.5 * hue_mul.abs())).rem_euclid(360.0);
+        }
+    }
+
+    /// Apply the Ramp Lab buffer curves to an HSV ramp in-place.
+    fn apply_buffer_curve_to_hsv_ramp(&self, ramp: &mut [(f32, f32, f32)]) {
+        if ramp.len() < 2 { return; }
+        let denom = (ramp.len() - 1) as f32;
+        let base_h = ramp[0].0;
+        for (i, (h, s, v)) in ramp.iter_mut().enumerate() {
+            let t = i as f32 / denom;
+            let vt = Self::curve_eval(
+                self.ramp_lab_curve_start_luma,
+                self.ramp_lab_curve_mid_luma,
+                self.ramp_lab_curve_end_luma,
+                t,
+            );
+            let st = Self::curve_eval(
+                self.ramp_lab_curve_start_sat,
+                self.ramp_lab_curve_mid_sat,
+                self.ramp_lab_curve_end_sat,
+                t,
+            );
+            let ht = Self::curve_eval(
+                self.ramp_lab_curve_start_hue,
+                self.ramp_lab_curve_mid_hue,
+                self.ramp_lab_curve_end_hue,
+                t,
+            );
+            *v = (*v * 0.5 + vt * 0.5).clamp(0.0, 1.0);
+            *s = (*s * (0.65 + st * 0.7)).clamp(0.0, 1.0);
+            let hue_mul = (ht - 0.5) * 2.0;
+            *h = (base_h + (*h - base_h) * (0.5 + 0.5 * hue_mul.abs())).rem_euclid(360.0);
+        }
+    }
+
     fn ramp_l_bounds(&self) -> (f32, f32) {
         // Allow full range so curves can reach pure black/white
         (0.0, 1.0)
@@ -399,6 +466,7 @@ impl App {
             ramp_lab_curve_start_hue: init_ramp_lab_curve_start_hue,
             ramp_lab_curve_mid_hue: init_ramp_lab_curve_mid_hue,
             ramp_lab_curve_end_hue: init_ramp_lab_curve_end_hue,
+            ramp_lab_curve_edit_mode: 0,
             ramp_lab_push_to_palette: false,
         }
     }
@@ -3786,6 +3854,18 @@ impl App {
                             ui.add_space(6.0);
                             ui.label(rich("Curve Editor", theme.fg_desc, FONT_SIZE_SM));
                             ui.add_space(6.0);
+                            // Small tab: Luma / Sat / Hue
+                            ui.horizontal(|ui| {
+                                let resp0 = tab_button(ui, &theme, self.ramp_lab_curve_edit_mode == 0, "Luma");
+                                ui.add_space(6.0);
+                                let resp1 = tab_button(ui, &theme, self.ramp_lab_curve_edit_mode == 1, "Sat");
+                                ui.add_space(6.0);
+                                let resp2 = tab_button(ui, &theme, self.ramp_lab_curve_edit_mode == 2, "Hue");
+                                if resp0.clicked() { self.ramp_lab_curve_edit_mode = 0; }
+                                if resp1.clicked() { self.ramp_lab_curve_edit_mode = 1; }
+                                if resp2.clicked() { self.ramp_lab_curve_edit_mode = 2; }
+                            });
+                            ui.add_space(6.0);
 
                             // Curve editor area
                             let editor_size = Vec2::new(260.0, 120.0);
@@ -3798,11 +3878,23 @@ impl App {
                             }
                             // Handles at x positions 0, 0.5, 1.0
                             let xs = [0.0, 0.5, 1.0];
-                            let ys = [
-                                self.ramp_lab_curve_start_luma,
-                                self.ramp_lab_curve_mid_luma,
-                                self.ramp_lab_curve_end_luma,
-                            ];
+                            let ys = match self.ramp_lab_curve_edit_mode {
+                                0 => [
+                                    self.ramp_lab_curve_start_luma,
+                                    self.ramp_lab_curve_mid_luma,
+                                    self.ramp_lab_curve_end_luma,
+                                ],
+                                1 => [
+                                    self.ramp_lab_curve_start_sat,
+                                    self.ramp_lab_curve_mid_sat,
+                                    self.ramp_lab_curve_end_sat,
+                                ],
+                                _ => [
+                                    self.ramp_lab_curve_start_hue,
+                                    self.ramp_lab_curve_mid_hue,
+                                    self.ramp_lab_curve_end_hue,
+                                ],
+                            };
                             // Draw handles and allow dragging nearest handle vertically
                             if let Some(ptr_pos) = editor_resp.interact_pointer_pos() {
                                 if editor_resp.dragged() {
@@ -3816,11 +3908,25 @@ impl App {
                                     }
                                     let new_t = 1.0 - ((ptr_pos.y - editor_rect.top()) / editor_rect.height()).clamp(0.0, 1.0);
                                     let new_v = new_t.clamp(0.0, 1.0);
-                                    match nearest {
-                                        0 => self.ramp_lab_curve_start_luma = new_v,
-                                        1 => self.ramp_lab_curve_mid_luma = new_v,
-                                        2 => self.ramp_lab_curve_end_luma = new_v,
-                                        _ => {}
+                                    match self.ramp_lab_curve_edit_mode {
+                                        0 => match nearest {
+                                            0 => self.ramp_lab_curve_start_luma = new_v,
+                                            1 => self.ramp_lab_curve_mid_luma = new_v,
+                                            2 => self.ramp_lab_curve_end_luma = new_v,
+                                            _ => {}
+                                        },
+                                        1 => match nearest {
+                                            0 => self.ramp_lab_curve_start_sat = new_v,
+                                            1 => self.ramp_lab_curve_mid_sat = new_v,
+                                            2 => self.ramp_lab_curve_end_sat = new_v,
+                                            _ => {}
+                                        },
+                                        _ => match nearest {
+                                            0 => self.ramp_lab_curve_start_hue = new_v,
+                                            1 => self.ramp_lab_curve_mid_hue = new_v,
+                                            2 => self.ramp_lab_curve_end_hue = new_v,
+                                            _ => {}
+                                        },
                                     }
                                 }
                             }
@@ -3833,11 +3939,29 @@ impl App {
 
                             ui.add_space(6.0);
                             ui.horizontal(|ui| {
-                                ui.add(egui::DragValue::new(&mut self.ramp_lab_curve_start_luma).speed(0.01));
-                                ui.add_space(6.0);
-                                ui.add(egui::DragValue::new(&mut self.ramp_lab_curve_mid_luma).speed(0.01));
-                                ui.add_space(6.0);
-                                ui.add(egui::DragValue::new(&mut self.ramp_lab_curve_end_luma).speed(0.01));
+                                match self.ramp_lab_curve_edit_mode {
+                                    0 => {
+                                        ui.add(egui::DragValue::new(&mut self.ramp_lab_curve_start_luma).speed(0.01));
+                                        ui.add_space(6.0);
+                                        ui.add(egui::DragValue::new(&mut self.ramp_lab_curve_mid_luma).speed(0.01));
+                                        ui.add_space(6.0);
+                                        ui.add(egui::DragValue::new(&mut self.ramp_lab_curve_end_luma).speed(0.01));
+                                    }
+                                    1 => {
+                                        ui.add(egui::DragValue::new(&mut self.ramp_lab_curve_start_sat).speed(0.01));
+                                        ui.add_space(6.0);
+                                        ui.add(egui::DragValue::new(&mut self.ramp_lab_curve_mid_sat).speed(0.01));
+                                        ui.add_space(6.0);
+                                        ui.add(egui::DragValue::new(&mut self.ramp_lab_curve_end_sat).speed(0.01));
+                                    }
+                                    _ => {
+                                        ui.add(egui::DragValue::new(&mut self.ramp_lab_curve_start_hue).speed(0.01));
+                                        ui.add_space(6.0);
+                                        ui.add(egui::DragValue::new(&mut self.ramp_lab_curve_mid_hue).speed(0.01));
+                                        ui.add_space(6.0);
+                                        ui.add(egui::DragValue::new(&mut self.ramp_lab_curve_end_hue).speed(0.01));
+                                    }
+                                }
                             });
 
                             ui.add_space(8.0);
