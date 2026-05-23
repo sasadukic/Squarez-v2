@@ -10,7 +10,8 @@ fn preview_colors_in_gamut() {
     for (l, c, h) in samples {
         let rgba = safe_oklch_to_rgba(l, c, h, 255, true);
         for ch in &rgba[0..3] {
-            assert!(*ch <= 255 && *ch >= 0, "channel out of range");
+            // channels are u8, so bounds check unnecessary; just ensure conversion yields valid bytes
+            let _ = *ch; // keep lint happy
         }
     }
 }

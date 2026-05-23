@@ -3733,7 +3733,19 @@ impl App {
     /// Draw Ramp Lab modal when open. Skeleton UI: left preview stub, right controls with Apply/Cancel.
     fn draw_ramp_lab_modal(&mut self, ctx: &egui::Context) {
         if !self.ramp_lab_open { return; }
+        // Keyboard handling: Esc cancels, Enter applies
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.ramp_lab_open = false;
+            return;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+            self.apply_ramp_lab();
+            return;
+        }
         let theme = self.theme.clone();
+        // Generate preview and detect gamut adjustments
+        let (preview, adjusted) = self.generate_ramp_preview();
+
         let area = egui::Area::new(egui::Id::new("ramp_lab_modal")).order(egui::Order::Foreground).show(ctx, |ui| {
             Frame::new()
                 .fill(theme.panel)
@@ -3743,10 +3755,28 @@ impl App {
                 .show(ui, |ui| {
                     ui.set_width(520.0);
                     ui.horizontal(|ui| {
-                        // Left: preview stub
+                        // Left: preview strip
                         let (pv_rect, _pv_resp) = ui.allocate_exact_size(Vec2::new(220.0, 220.0), egui::Sense::hover());
                         ui.painter().rect_filled(pv_rect, 4.0, theme.surface);
-                        ui.painter().text(pv_rect.center(), egui::Align2::CENTER_CENTER, "Ramp Preview", FontId::new(14.0, FontFamily::Proportional), theme.fg_desc);
+                        // draw preview cells
+                        if !preview.is_empty() {
+                            let cell_w = pv_rect.width() / preview.len().max(1) as f32;
+                            for (i, rgba) in preview.iter().enumerate() {
+                                let r = egui::Rect::from_min_max(
+                                    Pos2::new(pv_rect.left() + i as f32 * cell_w, pv_rect.top()),
+                                    Pos2::new(pv_rect.left() + (i as f32 + 1.0) * cell_w, pv_rect.top() + 160.0),
+                                );
+                                ui.painter().rect_filled(r, 0.0, Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]));
+                            }
+                        } else {
+                            ui.painter().text(pv_rect.center(), egui::Align2::CENTER_CENTER, "Ramp Preview", FontId::new(14.0, FontFamily::Proportional), theme.fg_desc);
+                        }
+                        // Gamut badge
+                        if adjusted {
+                            let badge_rect = egui::Rect::from_min_size(Pos2::new(pv_rect.left() + 6.0, pv_rect.bottom() - 20.0), Vec2::new(110.0, 16.0));
+                            ui.painter().rect_filled(badge_rect, 4.0, theme.surface);
+                            ui.painter().text(badge_rect.center(), egui::Align2::CENTER_CENTER, "Gamut-adjusted", FontId::new(12.0, FontFamily::Proportional), theme.fg_desc);
+                        }
 
                         ui.add_space(12.0);
 
@@ -3777,7 +3807,6 @@ impl App {
                             if let Some(ptr_pos) = editor_resp.interact_pointer_pos() {
                                 if editor_resp.dragged() {
                                     // find nearest handle by x
-                                    let rel_x = (ptr_pos.x - editor_rect.left()).clamp(0.0, editor_rect.width());
                                     let mut nearest = 0usize;
                                     let mut best = f32::INFINITY;
                                     for (i, &fx) in xs.iter().enumerate() {
@@ -3822,31 +3851,7 @@ impl App {
                                 }
                                 ui.add_space(8.0);
                                 if ui.add(egui::Button::new("Apply")).clicked() {
-                                    // Commit buffer into color_state and push undo snapshot
-                                    let before = self.color_state.clone();
-                                    // copy fields
-                                    self.color_state.ramp_size = self.ramp_lab_ramp_size;
-                                    self.color_state.ramp_curve_start_luma = self.ramp_lab_curve_start_luma;
-                                    self.color_state.ramp_curve_mid_luma = self.ramp_lab_curve_mid_luma;
-                                    self.color_state.ramp_curve_end_luma = self.ramp_lab_curve_end_luma;
-                                    self.color_state.ramp_curve_start_sat = self.ramp_lab_curve_start_sat;
-                                    self.color_state.ramp_curve_mid_sat = self.ramp_lab_curve_mid_sat;
-                                    self.color_state.ramp_curve_end_sat = self.ramp_lab_curve_end_sat;
-                                    self.color_state.ramp_curve_start_hue = self.ramp_lab_curve_start_hue;
-                                    self.color_state.ramp_curve_mid_hue = self.ramp_lab_curve_mid_hue;
-                                    self.color_state.ramp_curve_end_hue = self.ramp_lab_curve_end_hue;
-                                    // store last oklch hue from buffer
-                                    self.color_state.last_oklch_h = self.ramp_lab_hue;
-                                    // Optionally append preview colors to palette
-                                    let (preview, _adjusted) = self.generate_ramp_preview();
-                                    if self.ramp_lab_push_to_palette {
-                                        for c in preview.iter() {
-                                            self.project.palette.push(*c);
-                                        }
-                                    }
-                                    self.undo_stack.push(Command::SetColorStateSnapshot { before, after: self.color_state.clone() });
-                                    self.ramp_lab_open = false;
-                                    self.canvas_dirty = true;
+                                    self.apply_ramp_lab();
                                 }
                             });
                         });
@@ -3860,7 +3865,7 @@ impl App {
     /// Returns (rgba_vec, gamut_adjusted_flag)
     fn generate_ramp_preview(&self) -> (Vec<crate::project::Rgba>, bool) {
         use crate::project::Rgba;
-        use crate::color::{rgba_to_oklch, safe_oklch_to_rgba, generate_ramp, generate_ramp_endpoints, generate_ramp_hsv, generate_ramp_hsv_endpoints};
+        use crate::color::{rgba_to_oklch, safe_oklch_to_rgba, generate_ramp, generate_ramp_hsv};
         use crate::color::hsv::hsv_to_rgba;
 
         let mut adjusted = false;
@@ -3871,7 +3876,7 @@ impl App {
             PickerMode::OkLab => {
                 let fg = self.color_state.foreground;
                 let (base_l, base_c, base_h) = rgba_to_oklch(fg);
-                let mut ramp = generate_ramp(base_l, base_c, base_h, n, self.color_state.ramp_anchor, self.color_state.hue_shift_deg, self.color_state.sat_curve_depth, self.ramp_l_bounds().0, self.ramp_l_bounds().1, self.color_state.ramp_end_extremes);
+                let ramp = generate_ramp(base_l, base_c, base_h, n, self.color_state.ramp_anchor, self.color_state.hue_shift_deg, self.color_state.sat_curve_depth, self.ramp_l_bounds().0, self.ramp_l_bounds().1, self.color_state.ramp_end_extremes);
                 // apply curves from modal buffer (approx: use luma curve fields)
                 // We'll map modal curve to temporary ColorState-like values by copying into a local copy
                 let mut rgba_out: Vec<Rgba> = Vec::new();
@@ -3887,7 +3892,7 @@ impl App {
             PickerMode::Hsv => {
                 let fg = self.color_state.foreground;
                 let (h, s, v) = rgba_to_hsv(fg);
-                let mut ramp_hsv = generate_ramp_hsv(h, s, v, n, self.color_state.ramp_anchor, self.color_state.hue_shift_deg, self.color_state.sat_curve_depth, self.ramp_v_bounds().0, self.ramp_v_bounds().1, self.color_state.ramp_end_extremes);
+                let ramp_hsv = generate_ramp_hsv(h, s, v, n, self.color_state.ramp_anchor, self.color_state.hue_shift_deg, self.color_state.sat_curve_depth, self.ramp_v_bounds().0, self.ramp_v_bounds().1, self.color_state.ramp_end_extremes);
                 let mut rgba_out: Vec<Rgba> = Vec::new();
                 for (hh, ss, vv) in ramp_hsv.iter() {
                     rgba_out.push(hsv_to_rgba(*hh, *ss, *vv, 255));
@@ -3896,6 +3901,29 @@ impl App {
             }
             PickerMode::Rgb => (Vec::new(), adjusted),
         }
+    }
+
+    /// Apply ramp lab buffer into color_state and project (palette) and push undo snapshot.
+    fn apply_ramp_lab(&mut self) {
+        let before = self.color_state.clone();
+        self.color_state.ramp_size = self.ramp_lab_ramp_size;
+        self.color_state.ramp_curve_start_luma = self.ramp_lab_curve_start_luma;
+        self.color_state.ramp_curve_mid_luma = self.ramp_lab_curve_mid_luma;
+        self.color_state.ramp_curve_end_luma = self.ramp_lab_curve_end_luma;
+        self.color_state.ramp_curve_start_sat = self.ramp_lab_curve_start_sat;
+        self.color_state.ramp_curve_mid_sat = self.ramp_lab_curve_mid_sat;
+        self.color_state.ramp_curve_end_sat = self.ramp_lab_curve_end_sat;
+        self.color_state.ramp_curve_start_hue = self.ramp_lab_curve_start_hue;
+        self.color_state.ramp_curve_mid_hue = self.ramp_lab_curve_mid_hue;
+        self.color_state.ramp_curve_end_hue = self.ramp_lab_curve_end_hue;
+        self.color_state.last_oklch_h = self.ramp_lab_hue;
+        let (preview, _adj) = self.generate_ramp_preview();
+        if self.ramp_lab_push_to_palette {
+            for c in preview.iter() { self.project.palette.push(*c); }
+        }
+        self.undo_stack.push(Command::SetColorStateSnapshot { before, after: self.color_state.clone() });
+        self.ramp_lab_open = false;
+        self.canvas_dirty = true;
     }
 }
 

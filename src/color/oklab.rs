@@ -164,7 +164,7 @@ pub fn safe_oklch_to_rgba(l: f32, c: f32, h_deg: f32, alpha: u8, preserve_l: boo
         // Essentially achromatic at this L/H — drop chroma
         return oklch_to_rgba(l, 0.0, h_deg, alpha);
     }
-    let mut c_adj = c.min(c_max);
+    let c_adj = c.min(c_max);
     let mut l_adj = l;
     if preserve_l {
         if let Some(sol) = solve_for_roundtrip_lightness(l, c_adj, h_deg, 0.08, 0.003) {
