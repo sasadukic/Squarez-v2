@@ -117,7 +117,7 @@ impl Frame {
     pub fn new(width: u32, height: u32, layer_id: u64) -> Self {
         Self {
             duration_ms: 0,
-            layers: vec![Layer::new("Layer 1".to_string(), width, height, layer_id)],
+            layers: vec![Layer::new_with_id("Layer 1".to_string(), width, height, layer_id)],
             dirty: true,
         }
     }
@@ -151,7 +151,8 @@ pub struct Layer {
 }
 
 impl Layer {
-    pub fn new(name: String, width: u32, height: u32, id: u64) -> Self {
+    /// Create a layer with explicit id (used by project/frame constructors).
+    pub fn new_with_id(name: String, width: u32, height: u32, id: u64) -> Self {
         Self {
             name,
             visible: true,
@@ -168,8 +169,13 @@ impl Layer {
         }
     }
 
+    /// Convenience constructor used by tests and simple call sites. ID will be 0.
+    pub fn new(name: String, width: u32, height: u32) -> Self {
+        Self::new_with_id(name, width, height, 0)
+    }
+
     pub fn new_group(name: String, width: u32, height: u32, id: u64) -> Self {
-        let mut l = Self::new(name, width, height, id);
+        let mut l = Self::new_with_id(name, width, height, id);
         l.is_group = true;
         l.pixels = Vec::new(); // groups have no pixel data
         l

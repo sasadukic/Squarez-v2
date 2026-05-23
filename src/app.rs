@@ -4,11 +4,10 @@ use egui::{CentralPanel, Color32, FontFamily, FontId, Frame, Image, ImageSource,
 use crate::animation::{FrameThumbnail, PlaybackState};
 use crate::canvas::CanvasState;
 use crate::color::hsv::{hsv_to_rgba, rgba_to_hsv};
-use crate::color::oklab::{oklab_to_rgba, rgba_to_oklab, oklch_to_rgba, rgba_to_oklch, generate_ramp, generate_ramp_hsv, generate_ramp_endpoints, generate_ramp_hsv_endpoints};
+use crate::color::oklab::{safe_oklch_to_rgba, rgba_to_oklch, generate_ramp, generate_ramp_hsv, generate_ramp_endpoints, generate_ramp_hsv_endpoints};
 use crate::color::RampAnchor;
 use crate::color::{ColorState, PickerMode};
 use crate::history::{Command, UndoStack};
-use crate::io::export::{export, ExportFormat, ExportOptions};
 use crate::io::sqr::{load_sqr, save_sqr};
 use crate::layers::composite_frame;
 use crate::project::{Animation, Frame as ProjectFrame, Layer, Project, Rgba};
@@ -17,16 +16,11 @@ use crate::top_bar::{
     menu_zone_width, BRAND_WIDTH, MENU_LEFT_GAP, DROPDOWN_CORNER_RADIUS, DROPDOWN_ROW_HEIGHT, DROPDOWN_TOP_GAP,
     DROPDOWN_WIDTH, MENU_FONT_SIZE, TOP_BAR_HEIGHT,
 };
-use crate::tools::{apply_eraser, apply_eyedropper, apply_ellipse, apply_fill, apply_line, apply_pencil, apply_rect, ActiveTool};
+use crate::tools::{apply_eraser, apply_eyedropper, apply_ellipse, apply_fill, apply_line, apply_pencil, apply_rect, ActiveTool, SelectState, SelectInteraction, Handle, FloatBuffer, DragAnchor, sample_transformed};
 use crate::ui_metrics::{COLOR_SLIDER_TRACK_HEIGHT, RIGHT_SECTION_STACK_GAP};
 use crate::ui_state::{Panel, UiState};
 
-/// Which slider parameter the right-click popup controls.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SliderParam {
-    HueShift,
-    SatCurve,
-}
+// Ramp Lab removed: enums RampCurve and RampHandlePoint deleted.
 
 pub struct App {
     pub project: Project,
@@ -39,6 +33,8 @@ pub struct App {
     pub thumbnails: Vec<Vec<FrameThumbnail>>,
     pub current_path: Option<std::path::PathBuf>,
     pub ui_state: UiState,
+    // Ramp Lab modal open flag: when true, canvas/timeline input is blocked.
+    pub ramp_lab_open: bool,
     drag_start: Option<(u32, u32)>,
     stroke_edits: Vec<crate::tools::PixelEdit>,
     canvas_dirty: bool,
@@ -47,10 +43,7 @@ pub struct App {
     new_height: u32,
     new_name: String,
     frame_menu: Option<(usize, Pos2, f64)>,  // (frame_idx, screen_pos, opened_at_time)
-    /// Right-click menu on OKL tab: position + time it was opened.
-    ramp_size_menu: Option<(Pos2, f64)>,
-    /// Right-click menu on a slider label: which param + pos + opened time.
-    slider_param_menu: Option<(SliderParam, Pos2, f64)>,
+    // Ramp Lab removed: modal/state fields deleted.
     layer_ctx_menu: Option<(usize, Pos2, f64)>,  // (layer_idx, screen_pos, opened_at_time)
     top_menu_open: Option<(TopMenu, Pos2)>,
     toolbar_anim_y: f32,
@@ -101,14 +94,14 @@ pub struct App {
     last_layer_click: Option<(usize, f64)>,
     // Real-time preview pixels for shape tools (overlaid during drag, cleared on commit)
     shape_preview: Vec<(u32, u32, Rgba)>,
+    // Selection tool state: current rect (x0, y0, x1, y1) in canvas pixel coords
+    select_state: SelectState,
     // Accumulated scroll delta for timeline frame navigation (slows down scroll speed)
     timeline_scroll_accum: f32,
     // View > Show sub-menu open state
     view_show_open: bool,
     // Screen-space right-top of the "Show" row, used to position side submenu
     view_show_pos: Option<egui::Pos2>,
-    // Alpha for the anim toolbar fade (0 = hidden, 1 = fully visible)
-    anim_toolbar_alpha: f32,
     // Sidebar section order (drag-to-reorder)
     sidebar_order: Vec<Panel>,
     // Drag-to-reorder state (only active in narrow/all-collapsed mode with Cmd held)
@@ -127,7 +120,6 @@ pub struct App {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TopMenu {
     File,
-    Edit,
     View,
     Layer,
     Animation,
@@ -138,7 +130,6 @@ impl TopMenu {
     fn label(self) -> &'static str {
         match self {
             Self::File => "File",
-            Self::Edit => "Edit",
             Self::View => "View",
             Self::Layer => "Layer",
             Self::Animation => "Animation",
@@ -149,7 +140,7 @@ impl TopMenu {
     /// Pixel width of this menu's hit zone in the top bar.
     fn zone_width(self) -> f32 {
         match self {
-            Self::File | Self::Edit => 38.0, // icon buttons, no text
+            Self::File => 38.0, // icon button, no text
             _ => menu_zone_width(self.label()),
         }
     }
@@ -177,6 +168,99 @@ impl Default for LayoutState {
 }
 
 impl App {
+    fn curve_eval(start: f32, mid: f32, end: f32, t: f32) -> f32 {
+        let y0 = start.clamp(0.0, 1.0);
+        let y1 = mid.clamp(0.0, 1.0);
+        let y2 = end.clamp(0.0, 1.0);
+        let u = t.clamp(0.0, 1.0);
+        let omt = 1.0 - u;
+        omt * omt * y0 + 2.0 * omt * u * y1 + u * u * y2
+    }
+
+    fn apply_curve_to_okl_ramp(&self, ramp: &mut [(f32, f32, f32)]) {
+        if ramp.len() < 2 { return; }
+        if cfg!(debug_assertions) {
+            eprintln!("[apply_curve_to_okl_ramp] before: {:?}", ramp);
+        }
+        let denom = (ramp.len() - 1) as f32;
+        let base_h = ramp[0].2;
+        for (i, (l, c, h)) in ramp.iter_mut().enumerate() {
+            let t = i as f32 / denom;
+            let lt = Self::curve_eval(
+                self.color_state.ramp_curve_start_luma,
+                self.color_state.ramp_curve_mid_luma,
+                self.color_state.ramp_curve_end_luma,
+                t,
+            );
+            let st = Self::curve_eval(
+                self.color_state.ramp_curve_start_sat,
+                self.color_state.ramp_curve_mid_sat,
+                self.color_state.ramp_curve_end_sat,
+                t,
+            );
+            let ht = Self::curve_eval(
+                self.color_state.ramp_curve_start_hue,
+                self.color_state.ramp_curve_mid_hue,
+                self.color_state.ramp_curve_end_hue,
+                t,
+            );
+            *l = (*l * 0.5 + lt * 0.5).clamp(0.0, 1.0);
+            *c = (*c * (0.65 + st * 0.7)).clamp(0.0, 0.5);
+            let hue_mul = (ht - 0.5) * 2.0;
+            *h = (base_h + (*h - base_h) * (0.5 + 0.5 * hue_mul.abs())).rem_euclid(360.0);
+        }
+        if cfg!(debug_assertions) {
+            eprintln!("[apply_curve_to_okl_ramp] after: {:?}", ramp);
+        }
+    }
+
+    fn apply_curve_to_hsv_ramp(&self, ramp: &mut [(f32, f32, f32)]) {
+        if ramp.len() < 2 { return; }
+        if cfg!(debug_assertions) {
+            eprintln!("[apply_curve_to_hsv_ramp] before: {:?}", ramp);
+        }
+        let denom = (ramp.len() - 1) as f32;
+        let base_h = ramp[0].0;
+        for (i, (h, s, v)) in ramp.iter_mut().enumerate() {
+            let t = i as f32 / denom;
+            let vt = Self::curve_eval(
+                self.color_state.ramp_curve_start_luma,
+                self.color_state.ramp_curve_mid_luma,
+                self.color_state.ramp_curve_end_luma,
+                t,
+            );
+            let st = Self::curve_eval(
+                self.color_state.ramp_curve_start_sat,
+                self.color_state.ramp_curve_mid_sat,
+                self.color_state.ramp_curve_end_sat,
+                t,
+            );
+            let ht = Self::curve_eval(
+                self.color_state.ramp_curve_start_hue,
+                self.color_state.ramp_curve_mid_hue,
+                self.color_state.ramp_curve_end_hue,
+                t,
+            );
+            *v = (*v * 0.5 + vt * 0.5).clamp(0.0, 1.0);
+            *s = (*s * (0.65 + st * 0.7)).clamp(0.0, 1.0);
+            let hue_mul = (ht - 0.5) * 2.0;
+            *h = (base_h + (*h - base_h) * (0.5 + 0.5 * hue_mul.abs())).rem_euclid(360.0);
+        }
+        if cfg!(debug_assertions) {
+            eprintln!("[apply_curve_to_hsv_ramp] after: {:?}", ramp);
+        }
+    }
+
+    fn ramp_l_bounds(&self) -> (f32, f32) {
+        // Allow full range so curves can reach pure black/white
+        (0.0, 1.0)
+    }
+
+    fn ramp_v_bounds(&self) -> (f32, f32) {
+        // Allow full range so curves can reach pure black/white in HSV mode
+        (0.0, 1.0)
+    }
+
     pub fn new(cc: &eframe::CreationContext) -> Self {
         // 1.5× zoom on top of OS DPI scaling for 4K displays.
         cc.egui_ctx.set_zoom_factor(1.5);
@@ -222,9 +306,8 @@ impl App {
             new_height: 16,
             new_name: "Untitled".to_string(),
             frame_menu: None,
-            ramp_size_menu: None,
-            slider_param_menu: None,
-            layer_ctx_menu: None,            top_menu_open: None,
+            layer_ctx_menu: None,
+            top_menu_open: None,
             toolbar_anim_y: 0.0,
             toolbar_anim_vel: 0.0,
             pen_group_current: ActiveTool::Pencil,
@@ -259,10 +342,10 @@ impl App {
             pending_zoom_fit: false,
             last_layer_click: None,
             shape_preview: Vec::new(),
+            select_state: SelectState::default(),
             timeline_scroll_accum: 0.0,
             view_show_open: false,
             view_show_pos: None,
-            anim_toolbar_alpha: 1.0,
             sidebar_order: layout.map(|l| l.sidebar_order).unwrap_or_else(|| vec![Panel::Palette, Panel::Color, Panel::Layers, Panel::Animations, Panel::Preview]),
             sidebar_drag: None,
             sidebar_drag_over_idx: None,
@@ -270,6 +353,7 @@ impl App {
             sidebar_icon_rects: Vec::new(),
             logo_sprite: None,
             logo_anim_start: None,
+            ramp_lab_open: false,
         }
     }
 
@@ -289,7 +373,7 @@ impl App {
         let w = self.project.canvas_width;
         let h = self.project.canvas_height;
         let layers: Vec<Layer> = self.project.active_frame_ref().layers.iter().map(|l| {
-            let mut new = Layer::new(l.name.clone(), w, h, l.id);
+            let mut new = Layer::new_with_id(l.name.clone(), w, h, l.id);
             new.visible = l.visible;
             new.locked  = l.locked;
             new
@@ -330,7 +414,7 @@ impl App {
             ActiveTool::Rectangle { .. } => ActiveTool::Ellipse { filled: false },
             ActiveTool::Ellipse { .. } => ActiveTool::Line,
             ActiveTool::Line => ActiveTool::Rectangle { filled: false },
-            ActiveTool::RectSelect => ActiveTool::Move,
+            ActiveTool::RectSelect => ActiveTool::RectSelect,
             ActiveTool::Move => ActiveTool::RectSelect,
             _ => return,
         };
@@ -363,6 +447,31 @@ impl App {
                 pixels[i + 3] = color[3];
             }
         }
+        // Overlay floating selection (sampled with nearest-neighbor through the transform)
+        if self.select_state.has_float() {
+            if let Some((ax, ay, aw, ah)) = self.select_state.transformed_aabb() {
+                let w = self.project.canvas_width as i32;
+                let h = self.project.canvas_height as i32;
+                let x0 = (ax.floor() as i32).max(0);
+                let y0 = (ay.floor() as i32).max(0);
+                let x1 = ((ax + aw).ceil() as i32).min(w);
+                let y1 = ((ay + ah).ceil() as i32).min(h);
+                for cy in y0..y1 {
+                    for cx in x0..x1 {
+                        if let Some(sample) = sample_transformed(&self.select_state, cx, cy) {
+                            let i = (cy as u32 * self.project.canvas_width + cx as u32) as usize * 4;
+                            // Alpha-over: draw sampled pixel over existing
+                            let sa = sample[3] as f32 / 255.0;
+                            let inv = 1.0 - sa;
+                            pixels[i]     = (sample[0] as f32 * sa + pixels[i]     as f32 * inv) as u8;
+                            pixels[i + 1] = (sample[1] as f32 * sa + pixels[i + 1] as f32 * inv) as u8;
+                            pixels[i + 2] = (sample[2] as f32 * sa + pixels[i + 2] as f32 * inv) as u8;
+                            pixels[i + 3] = ((sample[3] as f32 + pixels[i + 3] as f32 * inv).min(255.0)) as u8;
+                        }
+                    }
+                }
+            }
+        }
         self.canvas.upload_texture(
             ctx,
             &pixels,
@@ -390,7 +499,7 @@ impl App {
 
     fn draw_top_bar(&mut self, ctx: &egui::Context) {
         let dt = ctx.input(|i| i.unstable_dt).min(0.05);
-        let all_menus = [TopMenu::File, TopMenu::Edit];
+        let all_menus: [TopMenu; 0] = [];
 
         TopBottomPanel::top("top_bar")
             .exact_height(TOP_BAR_HEIGHT)
@@ -460,29 +569,7 @@ impl App {
                     // Lay out the menu zones (no fill drawn inside them)
                     for menu in all_menus.iter() {
                         let selected = self.top_menu_open.is_some_and(|(open, _)| open == *menu);
-                        let response = if *menu == TopMenu::File {
-                            // File: file.svg icon — use the pre-computed menu_rect so it lines up with the highlight
-                            let i = all_menus.iter().position(|m| m == menu).unwrap();
-                            let zone_rect = menu_rects[i];
-                            let resp = ui.allocate_rect(zone_rect, egui::Sense::click());
-                            let is_active = selected || resp.hovered();
-                            let tint = if is_active { theme.fg } else { theme.fg_desc };
-                            let icon_rect = egui::Rect::from_center_size(zone_rect.center(), Vec2::splat(16.0));
-                            ui.put(icon_rect, Image::new(egui::include_image!("../assets/icons/file.svg")).tint(tint).fit_to_exact_size(Vec2::splat(16.0)));
-                            resp
-                        } else if *menu == TopMenu::Edit {
-                            // Edit: tools.svg icon — use the pre-computed menu_rect so it lines up with the highlight
-                            let i = all_menus.iter().position(|m| m == menu).unwrap();
-                            let zone_rect = menu_rects[i];
-                            let resp = ui.allocate_rect(zone_rect, egui::Sense::click());
-                            let is_active = selected || resp.hovered();
-                            let tint = if is_active { theme.fg } else { theme.fg_desc };
-                            let icon_rect = egui::Rect::from_center_size(zone_rect.center(), Vec2::splat(16.0));
-                            ui.put(icon_rect, Image::new(egui::include_image!("../assets/icons/tools.svg")).tint(tint).fit_to_exact_size(Vec2::splat(16.0)));
-                            resp
-                        } else {
-                            top_menu_zone(ui, &theme, menu.label(), selected)
-                        };
+                        let response = top_menu_zone(ui, &theme, menu.label(), selected);
                         if response.clicked() {
                             let pos = Pos2::new(response.rect.left(), response.rect.bottom() + DROPDOWN_TOP_GAP);
                             if selected {
@@ -635,13 +722,6 @@ impl App {
                                         });
                                     });
                             }
-                            TopMenu::Edit => {
-                                dropdown_row(ui, &theme, "Rotate", None, false);
-                                dropdown_row(ui, &theme, "Flip Horizontal", None, false);
-                                dropdown_row(ui, &theme, "Flip Vertical", None, false);
-                                dropdown_row(ui, &theme, "Transform", None, false);
-                                dropdown_row(ui, &theme, "Replace Color", None, false);
-                            }
                             TopMenu::View => {
                                 let _ = dropdown_row(ui, &theme, "Zoom with mouse wheel", None, false);
                                 let show_resp = dropdown_row(ui, &theme, "Show ▸", None, true);
@@ -665,7 +745,7 @@ impl App {
                                     self.undo_stack.push(Command::AddLayer { index: idx, name: name.clone(), id: new_id });
                                     for anim in &mut self.project.animations {
                                         for frame in &mut anim.frames {
-                                            frame.layers.push(Layer::new(name.clone(), w, h, new_id));
+                                            frame.layers.push(Layer::new_with_id(name.clone(), w, h, new_id));
                                         }
                                     }
                                     self.project.active_layer = idx;
@@ -1015,7 +1095,7 @@ impl App {
                 let Some(r) = self.select_slot_rect else { return; };
                 let cur = self.select_group_current.clone();
                 let others = match cur {
-                    ActiveTool::RectSelect => vec![ActiveTool::Move],
+                    ActiveTool::RectSelect => vec![],
                     _                      => vec![ActiveTool::RectSelect],
                 };
                 (r, cur, others)
@@ -1279,7 +1359,7 @@ impl App {
                     ui.id().with("color_mixer_toggle"),
                     egui::Sense::click(),
                 );
-                let icon_tint = if icon_resp.hovered() { Color32::WHITE } else { theme.fg };
+                let icon_tint = if icon_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
                 ui.put(
                     icon_rect,
                     Image::new(egui::include_image!("../assets/icons/color_mixer.svg"))
@@ -1324,11 +1404,8 @@ impl App {
                         if okl_resp.clicked() {
                             self.color_state.active_picker = PickerMode::OkLab;
                         }
-                        if okl_resp.secondary_clicked() {
-                            let now = ui.ctx().input(|i| i.time);
-                            self.ramp_size_menu = Some((okl_resp.rect.left_bottom(), now));
-                        }
-                        if tab_button(ui, &theme, self.color_state.active_picker == PickerMode::Hsv, "HSV").clicked() {
+                        let hsv_resp = tab_button(ui, &theme, self.color_state.active_picker == PickerMode::Hsv, "HSV");
+                        if hsv_resp.clicked() {
                             self.color_state.active_picker = PickerMode::Hsv;
                         }
                         if tab_button(ui, &theme, self.color_state.active_picker == PickerMode::Rgb, "RGB").clicked() {
@@ -1369,25 +1446,26 @@ impl App {
                             &mut self.color_state.snap_hsv_v, (0.20, 0.95), n)
                     };
                     changed |= out_h.changed | out_s.changed | out_v.changed;
-                    if let Some(pos) = out_h.label_rclick {
-                        self.slider_param_menu = Some((SliderParam::HueShift, pos, now));
-                    }
-                    if let Some(pos) = out_s.label_rclick {
-                        self.slider_param_menu = Some((SliderParam::SatCurve, pos, now));
-                    }
+                    let _ = (out_h.label_rclick, out_s.label_rclick, now);
                     if changed {
                         self.color_state.foreground = hsv_to_rgba(h, s, v, fg[3]);
                     }
 
                     // Ramp strip + push-to-palette button (mirror of OKL branch)
                     ui.add_space(6.0);
-                    let ramp_hsv = if endpoints_mode {
-                        generate_ramp_hsv_endpoints(h, s, v, self.color_state.light_end_v, n,
-                            self.color_state.hue_shift_deg, self.color_state.sat_curve_depth)
+                    let (v_min, v_max) = self.ramp_v_bounds();
+                    let mut ramp_hsv = if endpoints_mode {
+                        let v_dark = if self.color_state.ramp_end_extremes { v_min } else { v };
+                        let v_light = if self.color_state.ramp_end_extremes { v_max } else { self.color_state.light_end_v };
+                        generate_ramp_hsv_endpoints(h, s, v_dark, v_light, n,
+                            self.color_state.hue_shift_deg, self.color_state.sat_curve_depth,
+                            self.color_state.ramp_end_extremes)
                     } else {
                         generate_ramp_hsv(h, s, v, n, self.color_state.ramp_anchor,
-                            self.color_state.hue_shift_deg, self.color_state.sat_curve_depth)
+                            self.color_state.hue_shift_deg, self.color_state.sat_curve_depth, v_min, v_max,
+                            self.color_state.ramp_end_extremes)
                     };
+                    self.apply_curve_to_hsv_ramp(&mut ramp_hsv);
                     let ramp_rgba: Vec<crate::project::Rgba> = ramp_hsv.iter()
                         .map(|&(h, s, v)| hsv_to_rgba(h, s, v, 255))
                         .collect();
@@ -1456,7 +1534,11 @@ impl App {
                             }
                         }
                         ui.add_space(GAP);
-                        let (btn_rect, btn_resp) = ui.allocate_exact_size(Vec2::splat(ADD_BTN_W), egui::Sense::click());
+                        let (btn_slot_rect, btn_resp) = ui.allocate_exact_size(Vec2::new(ADD_BTN_W, row_h), egui::Sense::click());
+                        let btn_rect = egui::Rect::from_min_max(
+                            btn_slot_rect.min,
+                            Pos2::new(btn_slot_rect.max.x, btn_slot_rect.min.y + STRIP_H),
+                        );
                         let bg = if btn_resp.hovered() { theme.accent } else { theme.bg };
                         ui.painter().rect_filled(btn_rect, 0.0, bg);
                         let tint = if btn_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
@@ -1469,9 +1551,7 @@ impl App {
                         );
                         if btn_resp.clicked() {
                             for rgba in &ramp_rgba {
-                                if !self.project.palette.contains(rgba) {
-                                    self.project.palette.push(*rgba);
-                                }
+                                self.project.palette.push(*rgba);
                             }
                         }
                     });
@@ -1501,28 +1581,30 @@ impl App {
                         &mut self.color_state.snap_oklch_h, (0.0, 360.0), n);
                     changed |= out_l.changed | out_c.changed | out_h.changed;
                     // Right-click on H label → hue-shift popup; on C label → sat-curve popup.
-                    if let Some(pos) = out_h.label_rclick {
-                        self.slider_param_menu = Some((SliderParam::HueShift, pos, now));
-                    }
-                    if let Some(pos) = out_c.label_rclick {
-                        self.slider_param_menu = Some((SliderParam::SatCurve, pos, now));
-                    }
-                    if changed {
-                        self.color_state.last_oklch_h = h;
-                        self.color_state.foreground = oklch_to_rgba(l, c, h, fg[3]);
-                    }
+                    let _ = (out_h.label_rclick, out_c.label_rclick, now);
+                        if changed {
+                            self.color_state.last_oklch_h = h;
+                            // Use gamut-safe conversion and preserve perceived L when possible.
+                            self.color_state.foreground = safe_oklch_to_rgba(l, c, h, fg[3], true);
+                        }
 
                     // Ramp strip + push-to-palette button
                     ui.add_space(6.0);
-                    let ramp_lch = if endpoints_mode {
-                        generate_ramp_endpoints(l, self.color_state.light_end_l, c, h, n,
-                            self.color_state.hue_shift_deg, self.color_state.sat_curve_depth)
+                    let (l_min, l_max) = self.ramp_l_bounds();
+                    let mut ramp_lch = if endpoints_mode {
+                        let l_dark = if self.color_state.ramp_end_extremes { l_min } else { l };
+                        let l_light = if self.color_state.ramp_end_extremes { l_max } else { self.color_state.light_end_l };
+                        generate_ramp_endpoints(l_dark, l_light, c, h, n,
+                            self.color_state.hue_shift_deg, self.color_state.sat_curve_depth,
+                            self.color_state.ramp_end_extremes)
                     } else {
                         generate_ramp(l, c, h, n, self.color_state.ramp_anchor,
-                            self.color_state.hue_shift_deg, self.color_state.sat_curve_depth)
+                            self.color_state.hue_shift_deg, self.color_state.sat_curve_depth, l_min, l_max,
+                            self.color_state.ramp_end_extremes)
                     };
+                    self.apply_curve_to_okl_ramp(&mut ramp_lch);
                     let ramp_rgba: Vec<crate::project::Rgba> = ramp_lch.iter()
-                        .map(|&(l, c, h)| oklch_to_rgba(l, c, h, 255))
+                        .map(|&(l, c, h)| safe_oklch_to_rgba(l, c, h, 255, true))
                         .collect();
                     let anchor_idx = match self.color_state.ramp_anchor {
                         RampAnchor::Middle    => n / 2,
@@ -1594,7 +1676,11 @@ impl App {
                         }
                         ui.add_space(GAP);
                         // "+" add-to-palette button
-                        let (btn_rect, btn_resp) = ui.allocate_exact_size(Vec2::splat(ADD_BTN_W), egui::Sense::click());
+                        let (btn_slot_rect, btn_resp) = ui.allocate_exact_size(Vec2::new(ADD_BTN_W, row_h), egui::Sense::click());
+                        let btn_rect = egui::Rect::from_min_max(
+                            btn_slot_rect.min,
+                            Pos2::new(btn_slot_rect.max.x, btn_slot_rect.min.y + STRIP_H),
+                        );
                         let bg = if btn_resp.hovered() { theme.accent } else { theme.bg };
                         ui.painter().rect_filled(btn_rect, 0.0, bg);
                         let tint = if btn_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
@@ -1607,9 +1693,7 @@ impl App {
                         );
                         if btn_resp.clicked() {
                             for rgba in &ramp_rgba {
-                                if !self.project.palette.contains(rgba) {
-                                    self.project.palette.push(*rgba);
-                                }
+                                self.project.palette.push(*rgba);
                             }
                         }
                     });
@@ -1650,7 +1734,7 @@ impl App {
                     ui.id().with("palette_icon"),
                     egui::Sense::click(),
                 );
-                let icon_tint = if icon_resp.hovered() { Color32::WHITE } else { theme.fg };
+                let icon_tint = if icon_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
                 ui.put(
                     icon_rect,
                     Image::new(egui::include_image!("../assets/icons/colors.svg"))
@@ -1821,7 +1905,7 @@ impl App {
             // Add a blank copy of this layer to every frame of every animation so they stay in sync.
             for anim in &mut self.project.animations {
                 for frame in &mut anim.frames {
-                    frame.layers.push(Layer::new(name.clone(), w, h, new_id));
+                    frame.layers.push(Layer::new_with_id(name.clone(), w, h, new_id));
                 }
             }
             self.project.active_layer = idx;
@@ -2088,6 +2172,43 @@ impl App {
                                     };
                                     if icon_flat_button(ui, &theme, folder_img).clicked() {
                                         self.project.animations[ai].frames[fi].layers[idx].collapsed = !collapsed;
+                                    }
+                                }
+                                // Opacity input (0-100). Skipped for group rows (no pixel data).
+                                if !is_group {
+                                    ui.add_space(6.0);
+                                    let current_u8 = self.project.animations[ai].frames[fi].layers[idx].opacity;
+                                    let mut pct: u32 = ((current_u8 as f32 / 255.0) * 100.0).round() as u32;
+                                    // Match row: bg = selection color (theme.surface), text = icon color (theme.fg_desc).
+                                    let bg = if is_active { theme.surface } else { theme.panel };
+                                    let text_col = theme.fg_desc;
+                                    let v = ui.visuals_mut();
+                                    v.widgets.inactive.bg_fill   = bg;
+                                    v.widgets.inactive.weak_bg_fill = bg;
+                                    v.widgets.hovered.bg_fill    = bg;
+                                    v.widgets.hovered.weak_bg_fill = bg;
+                                    v.widgets.active.bg_fill     = bg;
+                                    v.widgets.active.weak_bg_fill = bg;
+                                    v.widgets.inactive.fg_stroke.color = text_col;
+                                    v.widgets.hovered.fg_stroke.color  = Color32::WHITE;
+                                    v.widgets.active.fg_stroke.color   = Color32::WHITE;
+                                    v.widgets.inactive.bg_stroke = egui::Stroke::NONE;
+                                    v.widgets.hovered.bg_stroke  = egui::Stroke::NONE;
+                                    v.widgets.active.bg_stroke   = egui::Stroke::NONE;
+                                    v.selection.stroke.color = text_col;
+                                    v.override_text_color = Some(text_col);
+                                    let resp = ui.add(
+                                        egui::DragValue::new(&mut pct)
+                                            .range(0..=100)
+                                            .suffix("%")
+                                            .speed(1.0)
+                                    );
+                                    if resp.changed() {
+                                        let new_u8 = ((pct as f32 / 100.0) * 255.0).round().clamp(0.0, 255.0) as u8;
+                                        if new_u8 != current_u8 {
+                                            self.project.animations[ai].frames[fi].layers[idx].opacity = new_u8;
+                                            self.canvas_dirty = true;
+                                        }
                                     }
                                 }
                             });
@@ -2361,8 +2482,6 @@ impl App {
         }
 
         self.draw_frame_menu(ctx);
-        self.draw_ramp_size_menu(ctx);
-        self.draw_slider_param_menu(ctx);
     }
 
     fn draw_layer_context_menu(&mut self, ctx: &egui::Context) {
@@ -2579,114 +2698,10 @@ impl App {
         }
     }
 
-    fn draw_ramp_size_menu(&mut self, ctx: &egui::Context) {
-        let Some((pos, opened_at)) = self.ramp_size_menu else { return; };
-        let theme = self.theme.clone();
-        let now = ctx.input(|i| i.time);
-        let inner = egui::Area::new(egui::Id::new("ramp_size_menu"))
-            .order(egui::Order::Foreground)
-            .fixed_pos(pos)
-            .show(ctx, |ui| {
-                Frame::new()
-                    .fill(theme.panel)
-                    .inner_margin(Margin::same(4))
-                    .shadow(egui::Shadow {
-                        offset: [0, 14],
-                        blur: 36,
-                        spread: 0,
-                        color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
-                    })
-                    .show(ui, |ui| {
-                        ui.style_mut().spacing.item_spacing = Vec2::ZERO;
-                        ui.horizontal(|ui| {
-                            ui.style_mut().spacing.item_spacing = Vec2::ZERO;
-                            ui.visuals_mut().override_text_color = Some(theme.fg_desc);
-                            let mut n = self.color_state.ramp_size as u8;
-                            ui.add_sized(
-                                Vec2::new(32.0, 36.0),
-                                egui::DragValue::new(&mut n).range(3..=9),
-                            );
-                            ui.visuals_mut().override_text_color = None;
-                            self.color_state.ramp_size = n as usize;
-                        });
-                    });
-            });
-        let is_hovered = ctx.pointer_hover_pos()
-            .map(|p| inner.response.rect.contains(p))
-            .unwrap_or(false);
-        let menu_id = egui::Id::new("ramp_size_menu_timer");
-        let should_close = ctx.data_mut(|d| {
-            let last: &mut f64 = d.get_temp_mut_or_insert_with(menu_id, || now);
-            if now - opened_at < 0.15 || is_hovered { *last = now; false } else { now - *last > 2.0 }
-        });
-        ctx.request_repaint();
-        if should_close || (now - opened_at > 0.15 && ctx.input(|i| i.pointer.any_click()) && !is_hovered) {
-            self.ramp_size_menu = None;
-        }
-    }
+    // Ramp Lab removed: draw_ramp_lab function deleted.
 
-    fn draw_slider_param_menu(&mut self, ctx: &egui::Context) {
-        let Some((param, pos, opened_at)) = self.slider_param_menu else { return; };
-        let theme = self.theme.clone();
-        let now = ctx.input(|i| i.time);
-        let inner = egui::Area::new(egui::Id::new("slider_param_menu"))
-            .order(egui::Order::Foreground)
-            .fixed_pos(pos)
-            .show(ctx, |ui| {
-                Frame::new()
-                    .fill(theme.panel)
-                    .inner_margin(Margin::same(4))
-                    .shadow(egui::Shadow {
-                        offset: [0, 14],
-                        blur: 36,
-                        spread: 0,
-                        color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
-                    })
-                    .show(ui, |ui| {
-                        ui.style_mut().spacing.item_spacing = Vec2::ZERO;
-                        ui.horizontal(|ui| {
-                            ui.style_mut().spacing.item_spacing = Vec2::ZERO;
-                            ui.visuals_mut().override_text_color = Some(theme.fg_desc);
-                            match param {
-                                SliderParam::HueShift => {
-                                    let mut deg = self.color_state.hue_shift_deg;
-                                    ui.add_sized(
-                                        Vec2::new(52.0, 36.0),
-                                        egui::DragValue::new(&mut deg)
-                                            .range(0.0..=60.0)
-                                            .speed(0.5)
-                                            .suffix("°"),
-                                    );
-                                    self.color_state.hue_shift_deg = deg;
-                                }
-                                SliderParam::SatCurve => {
-                                    let mut pct = (self.color_state.sat_curve_depth * 100.0).round() as i32;
-                                    ui.add_sized(
-                                        Vec2::new(52.0, 36.0),
-                                        egui::DragValue::new(&mut pct)
-                                            .range(0..=80)
-                                            .suffix("%"),
-                                    );
-                                    self.color_state.sat_curve_depth = pct as f32 / 100.0;
-                                }
-                            }
-                            ui.visuals_mut().override_text_color = None;
-                        });
-                    });
-            });
-        let is_hovered = ctx.pointer_hover_pos()
-            .map(|p| inner.response.rect.contains(p))
-            .unwrap_or(false);
-        let menu_id = egui::Id::new("slider_param_menu_timer");
-        let should_close = ctx.data_mut(|d| {
-            let last: &mut f64 = d.get_temp_mut_or_insert_with(menu_id, || now);
-            if now - opened_at < 0.15 || is_hovered { *last = now; false } else { now - *last > 2.0 }
-        });
-        ctx.request_repaint();
-        if should_close || (now - opened_at > 0.15 && ctx.input(|i| i.pointer.any_click()) && !is_hovered) {
-            self.slider_param_menu = None;
-        }
-    }
+    // Ramp Lab removed: preview_ramp_rgba deleted.
+
 
     fn draw_workspace(&mut self, ctx: &egui::Context) {
         CentralPanel::default()
@@ -2718,6 +2733,66 @@ impl App {
                     egui::StrokeKind::Outside,
                 );
 
+                // Selection rect overlay (during initial marquee drag)
+                if matches!(self.active_tool, ActiveTool::RectSelect) {
+                    if let Some((rx, ry, rw, rh)) = self.select_state.rect {
+                        let zoom = self.canvas.zoom;
+                        let sel_min = egui::Pos2::new(
+                            art_rect.min.x + rx as f32 * zoom,
+                            art_rect.min.y + ry as f32 * zoom,
+                        );
+                        let sel_max = egui::Pos2::new(
+                            art_rect.min.x + (rx + rw) as f32 * zoom,
+                            art_rect.min.y + (ry + rh) as f32 * zoom,
+                        );
+                        let sel_rect = egui::Rect::from_min_max(sel_min, sel_max);
+                        painter.rect_stroke(sel_rect, 0.0, egui::Stroke::new(2.0, egui::Color32::from_black_alpha(120)), egui::StrokeKind::Outside);
+                        painter.rect_stroke(sel_rect, 0.0, egui::Stroke::new(1.0, egui::Color32::WHITE), egui::StrokeKind::Outside);
+                    }
+
+                    // Floating selection overlay: corners + handles + rotation stem.
+                    if self.select_state.has_float() {
+                        let zoom = self.canvas.zoom;
+                        let to_screen = |(x, y): (f32, f32)| egui::Pos2::new(
+                            art_rect.min.x + x * zoom,
+                            art_rect.min.y + y * zoom,
+                        );
+                        if let Some(corners) = self.select_state.rotated_corners() {
+                            let pts: Vec<egui::Pos2> = corners.iter().map(|&c| to_screen(c)).collect();
+                            // Outline (shadow + white)
+                            for i in 0..4 {
+                                let a = pts[i];
+                                let b = pts[(i + 1) % 4];
+                                painter.line_segment([a, b], egui::Stroke::new(2.0, egui::Color32::from_black_alpha(120)));
+                                painter.line_segment([a, b], egui::Stroke::new(1.0, egui::Color32::WHITE));
+                            }
+                        }
+                        if let Some(handles) = self.selection_handle_positions() {
+                            // Helper: find a handle's screen position by variant.
+                            let find = |target: Handle| handles.iter()
+                                .find(|(h, _)| *h == target)
+                                .map(|(_, p)| to_screen(*p));
+
+                            // Stems: N→Rotate, W→FlipH, S→FlipV
+                            for (from, to) in [(Handle::N, Handle::Rotate), (Handle::W, Handle::FlipH), (Handle::S, Handle::FlipV)] {
+                                if let (Some(a), Some(b)) = (find(from), find(to)) {
+                                    painter.line_segment([a, b], egui::Stroke::new(2.0, egui::Color32::from_black_alpha(120)));
+                                    painter.line_segment([a, b], egui::Stroke::new(1.0, egui::Color32::WHITE));
+                                }
+                            }
+
+                            // Handles
+                            for (h, p) in handles {
+                                let center = to_screen(p);
+                                let size = if matches!(h, Handle::Rotate | Handle::FlipH | Handle::FlipV) { 5.0 } else { 4.0 };
+                                let hr = egui::Rect::from_center_size(center, egui::Vec2::splat(size * 2.0));
+                                painter.rect_filled(hr, 1.0, egui::Color32::WHITE);
+                                painter.rect_stroke(hr, 1.0, egui::Stroke::new(1.0, egui::Color32::BLACK), egui::StrokeKind::Outside);
+                            }
+                        }
+                    }
+                }
+
                 let response = ui.allocate_rect(canvas_rect, egui::Sense::click_and_drag());
                 if self.active_tool == ActiveTool::Zoom {
                     self.handle_zoom_tool_input(&response, canvas_rect);
@@ -2740,7 +2815,7 @@ impl App {
                 egui::pos2(rect.left() + 8.0, rect.center().y), icon_size,
             );
             let icon_resp = ui.interact(icon_rect, egui::Id::new("hdr_icon_preview"), egui::Sense::click());
-            let tint = if icon_resp.hovered() { Color32::WHITE } else { theme.fg };
+            let tint = if icon_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
             ui.put(icon_rect, egui::Image::new(egui::include_image!("../assets/icons/visibility.svg"))
                 .tint(tint)
                 .fit_to_exact_size(icon_size));
@@ -2824,6 +2899,17 @@ impl App {
 
         let is_shape_tool = matches!(self.active_tool,
             ActiveTool::Rectangle { .. } | ActiveTool::Ellipse { .. } | ActiveTool::Line);
+        let is_select_tool = matches!(self.active_tool, ActiveTool::RectSelect);
+
+        // Floating selection: if active, the RectSelect tool routes input to the
+        // transform handler. Returns true if input was consumed by a handle/move/rotate.
+        if is_select_tool && self.select_state.has_float() {
+            if self.handle_selection_transform(&response, canvas_rect) {
+                return;
+            }
+            // If the user starts a drag outside the selection, handle_selection_transform
+            // commits the float and falls through here so we can start a new marquee.
+        }
 
         // --- Resolve current pointer position ---
         // For shape drags: use the global interact_pos so tracking continues even when the
@@ -2831,9 +2917,7 @@ impl App {
         // where interact_pos may be None).
         // For stroke tools: require the pointer to be inside the canvas widget.
         let primary_down = response.ctx.input(|i| i.pointer.primary_down());
-        let pos_opt: Option<egui::Pos2> = if is_shape_tool && self.drag_start.is_some() {
-            // latest_pos() = raw last-known pointer position, always Some once the pointer
-            // has been seen, regardless of which widget owns the interaction or panel bounds.
+        let pos_opt: Option<egui::Pos2> = if (is_shape_tool || is_select_tool) && self.drag_start.is_some() {
             response.ctx.input(|i| i.pointer.latest_pos())
         } else {
             response.interact_pointer_pos()
@@ -2843,7 +2927,7 @@ impl App {
         // Also trigger commit when primary button is released globally but drag_stopped
         // didn't fire because the cursor left the central panel.
         let should_commit = response.drag_stopped()
-            || (is_shape_tool && self.drag_start.is_some() && !primary_down);
+            || ((is_shape_tool || is_select_tool) && self.drag_start.is_some() && !primary_down);
         if should_commit {
             let color = self.color_state.foreground;
             self.shape_preview.clear();
@@ -2852,20 +2936,26 @@ impl App {
             {
                 if let (Some((x0, y0)), Some(pos)) = (self.drag_start, pos_opt) {
                     let (epx, epy) = self.canvas.screen_to_canvas_i32(pos, canvas_rect, w, h);
+                    let shift_commit = response.ctx.input(|i| i.modifiers.shift);
                     let active_tool = self.active_tool.clone();
+                    let (eff_epx, eff_epy) = if shift_commit {
+                        shape_shift_constrain(&active_tool, x0 as i32, y0 as i32, epx, epy)
+                    } else {
+                        (epx, epy)
+                    };
                     let shape_edits: Vec<_> = match &active_tool {
                         ActiveTool::Rectangle { filled } => {
-                            apply_rect(&self.project.animations[ai].frames[fi].layers[li], x0 as i32, y0 as i32, epx, epy, color, *filled)
+                            apply_rect(&self.project.animations[ai].frames[fi].layers[li], x0 as i32, y0 as i32, eff_epx, eff_epy, color, *filled)
                         }
                         ActiveTool::Ellipse { filled } => {
-                            let cx = (x0 as i32 + epx) / 2;
-                            let cy = (y0 as i32 + epy) / 2;
-                            let rx = (epx - x0 as i32).abs() / 2;
-                            let ry = (epy - y0 as i32).abs() / 2;
+                            let cx = (x0 as i32 + eff_epx) / 2;
+                            let cy = (y0 as i32 + eff_epy) / 2;
+                            let rx = (eff_epx - x0 as i32).abs() / 2;
+                            let ry = (eff_epy - y0 as i32).abs() / 2;
                             apply_ellipse(&self.project.animations[ai].frames[fi].layers[li], cx, cy, rx, ry, color, *filled)
                         }
                         ActiveTool::Line => {
-                            apply_line(&self.project.animations[ai].frames[fi].layers[li], x0 as i32, y0 as i32, epx, epy, color)
+                            apply_line(&self.project.animations[ai].frames[fi].layers[li], x0 as i32, y0 as i32, eff_epx, eff_epy, color)
                         }
                         _ => vec![],
                     };
@@ -2883,6 +2973,16 @@ impl App {
                 let edits = std::mem::take(&mut self.stroke_edits);
                 self.undo_stack.push(Command::PaintPixels { animation_id: ai, frame_id: fi, layer_id: li, edits });
             }
+            // RectSelect: lift selected pixels into a floating buffer.
+            if is_select_tool {
+                if let Some(rect) = self.select_state.rect {
+                    if rect.2 > 0 && rect.3 > 0 {
+                        self.lift_selection_to_float(rect);
+                    } else {
+                        self.select_state.clear();
+                    }
+                }
+            }
             self.drag_start = None;
             return;
         }
@@ -2896,11 +2996,12 @@ impl App {
         // Unconstrained i32 canvas coordinates for shape tools — can be negative or
         // beyond canvas edges.  Pixels that fall outside are discarded by get_pixel/set_pixel.
         let (shape_px, shape_py): (i32, i32) = self.canvas.screen_to_canvas_i32(pos, canvas_rect, w, h);
+        let shift_held = response.ctx.input(|i| i.modifiers.shift);
 
         // Stroke tools: require cursor to be inside the canvas.
         // For shape tools with an active drag the cursor may be outside — in that case we
         // skip the bounds check and only use shape_px/shape_py for the shape preview/commit.
-        let (px, py) = if is_shape_tool && self.drag_start.is_some() {
+        let (px, py) = if (is_shape_tool || is_select_tool) && self.drag_start.is_some() {
             // Already have shape_px/shape_py; (px, py) unused for shape mid-drag arms.
             (0u32, 0u32)
         } else {
@@ -2909,13 +3010,28 @@ impl App {
             (px, py)
         };
 
-        if self.project.animations[ai].frames[fi].layers[li].locked { return; }
-        if self.project.animations[ai].frames[fi].layers[li].is_group { return; }
+        // Selection is non-destructive — allow it even on locked/group layers.
+        if !is_select_tool {
+            if self.project.animations[ai].frames[fi].layers[li].locked { return; }
+            if self.project.animations[ai].frames[fi].layers[li].is_group { return; }
+        }
 
         if response.drag_started() {
-            self.drag_start = Some((px, py));
+            // For select tool, clamp the drag-start to canvas bounds so that
+            // starting a marquee outside the canvas still begins from the edge.
+            let start = if is_select_tool {
+                let sx = shape_px.clamp(0, w as i32 - 1) as u32;
+                let sy = shape_py.clamp(0, h as i32 - 1) as u32;
+                (sx, sy)
+            } else {
+                (px, py)
+            };
+            self.drag_start = Some(start);
             self.stroke_edits.clear();
             self.shape_preview.clear();
+            if is_select_tool {
+                self.select_state.rect = None; // clear previous selection on new drag
+            }
         }
 
         let color = self.color_state.foreground;
@@ -2952,6 +3068,9 @@ impl App {
                 let layer = &self.project.animations[ai].frames[fi].layers[li];
                 self.color_state.foreground = apply_eyedropper(layer, px, py);
             }
+            ActiveTool::RectSelect => {
+                // Handled below in the live-drag block.
+            }
             _ => {}
         }
 
@@ -2959,23 +3078,27 @@ impl App {
         // Use primary_down (global button state) instead of response.dragged() so the
         // preview keeps updating even when the cursor moves outside the central panel.
         if is_shape_tool && self.drag_start.is_some() && primary_down {
-            // Keep requesting repaints so the preview stays live outside the panel.
             response.ctx.request_repaint();
             if let Some((x0, y0)) = self.drag_start {
                 let active_tool = self.active_tool.clone();
+                let (eff_px, eff_py) = if shift_held {
+                    shape_shift_constrain(&active_tool, x0 as i32, y0 as i32, shape_px, shape_py)
+                } else {
+                    (shape_px, shape_py)
+                };
                 let preview_edits: Vec<_> = match &active_tool {
                     ActiveTool::Rectangle { filled } => {
-                        apply_rect(&self.project.animations[ai].frames[fi].layers[li], x0 as i32, y0 as i32, shape_px, shape_py, color, *filled)
+                        apply_rect(&self.project.animations[ai].frames[fi].layers[li], x0 as i32, y0 as i32, eff_px, eff_py, color, *filled)
                     }
                     ActiveTool::Ellipse { filled } => {
-                        let cx = (x0 as i32 + shape_px) / 2;
-                        let cy = (y0 as i32 + shape_py) / 2;
-                        let rx = (shape_px - x0 as i32).abs() / 2;
-                        let ry = (shape_py - y0 as i32).abs() / 2;
+                        let cx = (x0 as i32 + eff_px) / 2;
+                        let cy = (y0 as i32 + eff_py) / 2;
+                        let rx = (eff_px - x0 as i32).abs() / 2;
+                        let ry = (eff_py - y0 as i32).abs() / 2;
                         apply_ellipse(&self.project.animations[ai].frames[fi].layers[li], cx, cy, rx, ry, color, *filled)
                     }
                     ActiveTool::Line => {
-                        apply_line(&self.project.animations[ai].frames[fi].layers[li], x0 as i32, y0 as i32, shape_px, shape_py, color)
+                        apply_line(&self.project.animations[ai].frames[fi].layers[li], x0 as i32, y0 as i32, eff_px, eff_py, color)
                     }
                     _ => vec![],
                 };
@@ -2983,6 +3106,326 @@ impl App {
                 self.canvas_dirty = true;
             }
         }
+
+        // Selection rect: update live during drag.
+        if is_select_tool && self.drag_start.is_some() && primary_down {
+            response.ctx.request_repaint();
+            if let Some((x0, y0)) = self.drag_start {
+                let ex = shape_px.clamp(0, w as i32 - 1) as u32;
+                let ey = shape_py.clamp(0, h as i32 - 1) as u32;
+                let (rx, ry) = (x0.min(ex), y0.min(ey));
+                let (rw, rh) = (x0.max(ex) - rx + 1, y0.max(ey) - ry + 1);
+                self.select_state.rect = Some((rx, ry, rw, rh));
+            }
+        }
+    }
+
+    /// Lift the pixels inside `rect` from the active layer into a FloatBuffer,
+    /// clearing those cells in the layer. Records an undo command.
+    fn lift_selection_to_float(&mut self, rect: (u32, u32, u32, u32)) {
+        let (rx, ry, rw, rh) = rect;
+        if rw == 0 || rh == 0 { return; }
+        let ai = self.project.active_animation;
+        let fi = self.project.active_frame;
+        let li = self.project.active_layer;
+        if self.project.animations[ai].frames[fi].layers[li].locked { return; }
+        if self.project.animations[ai].frames[fi].layers[li].is_group { return; }
+
+        let layer = &self.project.animations[ai].frames[fi].layers[li];
+        let mut pixels: Vec<Rgba> = Vec::with_capacity((rw * rh) as usize);
+        let mut edits: Vec<crate::tools::PixelEdit> = Vec::new();
+        for y in 0..rh {
+            for x in 0..rw {
+                let cx = rx + x;
+                let cy = ry + y;
+                let old = layer.get_pixel(cx, cy);
+                pixels.push(old);
+                if old[3] != 0 {
+                    edits.push((cx, cy, old, [0, 0, 0, 0]));
+                }
+            }
+        }
+        // Apply the clear
+        for &(x, y, _o, n) in &edits {
+            self.project.animations[ai].frames[fi].layers[li].set_pixel(x, y, n);
+        }
+        if !edits.is_empty() {
+            self.undo_stack.push(Command::PaintPixels { animation_id: ai, frame_id: fi, layer_id: li, edits });
+        }
+        self.select_state.begin_float(FloatBuffer { w: rw, h: rh, pixels }, rect);
+        self.canvas_dirty = true;
+    }
+
+    /// Stamp the currently transformed float pixels onto the active layer and
+    /// clear the selection state. Records an undo command.
+    fn commit_float_to_layer(&mut self) {
+        if !self.select_state.has_float() { return; }
+        let ai = self.project.active_animation;
+        let fi = self.project.active_frame;
+        let li = self.project.active_layer;
+        if self.project.animations[ai].frames[fi].layers[li].locked {
+            // Cannot commit; just drop the float (destructive but unavoidable).
+            self.select_state.clear();
+            return;
+        }
+        if self.project.animations[ai].frames[fi].layers[li].is_group {
+            self.select_state.clear();
+            return;
+        }
+
+        let Some((ax, ay, aw, ah)) = self.select_state.transformed_aabb() else {
+            self.select_state.clear();
+            return;
+        };
+        let w = self.project.canvas_width as i32;
+        let h = self.project.canvas_height as i32;
+        let x0 = (ax.floor() as i32).max(0);
+        let y0 = (ay.floor() as i32).max(0);
+        let x1 = ((ax + aw).ceil() as i32).min(w);
+        let y1 = ((ay + ah).ceil() as i32).min(h);
+
+        let layer = &self.project.animations[ai].frames[fi].layers[li];
+        let mut edits: Vec<crate::tools::PixelEdit> = Vec::new();
+        for cy in y0..y1 {
+            for cx in x0..x1 {
+                if let Some(new) = sample_transformed(&self.select_state, cx, cy) {
+                    let old = layer.get_pixel(cx as u32, cy as u32);
+                    if old != new {
+                        edits.push((cx as u32, cy as u32, old, new));
+                    }
+                }
+            }
+        }
+        for &(x, y, _o, n) in &edits {
+            self.project.animations[ai].frames[fi].layers[li].set_pixel(x, y, n);
+        }
+        if !edits.is_empty() {
+            self.undo_stack.push(Command::PaintPixels { animation_id: ai, frame_id: fi, layer_id: li, edits });
+        }
+        self.select_state.clear();
+        self.canvas_dirty = true;
+    }
+
+    /// Returns the canvas-space pixel position of each handle for the current
+    /// (rotated, scaled) selection. Layout (in unrotated local coords):
+    ///   NW N NE
+    ///   W     E
+    ///   SW S SE
+    /// Plus a rotation handle 18 canvas-pixels above the N handle (along the
+    /// "up" axis of the rotated rect).
+    fn selection_handle_positions(&self) -> Option<[(Handle, (f32, f32)); 11]> {
+        let (w0, h0) = self.select_state.float_size()?;
+        let sw = w0 as f32 * self.select_state.scale.0.abs();
+        let sh = h0 as f32 * self.select_state.scale.1.abs();
+        let (ox, oy) = self.select_state.offset;
+        let cx = ox + sw * 0.5;
+        let cy = oy + sh * 0.5;
+        let (s, c) = self.select_state.rotation.sin_cos();
+        let map = |lx: f32, ly: f32| -> (f32, f32) {
+            let dx = lx - cx;
+            let dy = ly - cy;
+            (cx + dx * c - dy * s, cy + dx * s + dy * c)
+        };
+        // Rotation + flip handle offsets: 18 canvas-pixels outside the rect (local space).
+        let off = 18.0 / self.canvas.zoom.max(0.0001);
+        Some([
+            (Handle::NW, map(ox,        oy)),
+            (Handle::N,  map(ox + sw/2., oy)),
+            (Handle::NE, map(ox + sw,    oy)),
+            (Handle::W,  map(ox,         oy + sh/2.)),
+            (Handle::E,  map(ox + sw,    oy + sh/2.)),
+            (Handle::SW, map(ox,         oy + sh)),
+            (Handle::S,  map(ox + sw/2., oy + sh)),
+            (Handle::SE, map(ox + sw,    oy + sh)),
+            (Handle::Rotate, map(ox + sw/2., oy - off)),
+            (Handle::FlipH,  map(ox - off,    oy + sh/2.)),
+            (Handle::FlipV,  map(ox + sw/2.,  oy + sh + off)),
+        ])
+    }
+
+    /// Hit-test handles, rotation stem, and inside-rect at a given canvas
+    /// pixel position. Returns the Handle that was hit, if any.
+    fn hit_test_selection(&self, cx_px: f32, cy_px: f32) -> Option<Handle> {
+        let handles = self.selection_handle_positions()?;
+        // Handle hit radius — 16 screen pixels expressed in canvas space.
+        let r = 16.0 / self.canvas.zoom.max(0.0001);
+        for (h, (hx, hy)) in handles {
+            let dx = cx_px - hx;
+            let dy = cy_px - hy;
+            if dx*dx + dy*dy <= r*r {
+                return Some(h);
+            }
+        }
+        // Inside test (rotated rect): inverse-rotate the point and check vs local rect.
+        let (w0, h0) = self.select_state.float_size()?;
+        let sw = w0 as f32 * self.select_state.scale.0.abs();
+        let sh = h0 as f32 * self.select_state.scale.1.abs();
+        let (ox, oy) = self.select_state.offset;
+        let cx = ox + sw * 0.5;
+        let cy = oy + sh * 0.5;
+        let (s, c) = (-self.select_state.rotation).sin_cos();
+        let dx = cx_px - cx;
+        let dy = cy_px - cy;
+        let lx = cx + dx * c - dy * s;
+        let ly = cy + dx * s + dy * c;
+        if lx >= ox && lx <= ox + sw && ly >= oy && ly <= oy + sh {
+            return Some(Handle::Inside);
+        }
+        None
+    }
+
+    /// Handle move/resize/rotate of an active floating selection.
+    /// Returns true if the event was consumed (caller should skip normal input).
+    fn handle_selection_transform(&mut self, response: &egui::Response, canvas_rect: egui::Rect) -> bool {
+        if !self.select_state.has_float() { return false; }
+        if !matches!(self.active_tool, ActiveTool::RectSelect) { return false; }
+
+        let primary_down = response.ctx.input(|i| i.pointer.primary_down());
+        let shift_held = response.ctx.input(|i| i.modifiers.shift);
+        let pos_opt: Option<egui::Pos2> = if self.select_state.interaction != SelectInteraction::None {
+            response.ctx.input(|i| i.pointer.latest_pos())
+        } else {
+            response.hover_pos()
+        };
+        let Some(pos) = pos_opt else {
+            // Drag may have ended off-window — commit interaction end on release
+            if !primary_down && self.select_state.interaction != SelectInteraction::None {
+                self.select_state.interaction = SelectInteraction::None;
+                self.select_state.drag_anchor = None;
+            }
+            return false;
+        };
+
+        let w = self.project.canvas_width;
+        let h = self.project.canvas_height;
+        let (cx_px, cy_px) = self.canvas.screen_to_canvas_f32(pos, canvas_rect, w, h);
+
+        // Click on flip handles → mirror (no drag).
+        if response.clicked() {
+            if let Some(handle) = self.hit_test_selection(cx_px, cy_px) {
+                match handle {
+                    Handle::FlipH => {
+                        self.select_state.scale.0 = -self.select_state.scale.0;
+                        self.canvas_dirty = true;
+                        return true;
+                    }
+                    Handle::FlipV => {
+                        self.select_state.scale.1 = -self.select_state.scale.1;
+                        self.canvas_dirty = true;
+                        return true;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Start an interaction on drag_started inside a handle or the rect.
+        if response.drag_started() {
+            if let Some(handle) = self.hit_test_selection(cx_px, cy_px) {
+                // Flip handles are click-only; pressing-and-dragging on them does nothing.
+                if matches!(handle, Handle::FlipH | Handle::FlipV) {
+                    return true;
+                }
+                let interaction = match handle {
+                    Handle::Inside => SelectInteraction::Moving,
+                    Handle::Rotate => SelectInteraction::Rotating,
+                    h => SelectInteraction::Resizing(h),
+                };
+                self.select_state.interaction = interaction;
+                self.select_state.drag_anchor = Some(DragAnchor {
+                    mouse_x: cx_px,
+                    mouse_y: cy_px,
+                    offset: self.select_state.offset,
+                    scale: self.select_state.scale,
+                    rotation: self.select_state.rotation,
+                });
+                self.canvas_dirty = true;
+                return true;
+            } else {
+                // Drag started outside the selection — commit current float and let the
+                // normal RectSelect handler start a new marquee.
+                self.commit_float_to_layer();
+                return false;
+            }
+        }
+
+        // While dragging, update transform
+        if self.select_state.interaction != SelectInteraction::None && primary_down {
+            response.ctx.request_repaint();
+            if let Some(anchor) = self.select_state.drag_anchor {
+                let dx = cx_px - anchor.mouse_x;
+                let dy = cy_px - anchor.mouse_y;
+                match self.select_state.interaction {
+                    SelectInteraction::Moving => {
+                        self.select_state.offset = (anchor.offset.0 + dx, anchor.offset.1 + dy);
+                    }
+                    SelectInteraction::Resizing(handle) => {
+                        if let Some((w0, h0)) = self.select_state.float_size() {
+                            let sw0 = w0 as f32 * anchor.scale.0.abs();
+                            let sh0 = h0 as f32 * anchor.scale.1.abs();
+                            // We treat resize as adjusting the AABB edges in local
+                            // (un-rotated) space. Project the mouse delta into that
+                            // space using the inverse rotation.
+                            let (s, c) = (-anchor.rotation).sin_cos();
+                            let ldx = dx * c - dy * s;
+                            let ldy = dx * s + dy * c;
+                            let mut nx = anchor.offset.0;
+                            let mut ny = anchor.offset.1;
+                            let mut nw = sw0;
+                            let mut nh = sh0;
+                            match handle {
+                                Handle::E  => { nw = (sw0 + ldx).max(1.0); }
+                                Handle::W  => { nx = anchor.offset.0 + ldx; nw = (sw0 - ldx).max(1.0); }
+                                Handle::S  => { nh = (sh0 + ldy).max(1.0); }
+                                Handle::N  => { ny = anchor.offset.1 + ldy; nh = (sh0 - ldy).max(1.0); }
+                                Handle::SE => { nw = (sw0 + ldx).max(1.0); nh = (sh0 + ldy).max(1.0); }
+                                Handle::NE => { nw = (sw0 + ldx).max(1.0); ny = anchor.offset.1 + ldy; nh = (sh0 - ldy).max(1.0); }
+                                Handle::SW => { nx = anchor.offset.0 + ldx; nw = (sw0 - ldx).max(1.0); nh = (sh0 + ldy).max(1.0); }
+                                Handle::NW => { nx = anchor.offset.0 + ldx; nw = (sw0 - ldx).max(1.0); ny = anchor.offset.1 + ldy; nh = (sh0 - ldy).max(1.0); }
+                                _ => {}
+                            }
+                            // We're growing/shrinking around the original rotation center
+                            // for axis edges, but our offset is a top-left in unrotated
+                            // space — we need to keep the rotated rect's visual center
+                            // stable for the unchanged-edge corners. We instead just
+                            // apply the deltas directly and let the rotation compose;
+                            // for non-zero rotation this is an approximation that
+                            // matches user expectations from Figma/Photoshop.
+                            self.select_state.scale = (nw / w0 as f32, nh / h0 as f32);
+                            self.select_state.offset = (nx, ny);
+                        }
+                    }
+                    SelectInteraction::Rotating => {
+                        if let Some((w0, h0)) = self.select_state.float_size() {
+                            let sw = w0 as f32 * anchor.scale.0.abs();
+                            let sh = h0 as f32 * anchor.scale.1.abs();
+                            let cx = anchor.offset.0 + sw * 0.5;
+                            let cy = anchor.offset.1 + sh * 0.5;
+                            let a0 = (anchor.mouse_y - cy).atan2(anchor.mouse_x - cx);
+                            let a1 = (cy_px - cy).atan2(cx_px - cx);
+                            let mut new_rot = anchor.rotation + (a1 - a0);
+                            if shift_held {
+                                let step = std::f32::consts::FRAC_PI_4; // 45°
+                                new_rot = (new_rot / step).round() * step;
+                            }
+                            self.select_state.rotation = new_rot;
+                        }
+                    }
+                    SelectInteraction::None => {}
+                }
+                self.canvas_dirty = true;
+            }
+            return true;
+        }
+
+        // Release ends the interaction.
+        if !primary_down && self.select_state.interaction != SelectInteraction::None {
+            self.select_state.interaction = SelectInteraction::None;
+            self.select_state.drag_anchor = None;
+            self.canvas_dirty = true;
+        }
+        // Consume hovers inside the selection so cursor can change later.
+        false
     }
 
     fn add_frame(&mut self) {
@@ -3122,8 +3565,26 @@ impl App {
                     .font(FontId::new(MENU_FONT_SIZE, FontFamily::Name("bold".into())));
                 let text_resp = ui.add(egui::Label::new(text).sense(egui::Sense::click()));
 
-                if (icon_resp.clicked() || text_resp.clicked()) && self.logo_anim_start.is_none() {
-                    self.logo_anim_start = Some(now);
+                let clicked = icon_resp.clicked() || text_resp.clicked();
+                if clicked {
+                    // Play the sprite animation (if not already playing).
+                    if self.logo_anim_start.is_none() {
+                        self.logo_anim_start = Some(now);
+                    }
+                    // Toggle the File dropdown, anchored to the bottom-left of the icon.
+                    let already_open = matches!(self.top_menu_open, Some((TopMenu::File, _)));
+                    if already_open {
+                        self.top_menu_open = None;
+                    } else {
+                        let pos = Pos2::new(0.0, icon_rect.bottom() + DROPDOWN_TOP_GAP);
+                        self.top_menu_open = Some((TopMenu::File, pos));
+                        self.top_menu_opened_at = ui.ctx().input(|i| i.time);
+                        self.top_menu_hover_left = None;
+                        self.view_show_open = false;
+                        self.dropdown_clip_h   = 0.0;
+                        self.dropdown_clip_vel = 0.0;
+                        self.dropdown_full_h   = 0.0;
+                    }
                 }
             },
         );
@@ -3145,6 +3606,11 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.theme.apply(ctx);
 
+        if cfg!(debug_assertions) {
+            let fg = self.color_state.foreground;
+            eprintln!("[APP_DBG] foreground={:?} rgba_to_oklch={:?} picker={:?}", fg, rgba_to_oklch(fg), self.color_state.active_picker);
+        }
+
         let fps = self.project.active_anim().fps;
         let total = self.project.active_anim().frames.len();
         if self.playback.tick(fps, &mut self.project.active_frame, total) {
@@ -3158,14 +3624,24 @@ impl eframe::App for App {
         }
         self.alt_was_down = alt_now;
 
+        // Escape commits a floating selection back to the layer.
+        if self.select_state.has_float() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.commit_float_to_layer();
+        }
+        // If the user switches away from the RectSelect tool, commit any float.
+        if self.select_state.has_float() && !matches!(self.active_tool, ActiveTool::RectSelect) {
+            self.commit_float_to_layer();
+        }
+
         let ctrl_z = ctx.input(|i| i.key_pressed(egui::Key::Z) && i.modifiers.ctrl);
         let ctrl_y = ctx.input(|i| i.key_pressed(egui::Key::Y) && i.modifiers.ctrl);
         if ctrl_z {
-            self.undo_stack.undo(&mut self.project);
+            // Prefer color-aware undo so ColorState snapshots (ramp edits) are restored.
+            self.undo_stack.undo_with_color(&mut self.project, &mut self.color_state);
             self.canvas_dirty = true;
         }
         if ctrl_y {
-            self.undo_stack.redo(&mut self.project);
+            self.undo_stack.redo_with_color(&mut self.project, &mut self.color_state);
             self.canvas_dirty = true;
         }
 
@@ -3205,15 +3681,6 @@ fn top_menu_zone(ui: &mut egui::Ui, theme: &Theme, label: &str, selected: bool) 
         if is_active { theme.fg } else { theme.fg_desc },
     );
     response
-}
-
-fn dropdown_separator(ui: &mut egui::Ui, theme: &Theme) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(DROPDOWN_WIDTH, 9.0), egui::Sense::hover());
-    let y = rect.center().y;
-    ui.painter().line_segment(
-        [Pos2::new(rect.left() + 14.0, y), Pos2::new(rect.right() - 14.0, y)],
-        egui::Stroke::new(1.0, theme.surface),
-    );
 }
 
 fn dropdown_row(ui: &mut egui::Ui, theme: &Theme, label: &str, right: Option<&str>, enabled: bool) -> egui::Response {
@@ -3269,7 +3736,7 @@ fn section_header_with_add(ui: &mut egui::Ui, theme: &Theme, state: &mut UiState
         let icon_size = Vec2::splat(16.0);
         let icon_rect = egui::Rect::from_center_size(Pos2::new(rect.left() + 8.0, rect.center().y), icon_size);
         let icon_resp = ui.interact(icon_rect, egui::Id::new(("hdr_icon", panel)), egui::Sense::click());
-        let icon_tint = if icon_resp.hovered() { Color32::WHITE } else { theme.fg };
+        let icon_tint = if icon_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
         ui.put(icon_rect, Image::new(icon).tint(icon_tint).fit_to_exact_size(icon_size));
         if icon_resp.clicked() {
             state.toggle_collapsed(panel);
@@ -3585,24 +4052,6 @@ fn icon_flat_button(ui: &mut egui::Ui, theme: &Theme, icon: ImageSource<'static>
     resp
 }
 
-fn flat_button(ui: &mut egui::Ui, theme: &Theme, label: &str) -> egui::Response {
-    ui.add_sized(
-        Vec2::new(16.0, 16.0),
-        egui::Button::new(rich(label, theme.fg_desc, FONT_SIZE_SM))
-            .fill(theme.panel)
-            .stroke(egui::Stroke::NONE),
-    )
-}
-
-fn menu_item(ui: &mut egui::Ui, theme: &Theme, label: &str) -> egui::Response {
-    ui.add(
-        egui::Button::new(rich(label, theme.fg_desc, FONT_SIZE_SM))
-            .fill(theme.panel)
-            .stroke(egui::Stroke::NONE)
-            .min_size(Vec2::new(132.0, 28.0)),
-    )
-}
-
 fn panel_icon(panel: Panel) -> egui::ImageSource<'static> {
     match panel {
         Panel::Palette    => egui::include_image!("../assets/icons/colors.svg"),
@@ -3620,8 +4069,30 @@ fn rfd_open() -> Option<std::path::PathBuf> {
         .pick_file()
 }
 
-fn rfd_save() -> Option<std::path::PathBuf> {
-    rfd::FileDialog::new()
-        .add_filter("Squarez Project", &["sqr"])
-        .save_file()
+/// Shift-constrain the end point of a shape drag.
+/// - Rectangle / Ellipse → square / circle: clamp to the smaller axis delta.
+/// - Line → snap to the nearest 45° direction.
+fn shape_shift_constrain(tool: &ActiveTool, x0: i32, y0: i32, ex: i32, ey: i32) -> (i32, i32) {
+    match tool {
+        ActiveTool::Rectangle { .. } | ActiveTool::Ellipse { .. } => {
+            let dx = ex - x0;
+            let dy = ey - y0;
+            let side = dx.abs().min(dy.abs());
+            (x0 + side * dx.signum(), y0 + side * dy.signum())
+        }
+        ActiveTool::Line => {
+            let dx = (ex - x0) as f32;
+            let dy = (ey - y0) as f32;
+            let len = (dx * dx + dy * dy).sqrt();
+            let angle = dy.atan2(dx);
+            let snap = (std::f32::consts::PI / 4.0).round(); // 45° in radians
+            let snapped = (angle / (std::f32::consts::PI / 4.0)).round() * (std::f32::consts::PI / 4.0);
+            let _ = snap;
+            (
+                x0 + (len * snapped.cos()).round() as i32,
+                y0 + (len * snapped.sin()).round() as i32,
+            )
+        }
+        _ => (ex, ey),
+    }
 }

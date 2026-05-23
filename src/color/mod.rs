@@ -2,7 +2,17 @@
 pub mod hsv;
 pub mod oklab;
 pub use hsv::{rgba_to_hsv, hsv_to_rgba};
-pub use oklab::{rgba_to_oklab, oklab_to_rgba, rgba_to_oklch, oklch_to_rgba, generate_ramp, generate_ramp_hsv, generate_ramp_endpoints, generate_ramp_hsv_endpoints};
+pub use oklab::{
+    rgba_to_oklab,
+    oklab_to_rgba,
+    rgba_to_oklch,
+    oklch_to_rgba,
+    safe_oklch_to_rgba,
+    generate_ramp,
+    generate_ramp_hsv,
+    generate_ramp_endpoints,
+    generate_ramp_hsv_endpoints,
+};
 use crate::project::Rgba;
 
 /// All color picker state for the right panel
@@ -35,6 +45,18 @@ pub struct ColorState {
     pub light_end_l: f32,
     /// Endpoints mode (HSV): the V value of the *light* end of the ramp.
     pub light_end_v: f32,
+    /// Whether non-endpoint ramps push dark/light ends toward near black/white.
+    pub ramp_end_extremes: bool,
+    /// Ramp Lab fixed 3-point curves (start/mid/end handle y in 0..1).
+    pub ramp_curve_start_luma: f32,
+    pub ramp_curve_mid_luma: f32,
+    pub ramp_curve_end_luma: f32,
+    pub ramp_curve_start_sat: f32,
+    pub ramp_curve_mid_sat: f32,
+    pub ramp_curve_end_sat: f32,
+    pub ramp_curve_start_hue: f32,
+    pub ramp_curve_mid_hue: f32,
+    pub ramp_curve_end_hue: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -53,7 +75,8 @@ pub enum PickerMode { Hsv, OkLab, Rgb }
 impl Default for ColorState {
     fn default() -> Self {
         Self {
-            foreground: [0, 0, 0, 255],
+            // Use a visible non-gray default for easier debugging & UX
+            foreground: [0x11, 0xad, 0xc1, 255],
             background: [255, 255, 255, 255],
             active_picker: PickerMode::OkLab,
             ramp_size: 5,
@@ -69,6 +92,16 @@ impl Default for ColorState {
             snap_hsv_v: false,
             light_end_l: 0.90,
             light_end_v: 0.95,
+            ramp_end_extremes: false,
+            ramp_curve_start_luma: 0.00,
+            ramp_curve_mid_luma: 0.50,
+            ramp_curve_end_luma: 1.00,
+            ramp_curve_start_sat: 0.35,
+            ramp_curve_mid_sat: 0.50,
+            ramp_curve_end_sat: 0.80,
+            ramp_curve_start_hue: 0.50,
+            ramp_curve_mid_hue: 0.50,
+            ramp_curve_end_hue: 0.50,
         }
     }
 }

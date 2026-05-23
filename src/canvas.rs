@@ -63,6 +63,14 @@ impl CanvasState {
         (px, py)
     }
 
+    /// Returns sub-pixel canvas coordinates. Used by selection move/resize for smooth
+    /// transforms that don't snap to integer pixels until commit.
+    pub fn screen_to_canvas_f32(&self, screen_pos: Pos2, canvas_rect: Rect, width: u32, height: u32) -> (f32, f32) {
+        let art_rect = self.art_rect(canvas_rect, width, height);
+        let relative = screen_pos - art_rect.min;
+        (relative.x / self.zoom, relative.y / self.zoom)
+    }
+
     /// Zoom in or out keeping `screen_pos` fixed under the cursor.
     /// `factor` > 1.0 zooms in, < 1.0 zooms out.
     pub fn zoom_at_point(&mut self, factor: f32, screen_pos: Pos2, canvas_rect: Rect) {

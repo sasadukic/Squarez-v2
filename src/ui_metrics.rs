@@ -1,3 +1,3 @@
 pub const PALETTE_SWATCH_GAP: f32 = 0.0;
 pub const COLOR_SLIDER_TRACK_HEIGHT: f32 = 8.0;
-pub const RIGHT_SECTION_STACK_GAP: f32 = 4.0;
+pub const RIGHT_SECTION_STACK_GAP: f32 = 0.0;

@@ -9,6 +9,7 @@ pub use pencil::{apply_pencil, apply_eraser, bresenham_line};
 pub use fill::apply_fill;
 pub use eyedropper::apply_eyedropper;
 pub use shapes::{apply_rect, apply_ellipse, apply_line};
+pub use select::{SelectState, SelectInteraction, Handle, FloatBuffer, DragAnchor, sample_transformed};
 
 use crate::project::Rgba;
 

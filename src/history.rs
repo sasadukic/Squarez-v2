@@ -1,5 +1,6 @@
 // src/history.rs
 use crate::project::{Project, Rgba};
+use crate::color::ColorState;
 
 pub const MAX_UNDO: usize = 100;
 
@@ -38,6 +39,11 @@ pub enum Command {
         index: usize,
         snapshot: crate::project::Layer,
     },
+    /// Snapshot the ColorState before/after a grouped color edit (undo/redo restores it).
+    SetColorStateSnapshot {
+        before: ColorState,
+        after: ColorState,
+    },
 }
 
 pub struct UndoStack {
@@ -64,24 +70,42 @@ impl UndoStack {
         }
     }
 
+    /// Backward-compatible undo: does not touch ColorState snapshots.
     pub fn undo(&mut self, project: &mut Project) {
         if !self.can_undo() { return; }
         self.cursor -= 1;
         let cmd = self.commands[self.cursor].clone();
-        apply_command(project, &cmd, Direction::Backward);
+        apply_command(project, None, &cmd, Direction::Backward);
     }
 
+    /// Backward-compatible redo: does not touch ColorState snapshots.
     pub fn redo(&mut self, project: &mut Project) {
         if !self.can_redo() { return; }
         let cmd = self.commands[self.cursor].clone();
         self.cursor += 1;
-        apply_command(project, &cmd, Direction::Forward);
+        apply_command(project, None, &cmd, Direction::Forward);
+    }
+
+    /// Extended undo that also restores ColorState snapshots when available.
+    pub fn undo_with_color(&mut self, project: &mut Project, color_state: &mut ColorState) {
+        if !self.can_undo() { return; }
+        self.cursor -= 1;
+        let cmd = self.commands[self.cursor].clone();
+        apply_command(project, Some(color_state), &cmd, Direction::Backward);
+    }
+
+    /// Extended redo that also restores ColorState snapshots when available.
+    pub fn redo_with_color(&mut self, project: &mut Project, color_state: &mut ColorState) {
+        if !self.can_redo() { return; }
+        let cmd = self.commands[self.cursor].clone();
+        self.cursor += 1;
+        apply_command(project, Some(color_state), &cmd, Direction::Forward);
     }
 }
 
 enum Direction { Forward, Backward }
 
-fn apply_command(project: &mut Project, cmd: &Command, dir: Direction) {
+fn apply_command(project: &mut Project, color_state: Option<&mut ColorState>, cmd: &Command, dir: Direction) {
     match cmd {
         Command::PaintPixels { animation_id, frame_id, layer_id, edits } => {
             let layer = &mut project.animations[*animation_id]
@@ -121,7 +145,7 @@ fn apply_command(project: &mut Project, cmd: &Command, dir: Direction) {
             for anim in &mut project.animations {
                 for frame in &mut anim.frames {
                     match dir {
-                        Direction::Forward  => frame.layers.insert(*index, crate::project::Layer::new(name.clone(), w, h, *id)),
+                        Direction::Forward  => frame.layers.insert(*index, crate::project::Layer::new_with_id(name.clone(), w, h, *id)),
                         Direction::Backward => { if frame.layers.len() > *index { frame.layers.remove(*index); } }
                     }
                 }
@@ -132,6 +156,14 @@ fn apply_command(project: &mut Project, cmd: &Command, dir: Direction) {
             match dir {
                 Direction::Forward  => { frame.layers.remove(*index); }
                 Direction::Backward => frame.layers.insert(*index, snapshot.clone()),
+            }
+        }
+        Command::SetColorStateSnapshot { before, after } => {
+            if let Some(cs) = color_state {
+                match dir {
+                    Direction::Forward => *cs = after.clone(),
+                    Direction::Backward => *cs = before.clone(),
+                }
             }
         }
     }
