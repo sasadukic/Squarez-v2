@@ -49,6 +49,8 @@ pub struct App {
     pub ramp_lab_curve_start_hue: f32,
     pub ramp_lab_curve_mid_hue: f32,
     pub ramp_lab_curve_end_hue: f32,
+    // Whether to push generated preview to palette when applying.
+    pub ramp_lab_push_to_palette: bool,
     drag_start: Option<(u32, u32)>,
     stroke_edits: Vec<crate::tools::PixelEdit>,
     canvas_dirty: bool,
@@ -397,6 +399,7 @@ impl App {
             ramp_lab_curve_start_hue: init_ramp_lab_curve_start_hue,
             ramp_lab_curve_mid_hue: init_ramp_lab_curve_mid_hue,
             ramp_lab_curve_end_hue: init_ramp_lab_curve_end_hue,
+            ramp_lab_push_to_palette: false,
         }
     }
 
@@ -3810,14 +3813,40 @@ impl App {
 
                             ui.add_space(8.0);
                             // Buttons row
+                            ui.add_space(6.0);
+                            ui.checkbox(&mut self.ramp_lab_push_to_palette, "Push to palette");
+                            ui.add_space(6.0);
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 if ui.add(egui::Button::new("Cancel")).clicked() {
                                     self.ramp_lab_open = false;
                                 }
                                 ui.add_space(8.0);
                                 if ui.add(egui::Button::new("Apply")).clicked() {
-                                    // Apply not implemented yet
+                                    // Commit buffer into color_state and push undo snapshot
+                                    let before = self.color_state.clone();
+                                    // copy fields
+                                    self.color_state.ramp_size = self.ramp_lab_ramp_size;
+                                    self.color_state.ramp_curve_start_luma = self.ramp_lab_curve_start_luma;
+                                    self.color_state.ramp_curve_mid_luma = self.ramp_lab_curve_mid_luma;
+                                    self.color_state.ramp_curve_end_luma = self.ramp_lab_curve_end_luma;
+                                    self.color_state.ramp_curve_start_sat = self.ramp_lab_curve_start_sat;
+                                    self.color_state.ramp_curve_mid_sat = self.ramp_lab_curve_mid_sat;
+                                    self.color_state.ramp_curve_end_sat = self.ramp_lab_curve_end_sat;
+                                    self.color_state.ramp_curve_start_hue = self.ramp_lab_curve_start_hue;
+                                    self.color_state.ramp_curve_mid_hue = self.ramp_lab_curve_mid_hue;
+                                    self.color_state.ramp_curve_end_hue = self.ramp_lab_curve_end_hue;
+                                    // store last oklch hue from buffer
+                                    self.color_state.last_oklch_h = self.ramp_lab_hue;
+                                    // Optionally append preview colors to palette
+                                    let (preview, _adjusted) = self.generate_ramp_preview();
+                                    if self.ramp_lab_push_to_palette {
+                                        for c in preview.iter() {
+                                            self.project.palette.push(*c);
+                                        }
+                                    }
+                                    self.undo_stack.push(Command::SetColorStateSnapshot { before, after: self.color_state.clone() });
                                     self.ramp_lab_open = false;
+                                    self.canvas_dirty = true;
                                 }
                             });
                         });
