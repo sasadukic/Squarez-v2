@@ -3486,9 +3486,14 @@ impl App {
             if let Some((r0, r1)) = self.logo_anim_play_range {
                 let len = (r1 as isize).saturating_sub(r0 as isize).max(1);
                 if idx >= len as isize {
-                    // Finished the subrange: snap to the last frame of the range and
-                    // keep it displayed statically. Clear play_range and stop timing.
-                    let last = (r1.saturating_sub(1)).min(frames - 1);
+                    // Finished the subrange. For closing animation (r0 >= 7),
+                    // snap to frame 0 so we're ready for next open. Otherwise
+                    // snap to the last frame of the range.
+                    let last = if r0 >= 7 {
+                        0
+                    } else {
+                        (r1.saturating_sub(1)).min(frames - 1)
+                    };
                     self.logo_anim_static_frame = Some(last);
                     self.logo_anim_play_range = None;
                     self.logo_anim_start = None;
@@ -3788,8 +3793,8 @@ fn color_slider(ui: &mut egui::Ui, theme: &Theme, label: &str, value: &mut f32, 
         i.pointer.latest_pos().map_or(false, |pos| track_rect.contains(pos))
     }) || resp.hovered();
 
-    // Label inside thumb (white on hover, theme.fg otherwise)
-    let label_color = if is_hovered { Color32::WHITE } else { theme.fg };
+    // Label inside thumb (white on hover, muted otherwise)
+    let label_color = if is_hovered { Color32::WHITE } else { theme.fg_muted };
     ui.painter().text(
         thumb.center(),
         egui::Align2::CENTER_CENTER,
