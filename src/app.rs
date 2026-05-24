@@ -4,8 +4,7 @@ use egui::{CentralPanel, Color32, FontFamily, FontId, Frame, Image, ImageSource,
 use crate::animation::{FrameThumbnail, PlaybackState};
 use crate::canvas::CanvasState;
 use crate::color::hsv::{hsv_to_rgba, rgba_to_hsv};
-use crate::color::oklab::{safe_oklch_to_rgba, rgba_to_oklch, generate_ramp, generate_ramp_hsv, generate_ramp_endpoints, generate_ramp_hsv_endpoints};
-use crate::color::RampAnchor;
+use crate::color::oklab::{oklch_to_rgba, rgba_to_oklch};
 use crate::color::{ColorState, PickerMode};
 use crate::history::{Command, UndoStack};
 use crate::io::sqr::{load_sqr, save_sqr};
@@ -13,14 +12,12 @@ use crate::layers::composite_frame;
 use crate::project::{Animation, Frame as ProjectFrame, Layer, Project, Rgba};
 use crate::theme::{load_fonts, Theme, FONT_SIZE_SM};
 use crate::top_bar::{
-    menu_zone_width, BRAND_WIDTH, MENU_LEFT_GAP, DROPDOWN_CORNER_RADIUS, DROPDOWN_ROW_HEIGHT, DROPDOWN_TOP_GAP,
+    menu_zone_width, BRAND_WIDTH, DROPDOWN_CORNER_RADIUS, DROPDOWN_ROW_HEIGHT, DROPDOWN_TOP_GAP,
     DROPDOWN_WIDTH, MENU_FONT_SIZE, TOP_BAR_HEIGHT,
 };
 use crate::tools::{apply_eraser, apply_eyedropper, apply_ellipse, apply_fill, apply_line, apply_pencil, apply_rect, ActiveTool, SelectState, SelectInteraction, Handle, FloatBuffer, DragAnchor, sample_transformed};
-use crate::ui_metrics::{COLOR_SLIDER_TRACK_HEIGHT, RIGHT_SECTION_STACK_GAP};
+use crate::ui_metrics::RIGHT_SECTION_STACK_GAP;
 use crate::ui_state::{Panel, UiState};
-
-// Ramp Lab removed: enums RampCurve and RampHandlePoint deleted.
 
 pub struct App {
     pub project: Project,
@@ -33,26 +30,6 @@ pub struct App {
     pub thumbnails: Vec<Vec<FrameThumbnail>>,
     pub current_path: Option<std::path::PathBuf>,
     pub ui_state: UiState,
-    // Ramp Lab modal open flag: when true, canvas/timeline input is blocked.
-    pub ramp_lab_open: bool,
-    // Temporary buffer for Ramp Lab modal. Mirrors selected fields from ColorState
-    // so edits can be previewed before committing.
-    pub ramp_lab_mode: PickerMode,
-    pub ramp_lab_hue: f32,
-    pub ramp_lab_ramp_size: usize,
-    pub ramp_lab_curve_start_luma: f32,
-    pub ramp_lab_curve_mid_luma: f32,
-    pub ramp_lab_curve_end_luma: f32,
-    pub ramp_lab_curve_start_sat: f32,
-    pub ramp_lab_curve_mid_sat: f32,
-    pub ramp_lab_curve_end_sat: f32,
-    pub ramp_lab_curve_start_hue: f32,
-    pub ramp_lab_curve_mid_hue: f32,
-    pub ramp_lab_curve_end_hue: f32,
-    // Which curve axis user is editing in the modal: 0=Luma, 1=Sat, 2=Hue
-    pub ramp_lab_curve_edit_mode: u8,
-    // Whether to push generated preview to palette when applying.
-    pub ramp_lab_push_to_palette: bool,
     drag_start: Option<(u32, u32)>,
     stroke_edits: Vec<crate::tools::PixelEdit>,
     canvas_dirty: bool,
@@ -61,7 +38,6 @@ pub struct App {
     new_height: u32,
     new_name: String,
     frame_menu: Option<(usize, Pos2, f64)>,  // (frame_idx, screen_pos, opened_at_time)
-    // Ramp Lab removed: modal/state fields deleted.
     layer_ctx_menu: Option<(usize, Pos2, f64)>,  // (layer_idx, screen_pos, opened_at_time)
     top_menu_open: Option<(TopMenu, Pos2)>,
     toolbar_anim_y: f32,
@@ -84,6 +60,22 @@ pub struct App {
     menu_anim_x: f32,
     menu_anim_vel: f32,
     menu_anim_initialized: bool,
+    // Spring-animated sliding highlight for color picker mode tabs (OKL/HSV/RGB)
+    picker_tab_anim_x: f32,
+    picker_tab_anim_vel: f32,
+    picker_tab_initialized: bool,
+    // Tab-switch tween: fixed start values for display fields
+    picker_tweening: bool,
+    picker_tween_start: f64,
+    picker_tween_from_okl_l: f32,
+    picker_tween_from_okl_c: f32,
+    picker_tween_from_okl_h: f32,
+    picker_tween_from_hsv_h: f32,
+    picker_tween_from_hsv_s: f32,
+    picker_tween_from_hsv_v: f32,
+    picker_tween_from_rgb_r: f32,
+    picker_tween_from_rgb_g: f32,
+    picker_tween_from_rgb_b: f32,
     // Spring-animated clip height for dropdown open bounce
     dropdown_clip_h: f32,
     dropdown_clip_vel: f32,
@@ -133,8 +125,15 @@ pub struct App {
     logo_sprite: Option<egui::TextureHandle>,
     /// When `Some(start_time)`, the logo plays its animation once. Cleared after last frame.
     logo_anim_start: Option<f64>,
+    /// Number of frames in the logo sprite sheet (horizontal frames).
+    logo_frames: usize,
+    /// If Some(idx), show that frame index statically (used when opening the menu).
+    logo_anim_static_frame: Option<usize>,
+    /// Optional play range (inclusive start, exclusive end) used to play subranges of the sprite.
+    logo_anim_play_range: Option<(usize, usize)>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TopMenu {
     File,
@@ -164,7 +163,6 @@ impl TopMenu {
     }
 }
 
-
 const LAYOUT_STORAGE_KEY: &str = "squarez_layout_v1";
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -186,164 +184,6 @@ impl Default for LayoutState {
 }
 
 impl App {
-    fn curve_eval(start: f32, mid: f32, end: f32, t: f32) -> f32 {
-        let y0 = start.clamp(0.0, 1.0);
-        let y1 = mid.clamp(0.0, 1.0);
-        let y2 = end.clamp(0.0, 1.0);
-        let u = t.clamp(0.0, 1.0);
-        let omt = 1.0 - u;
-        omt * omt * y0 + 2.0 * omt * u * y1 + u * u * y2
-    }
-
-    fn apply_curve_to_okl_ramp(&self, ramp: &mut [(f32, f32, f32)]) {
-        if ramp.len() < 2 { return; }
-        if cfg!(debug_assertions) {
-            eprintln!("[apply_curve_to_okl_ramp] before: {:?}", ramp);
-        }
-        let denom = (ramp.len() - 1) as f32;
-        let base_h = ramp[0].2;
-        for (i, (l, c, h)) in ramp.iter_mut().enumerate() {
-            let t = i as f32 / denom;
-            let lt = Self::curve_eval(
-                self.color_state.ramp_curve_start_luma,
-                self.color_state.ramp_curve_mid_luma,
-                self.color_state.ramp_curve_end_luma,
-                t,
-            );
-            let st = Self::curve_eval(
-                self.color_state.ramp_curve_start_sat,
-                self.color_state.ramp_curve_mid_sat,
-                self.color_state.ramp_curve_end_sat,
-                t,
-            );
-            let ht = Self::curve_eval(
-                self.color_state.ramp_curve_start_hue,
-                self.color_state.ramp_curve_mid_hue,
-                self.color_state.ramp_curve_end_hue,
-                t,
-            );
-            *l = (*l * 0.5 + lt * 0.5).clamp(0.0, 1.0);
-            *c = (*c * (0.65 + st * 0.7)).clamp(0.0, 0.5);
-            let hue_mul = (ht - 0.5) * 2.0;
-            *h = (base_h + (*h - base_h) * (0.5 + 0.5 * hue_mul.abs())).rem_euclid(360.0);
-        }
-        if cfg!(debug_assertions) {
-            eprintln!("[apply_curve_to_okl_ramp] after: {:?}", ramp);
-        }
-    }
-
-    fn apply_curve_to_hsv_ramp(&self, ramp: &mut [(f32, f32, f32)]) {
-        if ramp.len() < 2 { return; }
-        if cfg!(debug_assertions) {
-            eprintln!("[apply_curve_to_hsv_ramp] before: {:?}", ramp);
-        }
-        let denom = (ramp.len() - 1) as f32;
-        let base_h = ramp[0].0;
-        for (i, (h, s, v)) in ramp.iter_mut().enumerate() {
-            let t = i as f32 / denom;
-            let vt = Self::curve_eval(
-                self.color_state.ramp_curve_start_luma,
-                self.color_state.ramp_curve_mid_luma,
-                self.color_state.ramp_curve_end_luma,
-                t,
-            );
-            let st = Self::curve_eval(
-                self.color_state.ramp_curve_start_sat,
-                self.color_state.ramp_curve_mid_sat,
-                self.color_state.ramp_curve_end_sat,
-                t,
-            );
-            let ht = Self::curve_eval(
-                self.color_state.ramp_curve_start_hue,
-                self.color_state.ramp_curve_mid_hue,
-                self.color_state.ramp_curve_end_hue,
-                t,
-            );
-            *v = (*v * 0.5 + vt * 0.5).clamp(0.0, 1.0);
-            *s = (*s * (0.65 + st * 0.7)).clamp(0.0, 1.0);
-            let hue_mul = (ht - 0.5) * 2.0;
-            *h = (base_h + (*h - base_h) * (0.5 + 0.5 * hue_mul.abs())).rem_euclid(360.0);
-        }
-        if cfg!(debug_assertions) {
-            eprintln!("[apply_curve_to_hsv_ramp] after: {:?}", ramp);
-        }
-    }
-
-    /// Apply the Ramp Lab buffer curves (start/mid/end for luma/sat/hue)
-    /// to an OKLCh ramp in-place.
-    fn apply_buffer_curve_to_okl_ramp(&self, ramp: &mut [(f32, f32, f32)]) {
-        if ramp.len() < 2 { return; }
-        let denom = (ramp.len() - 1) as f32;
-        let base_h = ramp[0].2;
-        for (i, (l, c, h)) in ramp.iter_mut().enumerate() {
-            let t = i as f32 / denom;
-            let lt = Self::curve_eval(
-                self.ramp_lab_curve_start_luma,
-                self.ramp_lab_curve_mid_luma,
-                self.ramp_lab_curve_end_luma,
-                t,
-            );
-            let st = Self::curve_eval(
-                self.ramp_lab_curve_start_sat,
-                self.ramp_lab_curve_mid_sat,
-                self.ramp_lab_curve_end_sat,
-                t,
-            );
-            let ht = Self::curve_eval(
-                self.ramp_lab_curve_start_hue,
-                self.ramp_lab_curve_mid_hue,
-                self.ramp_lab_curve_end_hue,
-                t,
-            );
-            *l = (*l * 0.5 + lt * 0.5).clamp(0.0, 1.0);
-            *c = (*c * (0.65 + st * 0.7)).clamp(0.0, 0.5);
-            let hue_mul = (ht - 0.5) * 2.0;
-            *h = (base_h + (*h - base_h) * (0.5 + 0.5 * hue_mul.abs())).rem_euclid(360.0);
-        }
-    }
-
-    /// Apply the Ramp Lab buffer curves to an HSV ramp in-place.
-    fn apply_buffer_curve_to_hsv_ramp(&self, ramp: &mut [(f32, f32, f32)]) {
-        if ramp.len() < 2 { return; }
-        let denom = (ramp.len() - 1) as f32;
-        let base_h = ramp[0].0;
-        for (i, (h, s, v)) in ramp.iter_mut().enumerate() {
-            let t = i as f32 / denom;
-            let vt = Self::curve_eval(
-                self.ramp_lab_curve_start_luma,
-                self.ramp_lab_curve_mid_luma,
-                self.ramp_lab_curve_end_luma,
-                t,
-            );
-            let st = Self::curve_eval(
-                self.ramp_lab_curve_start_sat,
-                self.ramp_lab_curve_mid_sat,
-                self.ramp_lab_curve_end_sat,
-                t,
-            );
-            let ht = Self::curve_eval(
-                self.ramp_lab_curve_start_hue,
-                self.ramp_lab_curve_mid_hue,
-                self.ramp_lab_curve_end_hue,
-                t,
-            );
-            *v = (*v * 0.5 + vt * 0.5).clamp(0.0, 1.0);
-            *s = (*s * (0.65 + st * 0.7)).clamp(0.0, 1.0);
-            let hue_mul = (ht - 0.5) * 2.0;
-            *h = (base_h + (*h - base_h) * (0.5 + 0.5 * hue_mul.abs())).rem_euclid(360.0);
-        }
-    }
-
-    fn ramp_l_bounds(&self) -> (f32, f32) {
-        // Allow full range so curves can reach pure black/white
-        (0.0, 1.0)
-    }
-
-    fn ramp_v_bounds(&self) -> (f32, f32) {
-        // Allow full range so curves can reach pure black/white in HSV mode
-        (0.0, 1.0)
-    }
-
     pub fn new(cc: &eframe::CreationContext) -> Self {
         // 1.5× zoom on top of OS DPI scaling for 4K displays.
         cc.egui_ctx.set_zoom_factor(1.5);
@@ -368,24 +208,9 @@ impl App {
         if layout.as_ref().and_then(|l| l.color_state.as_ref()).is_none() {
             if let Some(first) = project.palette.first() {
                 color_state.foreground = *first;
+                sync_color_caches(&mut color_state);
             }
         }
-        // Prepare initial Ramp Lab buffer values from the color_state before moving it into Self
-        let init_ramp_lab_mode = color_state.active_picker.clone();
-        let init_ramp_lab_hue = {
-            let (_l, _c, h) = rgba_to_oklch(color_state.foreground);
-            h
-        };
-        let init_ramp_lab_ramp_size = color_state.ramp_size;
-        let init_ramp_lab_curve_start_luma = color_state.ramp_curve_start_luma;
-        let init_ramp_lab_curve_mid_luma = color_state.ramp_curve_mid_luma;
-        let init_ramp_lab_curve_end_luma = color_state.ramp_curve_end_luma;
-        let init_ramp_lab_curve_start_sat = color_state.ramp_curve_start_sat;
-        let init_ramp_lab_curve_mid_sat = color_state.ramp_curve_mid_sat;
-        let init_ramp_lab_curve_end_sat = color_state.ramp_curve_end_sat;
-        let init_ramp_lab_curve_start_hue = color_state.ramp_curve_start_hue;
-        let init_ramp_lab_curve_mid_hue = color_state.ramp_curve_mid_hue;
-        let init_ramp_lab_curve_end_hue = color_state.ramp_curve_end_hue;
         Self {
             project,
             theme: Theme::default(),
@@ -424,6 +249,20 @@ impl App {
             menu_anim_x: 0.0,
             menu_anim_vel: 0.0,
             menu_anim_initialized: false,
+            picker_tab_anim_x: 0.0,
+            picker_tab_anim_vel: 0.0,
+            picker_tab_initialized: false,
+            picker_tweening: false,
+            picker_tween_start: 0.0,
+            picker_tween_from_okl_l: 0.7,
+            picker_tween_from_okl_c: 0.15,
+            picker_tween_from_okl_h: 210.0,
+            picker_tween_from_hsv_h: 187.0,
+            picker_tween_from_hsv_s: 0.85,
+            picker_tween_from_hsv_v: 0.76,
+            picker_tween_from_rgb_r: 17.0,
+            picker_tween_from_rgb_g: 173.0,
+            picker_tween_from_rgb_b: 193.0,
             dropdown_clip_h: 0.0,
             dropdown_clip_vel: 0.0,
             dropdown_full_h: 0.0,
@@ -452,22 +291,9 @@ impl App {
             sidebar_icon_rects: Vec::new(),
             logo_sprite: None,
             logo_anim_start: None,
-            ramp_lab_open: false,
-            // Initialize ramp_lab buffers from color_state so modal opens in-sync.
-            ramp_lab_mode: init_ramp_lab_mode,
-            ramp_lab_hue: init_ramp_lab_hue,
-            ramp_lab_ramp_size: init_ramp_lab_ramp_size,
-            ramp_lab_curve_start_luma: init_ramp_lab_curve_start_luma,
-            ramp_lab_curve_mid_luma: init_ramp_lab_curve_mid_luma,
-            ramp_lab_curve_end_luma: init_ramp_lab_curve_end_luma,
-            ramp_lab_curve_start_sat: init_ramp_lab_curve_start_sat,
-            ramp_lab_curve_mid_sat: init_ramp_lab_curve_mid_sat,
-            ramp_lab_curve_end_sat: init_ramp_lab_curve_end_sat,
-            ramp_lab_curve_start_hue: init_ramp_lab_curve_start_hue,
-            ramp_lab_curve_mid_hue: init_ramp_lab_curve_mid_hue,
-            ramp_lab_curve_end_hue: init_ramp_lab_curve_end_hue,
-            ramp_lab_curve_edit_mode: 0,
-            ramp_lab_push_to_palette: false,
+            logo_frames: 16,
+            logo_anim_static_frame: None,
+            logo_anim_play_range: None,
         }
     }
 
@@ -607,121 +433,63 @@ impl App {
         rich(text, self.theme.fg_muted, FONT_SIZE_SM)
     }
 
-    /// Open the Ramp Lab modal, copying current color_state into the modal buffer.
-    pub fn open_ramp_lab(&mut self) {
-        let fg = self.color_state.foreground;
-        let (_l, _c, h) = rgba_to_oklch(fg);
-        self.ramp_lab_mode = self.color_state.active_picker.clone();
-        self.ramp_lab_hue = h;
-        self.ramp_lab_ramp_size = self.color_state.ramp_size;
-        self.ramp_lab_curve_start_luma = self.color_state.ramp_curve_start_luma;
-        self.ramp_lab_curve_mid_luma = self.color_state.ramp_curve_mid_luma;
-        self.ramp_lab_curve_end_luma = self.color_state.ramp_curve_end_luma;
-        self.ramp_lab_curve_start_sat = self.color_state.ramp_curve_start_sat;
-        self.ramp_lab_curve_mid_sat = self.color_state.ramp_curve_mid_sat;
-        self.ramp_lab_curve_end_sat = self.color_state.ramp_curve_end_sat;
-        self.ramp_lab_curve_start_hue = self.color_state.ramp_curve_start_hue;
-        self.ramp_lab_curve_mid_hue = self.color_state.ramp_curve_mid_hue;
-        self.ramp_lab_curve_end_hue = self.color_state.ramp_curve_end_hue;
-        self.ramp_lab_open = true;
-    }
-
     fn panel_frame(&self) -> Frame {
         Frame::new().fill(self.theme.panel).inner_margin(Margin::same(0))
     }
 
     fn draw_top_bar(&mut self, ctx: &egui::Context) {
-        let dt = ctx.input(|i| i.unstable_dt).min(0.05);
-        let all_menus: [TopMenu; 0] = [];
+        let bar_rect = egui::Rect::from_min_size(Pos2::ZERO, Vec2::new(BRAND_WIDTH, TOP_BAR_HEIGHT));
 
-        TopBottomPanel::top("top_bar")
-            .exact_height(TOP_BAR_HEIGHT)
-            .frame(self.panel_frame())
-            .show_separator_line(false)
+        // Full-width click zone for dropdown toggle (manual hit test, no layout)
+        let was_clicked = ctx.input(|i| {
+            i.pointer.any_pressed() && i.pointer.hover_pos().is_some_and(|p| bar_rect.contains(p))
+        });
+        if was_clicked {
+            let now = ctx.input(|i| i.time);
+            let already_open = matches!(self.top_menu_open, Some((TopMenu::File, _)));
+            if already_open {
+                self.close_top_menu_with_animation(now);
+            } else {
+                self.logo_anim_static_frame = None;
+                self.logo_anim_play_range = Some((1, 8));
+                self.logo_anim_start = Some(now);
+                let pos = Pos2::new(0.0, TOP_BAR_HEIGHT + DROPDOWN_TOP_GAP);
+                self.top_menu_open = Some((TopMenu::File, pos));
+                self.top_menu_opened_at = now;
+                self.top_menu_hover_left = None;
+                self.view_show_open = false;
+                self.dropdown_clip_h   = 0.0;
+                self.dropdown_clip_vel = 0.0;
+                self.dropdown_full_h   = 0.0;
+            }
+        }
+
+        egui::Area::new("top_bar".into())
+            .fixed_pos(Pos2::ZERO)
             .show(ctx, |ui| {
                 let theme = self.theme.clone();
-                ui.set_height(TOP_BAR_HEIGHT);
-                ui.spacing_mut().item_spacing = Vec2::ZERO;
+
+                // Background fill
+                ui.painter().rect_filled(bar_rect, 0.0, theme.panel);
+
+                // Draw logo on top
+                ui.set_min_size(Vec2::new(BRAND_WIDTH, TOP_BAR_HEIGHT));
                 ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::ZERO;
                     self.draw_logo(ui, &theme);
-                    ui.add_space(MENU_LEFT_GAP);
-
-                    // Compute screen-space rects for all menu zones (before laying them out)
-                    let origin_x = ui.next_widget_position().x;
-                    let bar_rect = ui.max_rect(); // full panel rect — correct y/height regardless of cursor
-                    let mut x_off = 0.0f32;
-                    let menu_rects: Vec<egui::Rect> = all_menus.iter().map(|m| {
-                        let w = m.zone_width();
-                        let r = egui::Rect::from_min_size(
-                            Pos2::new(origin_x + x_off, bar_rect.top()),
-                            Vec2::new(w, bar_rect.height()),
-                        );
-                        x_off += w;
-                        r
-                    }).collect();
-
-                    // Determine spring target: hovered item takes priority over open item
-                    let open_idx = self.top_menu_open.and_then(|(m, _)| all_menus.iter().position(|x| *x == m));
-                    let hover_pos = ctx.input(|i| i.pointer.hover_pos());
-                    let hover_idx = hover_pos.and_then(|p| menu_rects.iter().position(|r| r.contains(p)));
-                    let target_idx = hover_idx.or(open_idx);
-
-                    if let Some(idx) = target_idx {
-                        let target_x = menu_rects[idx].left();
-                        let target_w  = menu_rects[idx].width();
-
-                        // Snap to position on first encounter so it doesn't fly in from 0,0
-                        if !self.menu_anim_initialized {
-                            self.menu_anim_x = target_x;
-                            self.menu_anim_initialized = true;
-                        }
-
-                        // Spring physics (same tuning as toolbar)
-                        let force = (target_x - self.menu_anim_x) * 300.0
-                                  - self.menu_anim_vel * 22.0;
-                        self.menu_anim_vel += force * dt;
-                        self.menu_anim_x   += self.menu_anim_vel * dt;
-
-                        let settled = (self.menu_anim_x - target_x).abs() < 0.3
-                                   && self.menu_anim_vel.abs() < 0.3;
-                        if settled {
-                            self.menu_anim_x   = target_x;
-                            self.menu_anim_vel = 0.0;
-                        } else {
-                            ctx.request_repaint();
-                        }
-
-                        // Draw the sliding highlight BEFORE the text zones
-                        let highlight = egui::Rect::from_min_size(
-                            Pos2::new(self.menu_anim_x, bar_rect.top()),
-                            Vec2::new(target_w, bar_rect.height()),
-                        );
-                        ui.painter().rect_filled(highlight, 0.0, theme.surface);
-                    }
-
-                    // Lay out the menu zones (no fill drawn inside them)
-                    for menu in all_menus.iter() {
-                        let selected = self.top_menu_open.is_some_and(|(open, _)| open == *menu);
-                        let response = top_menu_zone(ui, &theme, menu.label(), selected);
-                        if response.clicked() {
-                            let pos = Pos2::new(response.rect.left(), response.rect.bottom() + DROPDOWN_TOP_GAP);
-                            if selected {
-                                self.top_menu_open = None;
-                            } else {
-                                self.top_menu_open    = Some((*menu, pos));
-                                self.top_menu_opened_at = ctx.input(|i| i.time);
-                                self.top_menu_hover_left = None;
-                                self.view_show_open = false;
-                                // Reset dropdown open animation
-                                self.dropdown_clip_h   = 0.0;
-                                self.dropdown_clip_vel = 0.0;
-                                self.dropdown_full_h   = 0.0;
-                            }
-                        }
-                    }
                 });
             });
         self.draw_top_menu_dropdown(ctx);
+    }
+
+    /// Close the top menu and play the logo closing subrange animation.
+    fn close_top_menu_with_animation(&mut self, now: f64) {
+        // Play closing frames 7..=12 (exclusive end 13)
+        self.logo_anim_play_range = Some((7, 13));
+        self.logo_anim_start = Some(now);
+        self.logo_anim_static_frame = None;
+        self.top_menu_open = None;
+        self.top_menu_hover_left = None;
     }
 
     fn draw_top_menu_dropdown(&mut self, ctx: &egui::Context) {
@@ -1015,9 +783,9 @@ impl App {
             }
         }
 
-        if close_menu {
-            self.top_menu_open = None;
-            self.top_menu_hover_left = None;
+                        if close_menu {
+            let now = ctx.input(|i| i.time);
+            self.close_top_menu_with_animation(now);
             return;
         }
 
@@ -1026,18 +794,18 @@ impl App {
         let now = ctx.input(|i| i.time);
         let menu_age = now - self.top_menu_opened_at;
         let dropdown_rect = area_response.response.rect;
-        if menu_age > 0.15 && ctx.input(|i| i.pointer.any_click()) {
-            let outside = ctx.input(|i| i.pointer.interact_pos())
-                .map_or(true, |p| {
-                    !dropdown_rect.contains(p)
-                    && !side_submenu_rect.map_or(false, |r| r.contains(p))
-                });
-            if outside {
-                self.top_menu_open = None;
-                self.top_menu_hover_left = None;
-                return;
+            if menu_age > 0.15 && ctx.input(|i| i.pointer.any_click()) {
+                let outside = ctx.input(|i| i.pointer.interact_pos())
+                    .map_or(true, |p| {
+                        !dropdown_rect.contains(p)
+                        && !side_submenu_rect.map_or(false, |r| r.contains(p))
+                    });
+                if outside {
+                    let now = ctx.input(|i| i.time);
+                    self.close_top_menu_with_animation(now);
+                    return;
+                }
             }
-        }
 
         // Hover timeout: close if mouse has been outside the dropdown for >= 2 s
         let pointer_inside = ctx.input(|i| i.pointer.hover_pos())
@@ -1053,8 +821,7 @@ impl App {
             }
             if let Some(t) = self.top_menu_hover_left {
                 if now - t >= 2.0 {
-                    self.top_menu_open = None;
-                    self.top_menu_hover_left = None;
+                    self.close_top_menu_with_animation(now);
                 }
             }
             ctx.request_repaint();
@@ -1081,18 +848,18 @@ impl App {
             ctx.request_repaint();
         }
 
-        SidePanel::left("toolbar")
-            .exact_width(38.0)
-            .resizable(false)
-            .frame(Frame::new().fill(self.theme.bg)) // bg below tools, panel only behind buttons
-            .show_separator_line(false)
+        egui::Area::new("toolbar".into())
+            .fixed_pos(Pos2::new(0.0, TOP_BAR_HEIGHT))
+            .default_width(38.0)
             .show(ctx, |ui| {
+                ui.set_max_width(38.0);
+                ui.set_width(38.0);
                 ui.spacing_mut().item_spacing = Vec2::ZERO;
 
-                // Vertically center the button stack
+                // Vertically center the button stack in the full screen
                 const TOOL_COUNT: f32 = 5.0;
                 let tools_h = TOOL_COUNT * 38.0;
-                let top_pad = ((ui.available_height() - tools_h) / 2.0).max(0.0);
+                let top_pad = ((ctx.screen_rect().height() - tools_h) / 2.0 - TOP_BAR_HEIGHT).max(0.0);
                 ui.add_space(top_pad);
 
                 // Origin of the button stack (after padding)
@@ -1473,8 +1240,6 @@ impl App {
     }
 
     fn draw_color_picker(&mut self, ui: &mut egui::Ui) {
-        // Not visible: render a standalone header-row icon (same geometry as section_header)
-        // so the user can click it to bring the section back.
         if !self.ui_state.is_visible(Panel::Color) {
             let theme = self.theme.clone();
             Frame::new().fill(theme.panel).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
@@ -1506,7 +1271,6 @@ impl App {
             return;
         }
 
-        // Visible: section_header handles collapse/expand (same pattern as Layers/Animations)
         let (show, _, _) = section_header_with_add(
             ui,
             &self.theme,
@@ -1514,337 +1278,381 @@ impl App {
             Panel::Color,
             egui::include_image!("../assets/icons/color_mixer.svg"),
             None,
-            false,  // No add button for Color picker
+            false,
         );
         if !show { return; }
 
         let theme = self.theme.clone();
         let fg = self.color_state.foreground;
+
         Frame::new().fill(theme.panel).inner_margin(Margin::symmetric(10, 8)).show(ui, |ui| {
+            // Top row: color swatch + tabs + hex
+            let top_row_w = ui.available_width();
+            let color_box_w = 38.0;
+            let gap = 8.0;
+            let right_w = (top_row_w - color_box_w - gap).max(1.0);
+
             ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing = Vec2::ZERO; // own all spacing explicitly
+                ui.spacing_mut().item_spacing = Vec2::ZERO;
                 let fg_color = Color32::from_rgba_unmultiplied(fg[0], fg[1], fg[2], fg[3]);
                 ui.add(
                     egui::Button::new("")
                         .fill(fg_color)
                         .stroke(egui::Stroke::NONE)
-                        .min_size(Vec2::new(38.0, 38.0)),
+                        .min_size(Vec2::new(color_box_w, color_box_w)),
                 );
-                ui.add_space(8.0); // explicit gap, no extra item_spacing added
+                ui.add_space(gap);
+
+                // Right column: tabs (horizontal) above hex box
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
-                        let okl_resp = tab_button(ui, &theme, self.color_state.active_picker == PickerMode::OkLab, "OKL");
-                        if okl_resp.clicked() {
-                            self.color_state.active_picker = PickerMode::OkLab;
+                        ui.spacing_mut().item_spacing = Vec2::ZERO;
+
+                        // Tabs row
+                        let tab_labels = ["OKL", "HSV", "RGB"];
+                        let tab_h = 19.0;
+                        let tab_w = right_w / 3.0;
+                        let mut tab_rects: Vec<egui::Rect> = Vec::new();
+                        let mut tab_resps: Vec<egui::Response> = Vec::new();
+
+                        for (_i, _label) in tab_labels.iter().enumerate() {
+                            let (r, resp) = ui.allocate_exact_size(Vec2::new(tab_w, tab_h), egui::Sense::click());
+                            tab_rects.push(r);
+                            tab_resps.push(resp);
                         }
-                        let hsv_resp = tab_button(ui, &theme, self.color_state.active_picker == PickerMode::Hsv, "HSV");
-                        if hsv_resp.clicked() {
-                            self.color_state.active_picker = PickerMode::Hsv;
+
+                        // Spring highlight
+                        let active_idx = match self.color_state.active_picker {
+                            PickerMode::OkLab => 0,
+                            PickerMode::Hsv   => 1,
+                            PickerMode::Rgb   => 2,
+                        };
+                        let target_x = tab_rects[active_idx].left();
+                        let target_w = tab_rects[active_idx].width();
+
+                        if !self.picker_tab_initialized {
+                            self.picker_tab_anim_x = target_x;
+                            self.picker_tab_initialized = true;
                         }
-                        if tab_button(ui, &theme, self.color_state.active_picker == PickerMode::Rgb, "RGB").clicked() {
-                            self.color_state.active_picker = PickerMode::Rgb;
+
+                        let dt = ui.ctx().input(|i| i.unstable_dt).min(0.05);
+                        let force = (target_x - self.picker_tab_anim_x) * 300.0
+                                  - self.picker_tab_anim_vel * 22.0;
+                        self.picker_tab_anim_vel += force * dt;
+                        self.picker_tab_anim_x   += self.picker_tab_anim_vel * dt;
+
+                        let settled = (self.picker_tab_anim_x - target_x).abs() < 0.3
+                                   && self.picker_tab_anim_vel.abs() < 0.3;
+                        if settled {
+                            self.picker_tab_anim_x   = target_x;
+                            self.picker_tab_anim_vel = 0.0;
+                        } else {
+                            ui.ctx().request_repaint();
+                        }
+
+                        // Draw highlight behind tabs
+                        let highlight = egui::Rect::from_min_size(
+                            Pos2::new(self.picker_tab_anim_x, tab_rects[0].top()),
+                            Vec2::new(target_w, tab_h),
+                        );
+                        ui.painter().rect_filled(highlight, 0.0, theme.surface);
+
+                        // Draw tab text on top
+                        for (i, label) in tab_labels.iter().enumerate() {
+                            let r = tab_rects[i];
+                            let resp = &tab_resps[i];
+                            let text_color = if self.color_state.active_picker == match i {
+                                0 => PickerMode::OkLab,
+                                1 => PickerMode::Hsv,
+                                _ => PickerMode::Rgb,
+                            } {
+                                theme.fg
+                            } else if resp.hovered() {
+                                Color32::WHITE
+                            } else {
+                                theme.fg_desc
+                            };
+                            ui.painter().text(
+                                r.center(),
+                                egui::Align2::CENTER_CENTER,
+                                label,
+                                FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
+                                text_color,
+                            );
+                            if resp.clicked() {
+                                let mode = match i {
+                                    0 => PickerMode::OkLab,
+                                    1 => PickerMode::Hsv,
+                                    _ => PickerMode::Rgb,
+                                };
+                                if mode != self.color_state.active_picker {
+                                    let old_mode = self.color_state.active_picker;
+                                    let alpha = self.color_state.foreground[3];
+                                    // Compute target for new mode from current foreground
+                                    match mode {
+                                        PickerMode::OkLab => {
+                                            let (l, c, h) = rgba_to_oklch(self.color_state.foreground);
+                                            self.color_state.oklch_l = l;
+                                            self.color_state.oklch_c = c;
+                                            self.color_state.oklch_h = h;
+                                        }
+                                        PickerMode::Hsv => {
+                                            let (h, s, v) = rgba_to_hsv(self.color_state.foreground);
+                                            self.color_state.hsv_h = h;
+                                            self.color_state.hsv_s = s;
+                                            self.color_state.hsv_v = v;
+                                        }
+                                        PickerMode::Rgb => {
+                                            let fg = self.color_state.foreground;
+                                            self.color_state.rgb_r = fg[0] as f32;
+                                            self.color_state.rgb_g = fg[1] as f32;
+                                            self.color_state.rgb_b = fg[2] as f32;
+                                        }
+                                    }
+                                    // Compute tween START by converting old mode's DISPLAY values
+                                    // into the new mode's space. This guarantees a visible tween
+                                    // because the start is the "visual position" we just left.
+                                    let old_rgba = match old_mode {
+                                        PickerMode::OkLab => oklch_to_rgba(
+                                            self.color_state.display_oklch_l,
+                                            self.color_state.display_oklch_c,
+                                            self.color_state.display_oklch_h,
+                                            alpha,
+                                        ),
+                                        PickerMode::Hsv => hsv_to_rgba(
+                                            self.color_state.display_hsv_h,
+                                            self.color_state.display_hsv_s,
+                                            self.color_state.display_hsv_v,
+                                            alpha,
+                                        ),
+                                        PickerMode::Rgb => [
+                                            self.color_state.display_rgb_r as u8,
+                                            self.color_state.display_rgb_g as u8,
+                                            self.color_state.display_rgb_b as u8,
+                                            alpha,
+                                        ],
+                                    };
+                                    match mode {
+                                        PickerMode::OkLab => {
+                                            let (l, c, h) = rgba_to_oklch(old_rgba);
+                                            self.color_state.display_oklch_l = l;
+                                            self.color_state.display_oklch_c = c;
+                                            self.color_state.display_oklch_h = h;
+                                            self.picker_tween_from_okl_l = l;
+                                            self.picker_tween_from_okl_c = c;
+                                            self.picker_tween_from_okl_h = h;
+                                        }
+                                        PickerMode::Hsv => {
+                                            let (h, s, v) = rgba_to_hsv(old_rgba);
+                                            self.color_state.display_hsv_h = h;
+                                            self.color_state.display_hsv_s = s;
+                                            self.color_state.display_hsv_v = v;
+                                            self.picker_tween_from_hsv_h = h;
+                                            self.picker_tween_from_hsv_s = s;
+                                            self.picker_tween_from_hsv_v = v;
+                                        }
+                                        PickerMode::Rgb => {
+                                            self.color_state.display_rgb_r = old_rgba[0] as f32;
+                                            self.color_state.display_rgb_g = old_rgba[1] as f32;
+                                            self.color_state.display_rgb_b = old_rgba[2] as f32;
+                                            self.picker_tween_from_rgb_r = old_rgba[0] as f32;
+                                            self.picker_tween_from_rgb_g = old_rgba[1] as f32;
+                                            self.picker_tween_from_rgb_b = old_rgba[2] as f32;
+                                        }
+                                    }
+                                    self.picker_tweening = true;
+                                    self.picker_tween_start = ui.ctx().input(|i| i.time);
+                                    self.color_state.active_picker = mode;
+                                    eprintln!("TAB CLICK: mode={:?} from_okl_l={} target_okl_l={} tweening set true", mode, self.picker_tween_from_okl_l, self.color_state.oklch_l);
+                                }
+                            }
                         }
                     });
-                    // Slider track always ends at inner_width(156) - 4 = 152px from frame left.
-                    // Hex box starts at color_box(38) + gap(8) = 46px.
-                    // hex_outer = 152 - 46 = 106px; hex_w = 106 - inner_margin(6+6=12) = 94px.
-                    Frame::new().fill(theme.bg).inner_margin(Margin::symmetric(6, 2)).show(ui, |ui| {
-                        ui.set_width(94.0);
-                        ui.with_layout(egui::Layout::centered_and_justified(egui::Direction::LeftToRight), |ui| {
-                            ui.label(rich(&format!("#{:02X}{:02X}{:02X}", fg[0], fg[1], fg[2]), theme.fg, FONT_SIZE_SM));
-                        });
-                    });
+
+                    // Hex display — directly below tabs, same width, clickable to copy
+                    let hex_h = 19.0;
+                    let hex_text = format!("#{:02X}{:02X}{:02X}", fg[0], fg[1], fg[2]);
+                    let (hex_rect, hex_resp) = ui.allocate_exact_size(Vec2::new(right_w, hex_h), egui::Sense::click());
+                    if hex_resp.hovered() {
+                        ui.painter().rect_filled(hex_rect, 0.0, theme.surface);
+                    } else {
+                        ui.painter().rect_filled(hex_rect, 0.0, theme.bg);
+                    }
+                    ui.painter().text(
+                        hex_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        &hex_text,
+                        FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
+                        theme.fg,
+                    );
+                    if hex_resp.clicked() {
+                        ui.ctx().copy_text(hex_text);
+                    }
                 });
             });
 
-            ui.add_space(6.0); // padding between color box row and first slider
+            ui.add_space(8.0);
+
+            // Sync non-active mode caches from current foreground
             match self.color_state.active_picker {
-                PickerMode::Hsv => {
-                    let (mut h, mut s, mut v) = rgba_to_hsv(fg);
-                    let n = self.color_state.ramp_size;
-                    let endpoints_mode = self.color_state.ramp_anchor == RampAnchor::Endpoints;
-                    let mut changed = false;
-                    let now = ui.ctx().input(|i| i.time);
-                    let out_h = value_slider_snap(ui, &theme, "H", &mut h, 0.0..=360.0,
-                        &mut self.color_state.snap_hsv_h, (0.0, 360.0), n);
-                    let out_s = value_slider_snap(ui, &theme, "S", &mut s, 0.0..=1.0,
-                        &mut self.color_state.snap_hsv_s, (0.0, 1.0), n);
-                    let out_v = if endpoints_mode {
-                        let mut light = self.color_state.light_end_v.max(v + 0.02);
-                        let out = dual_value_slider(ui, &theme, "V", &mut v, &mut light, 0.0..=1.0);
-                        self.color_state.light_end_v = light;
-                        out
-                    } else {
-                        value_slider_snap(ui, &theme, "V", &mut v, 0.0..=1.0,
-                            &mut self.color_state.snap_hsv_v, (0.20, 0.95), n)
-                    };
-                    changed |= out_h.changed | out_s.changed | out_v.changed;
-                    let _ = (out_h.label_rclick, out_s.label_rclick, now);
-                    if changed {
-                        self.color_state.foreground = hsv_to_rgba(h, s, v, fg[3]);
-                    }
-
-                    // Ramp strip + push-to-palette button (mirror of OKL branch)
-                    ui.add_space(6.0);
-                    let (v_min, v_max) = self.ramp_v_bounds();
-                    let mut ramp_hsv = if endpoints_mode {
-                        let v_dark = if self.color_state.ramp_end_extremes { v_min } else { v };
-                        let v_light = if self.color_state.ramp_end_extremes { v_max } else { self.color_state.light_end_v };
-                        generate_ramp_hsv_endpoints(h, s, v_dark, v_light, n,
-                            self.color_state.hue_shift_deg, self.color_state.sat_curve_depth,
-                            self.color_state.ramp_end_extremes)
-                    } else {
-                        generate_ramp_hsv(h, s, v, n, self.color_state.ramp_anchor,
-                            self.color_state.hue_shift_deg, self.color_state.sat_curve_depth, v_min, v_max,
-                            self.color_state.ramp_end_extremes)
-                    };
-                    self.apply_curve_to_hsv_ramp(&mut ramp_hsv);
-                    let ramp_rgba: Vec<crate::project::Rgba> = ramp_hsv.iter()
-                        .map(|&(h, s, v)| hsv_to_rgba(h, s, v, 255))
-                        .collect();
-                    let anchor_idx = match self.color_state.ramp_anchor {
-                        RampAnchor::Middle    => n / 2,
-                        RampAnchor::BaseStep3 => 2.min(n.saturating_sub(1)),
-                        RampAnchor::Endpoints => 0,
-                    };
-                    ui.horizontal(|ui| {
-                        ui.style_mut().spacing.item_spacing = Vec2::ZERO;
-                        let avail = ui.available_width();
-                        const ADD_BTN_W: f32 = 18.0;
-                        const GAP: f32 = 4.0;
-                        let strip_w = (avail - ADD_BTN_W - GAP).max(0.0);
-                        const STRIP_H: f32 = 18.0;
-                        const MARKER_H: f32 = 4.0;
-                        let row_h = STRIP_H + MARKER_H;
-                        let strip_size = Vec2::new(strip_w, row_h);
-                        let (strip_rect, strip_resp) = ui.allocate_exact_size(strip_size, egui::Sense::click());
-                        let cell_w = strip_w / (n.max(1) as f32);
-                        let cells_top = strip_rect.top();
-                        let cells_bot = strip_rect.top() + STRIP_H;
-                        for (i, rgba) in ramp_rgba.iter().enumerate() {
-                            let x0 = strip_rect.left() + cell_w * i as f32;
-                            let x1 = strip_rect.left() + cell_w * (i + 1) as f32;
-                            let cell = egui::Rect::from_min_max(
-                                Pos2::new(x0, cells_top),
-                                Pos2::new(x1, cells_bot),
-                            );
-                            ui.painter().rect_filled(cell, 0.0, Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]));
-                        }
-                        let anchor_cx = strip_rect.left() + cell_w * (anchor_idx as f32 + 0.5);
-                        let tri_top_y = cells_bot + 1.0;
-                        let tri_bot_y = cells_bot + MARKER_H;
-                        let half_w = 3.0;
-                        let draw_tri = |cx: f32, ui: &mut egui::Ui| {
-                            ui.painter().add(egui::Shape::convex_polygon(
-                                vec![
-                                    Pos2::new(cx, tri_top_y),
-                                    Pos2::new(cx - half_w, tri_bot_y),
-                                    Pos2::new(cx + half_w, tri_bot_y),
-                                ],
-                                theme.fg,
-                                egui::Stroke::NONE,
-                            ));
-                        };
-                        draw_tri(anchor_cx, ui);
-                        if self.color_state.ramp_anchor == RampAnchor::Endpoints && n >= 2 {
-                            let last_cx = strip_rect.left() + cell_w * ((n - 1) as f32 + 0.5);
-                            draw_tri(last_cx, ui);
-                        }
-                        if strip_resp.secondary_clicked() {
-                            self.color_state.ramp_anchor = match self.color_state.ramp_anchor {
-                                RampAnchor::Middle    => RampAnchor::BaseStep3,
-                                RampAnchor::BaseStep3 => RampAnchor::Endpoints,
-                                RampAnchor::Endpoints => RampAnchor::Middle,
-                            };
-                        }
-                        if strip_resp.clicked() {
-                            if let Some(pos) = strip_resp.interact_pointer_pos() {
-                                let rel = (pos.x - strip_rect.left()).clamp(0.0, strip_rect.width() - 0.001);
-                                let idx = (rel / cell_w) as usize;
-                                if let Some(picked) = ramp_rgba.get(idx) {
-                                    self.color_state.foreground = *picked;
-                                }
-                            }
-                        }
-                        ui.add_space(GAP);
-                        let (btn_slot_rect, btn_resp) = ui.allocate_exact_size(Vec2::new(ADD_BTN_W, row_h), egui::Sense::click());
-                        let btn_rect = egui::Rect::from_min_max(
-                            btn_slot_rect.min,
-                            Pos2::new(btn_slot_rect.max.x, btn_slot_rect.min.y + STRIP_H),
-                        );
-                        let bg = if btn_resp.hovered() { theme.accent } else { theme.bg };
-                        ui.painter().rect_filled(btn_rect, 0.0, bg);
-                        let tint = if btn_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
-                        ui.painter().text(
-                            btn_rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            "+",
-                            FontId::new(14.0, FontFamily::Proportional),
-                            tint,
-                        );
-                        if btn_resp.clicked() {
-                            for rgba in &ramp_rgba {
-                                self.project.palette.push(*rgba);
-                            }
-                        }
-                    });
-                }
                 PickerMode::OkLab => {
-                    let (mut l, mut c, mut h) = rgba_to_oklch(fg);
-                    // Preserve prior hue when chroma collapses (achromatic colors have undefined H).
-                    if c < 1e-4 { h = self.color_state.last_oklch_h; }
-                    let n = self.color_state.ramp_size;
-                    let endpoints_mode = self.color_state.ramp_anchor == RampAnchor::Endpoints;
-                    let mut changed = false;
-                    let now = ui.ctx().input(|i| i.time);
-                    // In Endpoints mode the L slider is a dual-thumb range slider where
-                    // the dark thumb edits FG's L and the light thumb edits `light_end_l`.
-                    let out_l = if endpoints_mode {
-                        let mut light = self.color_state.light_end_l.max(l + 0.02);
-                        let out = dual_value_slider(ui, &theme, "L", &mut l, &mut light, 0.0..=1.0);
-                        self.color_state.light_end_l = light;
-                        out
-                    } else {
-                        value_slider_snap(ui, &theme, "L", &mut l, 0.0..=1.0,
-                            &mut self.color_state.snap_oklch_l, (0.15, 0.90), n)
-                    };
-                    let out_c = value_slider_snap(ui, &theme, "C", &mut c, 0.0..=0.4,
-                        &mut self.color_state.snap_oklch_c, (0.0, 0.4), n);
-                    let out_h = value_slider_snap(ui, &theme, "H", &mut h, 0.0..=360.0,
-                        &mut self.color_state.snap_oklch_h, (0.0, 360.0), n);
-                    changed |= out_l.changed | out_c.changed | out_h.changed;
-                    // Right-click on H label → hue-shift popup; on C label → sat-curve popup.
-                    let _ = (out_h.label_rclick, out_c.label_rclick, now);
-                        if changed {
-                            self.color_state.last_oklch_h = h;
-                            // Use gamut-safe conversion and preserve perceived L when possible.
-                            self.color_state.foreground = safe_oklch_to_rgba(l, c, h, fg[3], true);
-                        }
-
-                    // Ramp strip + push-to-palette button
-                    ui.add_space(6.0);
-                    let (l_min, l_max) = self.ramp_l_bounds();
-                    let mut ramp_lch = if endpoints_mode {
-                        let l_dark = if self.color_state.ramp_end_extremes { l_min } else { l };
-                        let l_light = if self.color_state.ramp_end_extremes { l_max } else { self.color_state.light_end_l };
-                        generate_ramp_endpoints(l_dark, l_light, c, h, n,
-                            self.color_state.hue_shift_deg, self.color_state.sat_curve_depth,
-                            self.color_state.ramp_end_extremes)
-                    } else {
-                        generate_ramp(l, c, h, n, self.color_state.ramp_anchor,
-                            self.color_state.hue_shift_deg, self.color_state.sat_curve_depth, l_min, l_max,
-                            self.color_state.ramp_end_extremes)
-                    };
-                    self.apply_curve_to_okl_ramp(&mut ramp_lch);
-                    let ramp_rgba: Vec<crate::project::Rgba> = ramp_lch.iter()
-                        .map(|&(l, c, h)| safe_oklch_to_rgba(l, c, h, 255, true))
-                        .collect();
-                    let anchor_idx = match self.color_state.ramp_anchor {
-                        RampAnchor::Middle    => n / 2,
-                        RampAnchor::BaseStep3 => 2.min(n.saturating_sub(1)),
-                        RampAnchor::Endpoints => 0,
-                    };
-                    ui.horizontal(|ui| {
-                        ui.style_mut().spacing.item_spacing = Vec2::ZERO;
-                        // Strip: full available width minus add button (18px) and 4px gap.
-                        let avail = ui.available_width();
-                        const ADD_BTN_W: f32 = 18.0;
-                        const GAP: f32 = 4.0;
-                        let strip_w = (avail - ADD_BTN_W - GAP).max(0.0);
-                        const STRIP_H: f32 = 18.0;
-                        const MARKER_H: f32 = 4.0;
-                        let row_h = STRIP_H + MARKER_H;
-                        let strip_size = Vec2::new(strip_w, row_h);
-                        let (strip_rect, strip_resp) = ui.allocate_exact_size(strip_size, egui::Sense::click());
-                        let cell_w = strip_w / (n.max(1) as f32);
-                        let cells_top = strip_rect.top();
-                        let cells_bot = strip_rect.top() + STRIP_H;
-                        for (i, rgba) in ramp_rgba.iter().enumerate() {
-                            let x0 = strip_rect.left() + cell_w * i as f32;
-                            let x1 = strip_rect.left() + cell_w * (i + 1) as f32;
-                            let cell = egui::Rect::from_min_max(
-                                Pos2::new(x0, cells_top),
-                                Pos2::new(x1, cells_bot),
-                            );
-                            ui.painter().rect_filled(cell, 0.0, Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]));
-                        }
-                        // Anchor indicator: small triangle pointing up under the anchored cell.
-                        let anchor_cx = strip_rect.left() + cell_w * (anchor_idx as f32 + 0.5);
-                        let tri_top_y = cells_bot + 1.0;
-                        let tri_bot_y = cells_bot + MARKER_H;
-                        let half_w = 3.0;
-                        let draw_tri = |cx: f32, ui: &mut egui::Ui| {
-                            ui.painter().add(egui::Shape::convex_polygon(
-                                vec![
-                                    Pos2::new(cx, tri_top_y),
-                                    Pos2::new(cx - half_w, tri_bot_y),
-                                    Pos2::new(cx + half_w, tri_bot_y),
-                                ],
-                                theme.fg,
-                                egui::Stroke::NONE,
-                            ));
-                        };
-                        draw_tri(anchor_cx, ui);
-                        if self.color_state.ramp_anchor == RampAnchor::Endpoints && n >= 2 {
-                            let last_cx = strip_rect.left() + cell_w * ((n - 1) as f32 + 0.5);
-                            draw_tri(last_cx, ui);
-                        }
-                        // Right-click cycles anchor mode.
-                        if strip_resp.secondary_clicked() {
-                            self.color_state.ramp_anchor = match self.color_state.ramp_anchor {
-                                RampAnchor::Middle    => RampAnchor::BaseStep3,
-                                RampAnchor::BaseStep3 => RampAnchor::Endpoints,
-                                RampAnchor::Endpoints => RampAnchor::Middle,
-                            };
-                        }
-                        // Left-click cell sets FG to that color.
-                        if strip_resp.clicked() {
-                            if let Some(pos) = strip_resp.interact_pointer_pos() {
-                                let rel = (pos.x - strip_rect.left()).clamp(0.0, strip_rect.width() - 0.001);
-                                let idx = (rel / cell_w) as usize;
-                                if let Some(picked) = ramp_rgba.get(idx) {
-                                    self.color_state.foreground = *picked;
-                                }
-                            }
-                        }
-                        ui.add_space(GAP);
-                        // "+" add-to-palette button
-                        let (btn_slot_rect, btn_resp) = ui.allocate_exact_size(Vec2::new(ADD_BTN_W, row_h), egui::Sense::click());
-                        let btn_rect = egui::Rect::from_min_max(
-                            btn_slot_rect.min,
-                            Pos2::new(btn_slot_rect.max.x, btn_slot_rect.min.y + STRIP_H),
-                        );
-                        let bg = if btn_resp.hovered() { theme.accent } else { theme.bg };
-                        ui.painter().rect_filled(btn_rect, 0.0, bg);
-                        let tint = if btn_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
-                        ui.painter().text(
-                            btn_rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            "+",
-                            FontId::new(14.0, FontFamily::Proportional),
-                            tint,
-                        );
-                        if btn_resp.clicked() {
-                            for rgba in &ramp_rgba {
-                                self.project.palette.push(*rgba);
-                            }
-                        }
-                    });
+                    let (h, s, v) = rgba_to_hsv(self.color_state.foreground);
+                    self.color_state.hsv_h = h;
+                    self.color_state.hsv_s = s;
+                    self.color_state.hsv_v = v;
+                    let fg = self.color_state.foreground;
+                    self.color_state.rgb_r = fg[0] as f32;
+                    self.color_state.rgb_g = fg[1] as f32;
+                    self.color_state.rgb_b = fg[2] as f32;
+                }
+                PickerMode::Hsv => {
+                    let (l, c, h) = rgba_to_oklch(self.color_state.foreground);
+                    self.color_state.oklch_l = l;
+                    self.color_state.oklch_c = c;
+                    self.color_state.oklch_h = h;
+                    let fg = self.color_state.foreground;
+                    self.color_state.rgb_r = fg[0] as f32;
+                    self.color_state.rgb_g = fg[1] as f32;
+                    self.color_state.rgb_b = fg[2] as f32;
                 }
                 PickerMode::Rgb => {
-                    let mut r = fg[0] as f32;
-                    let mut g = fg[1] as f32;
-                    let mut b = fg[2] as f32;
+                    let (l, c, h) = rgba_to_oklch(self.color_state.foreground);
+                    self.color_state.oklch_l = l;
+                    self.color_state.oklch_c = c;
+                    self.color_state.oklch_h = h;
+                    let (h2, s, v) = rgba_to_hsv(self.color_state.foreground);
+                    self.color_state.hsv_h = h2;
+                    self.color_state.hsv_s = s;
+                    self.color_state.hsv_v = v;
+                }
+            }
+
+            // Tab-switch tween: interpolate display values toward target values
+            if self.picker_tweening {
+                let now = ui.ctx().input(|i| i.time);
+                let elapsed = (now - self.picker_tween_start) as f32;
+                eprintln!("TWEEN active_picker={:?} elapsed={:.3} tweening={}", self.color_state.active_picker, elapsed, self.picker_tweening);
+                if elapsed >= 2.0 {
+                    self.picker_tweening = false;
+                    match self.color_state.active_picker {
+                        PickerMode::OkLab => {
+                            self.color_state.display_oklch_l = self.color_state.oklch_l;
+                            self.color_state.display_oklch_c = self.color_state.oklch_c;
+                            self.color_state.display_oklch_h = self.color_state.oklch_h;
+                        }
+                        PickerMode::Hsv => {
+                            self.color_state.display_hsv_h = self.color_state.hsv_h;
+                            self.color_state.display_hsv_s = self.color_state.hsv_s;
+                            self.color_state.display_hsv_v = self.color_state.hsv_v;
+                        }
+                        PickerMode::Rgb => {
+                            self.color_state.display_rgb_r = self.color_state.rgb_r;
+                            self.color_state.display_rgb_g = self.color_state.rgb_g;
+                            self.color_state.display_rgb_b = self.color_state.rgb_b;
+                        }
+                    }
+                } else {
+                    let t = (elapsed / 2.0).clamp(0.0, 1.0);
+                    match self.color_state.active_picker {
+                        PickerMode::OkLab => {
+                            self.color_state.display_oklch_l = lerp(self.picker_tween_from_okl_l, self.color_state.oklch_l, t);
+                            self.color_state.display_oklch_c = lerp(self.picker_tween_from_okl_c, self.color_state.oklch_c, t);
+                            self.color_state.display_oklch_h = lerp(self.picker_tween_from_okl_h, self.color_state.oklch_h, t);
+                        }
+                        PickerMode::Hsv => {
+                            self.color_state.display_hsv_h = lerp(self.picker_tween_from_hsv_h, self.color_state.hsv_h, t);
+                            self.color_state.display_hsv_s = lerp(self.picker_tween_from_hsv_s, self.color_state.hsv_s, t);
+                            self.color_state.display_hsv_v = lerp(self.picker_tween_from_hsv_v, self.color_state.hsv_v, t);
+                        }
+                        PickerMode::Rgb => {
+                            self.color_state.display_rgb_r = lerp(self.picker_tween_from_rgb_r, self.color_state.rgb_r, t);
+                            self.color_state.display_rgb_g = lerp(self.picker_tween_from_rgb_g, self.color_state.rgb_g, t);
+                            self.color_state.display_rgb_b = lerp(self.picker_tween_from_rgb_b, self.color_state.rgb_b, t);
+                        }
+                    }
+                    ui.ctx().request_repaint();
+                }
+            } else {
+                // When not tweening, snap active mode display to target
+                match self.color_state.active_picker {
+                    PickerMode::OkLab => {
+                        self.color_state.display_oklch_l = self.color_state.oklch_l;
+                        self.color_state.display_oklch_c = self.color_state.oklch_c;
+                        self.color_state.display_oklch_h = self.color_state.oklch_h;
+                    }
+                    PickerMode::Hsv => {
+                        self.color_state.display_hsv_h = self.color_state.hsv_h;
+                        self.color_state.display_hsv_s = self.color_state.hsv_s;
+                        self.color_state.display_hsv_v = self.color_state.hsv_v;
+                    }
+                    PickerMode::Rgb => {
+                        self.color_state.display_rgb_r = self.color_state.rgb_r;
+                        self.color_state.display_rgb_g = self.color_state.rgb_g;
+                        self.color_state.display_rgb_b = self.color_state.rgb_b;
+                    }
+                }
+            }
+
+            // Sliders per mode — use display values for visual, sync cache+fg on change
+            match self.color_state.active_picker {
+                PickerMode::OkLab => {
                     let mut changed = false;
-                    changed |= value_slider(ui, &theme, "R", &mut r, 0.0..=255.0);
-                    changed |= value_slider(ui, &theme, "G", &mut g, 0.0..=255.0);
-                    changed |= value_slider(ui, &theme, "B", &mut b, 0.0..=255.0);
+                    let mut l = self.color_state.display_oklch_l;
+                    let mut c = self.color_state.display_oklch_c;
+                    let mut h = self.color_state.display_oklch_h;
+                    changed |= color_slider(ui, &theme, "L", &mut l, 0.0, 1.0);
+                    changed |= color_slider(ui, &theme, "C", &mut c, 0.0, 0.4);
+                    changed |= color_slider(ui, &theme, "H", &mut h, 0.0, 360.0);
                     if changed {
+                        self.picker_tweening = false;
+                        self.color_state.oklch_l = l;
+                        self.color_state.oklch_c = c;
+                        self.color_state.oklch_h = h;
+                        self.color_state.display_oklch_l = l;
+                        self.color_state.display_oklch_c = c;
+                        self.color_state.display_oklch_h = h;
+                        self.color_state.foreground = oklch_to_rgba(l, c, h, fg[3]);
+                    }
+                }
+                PickerMode::Hsv => {
+                    let mut changed = false;
+                    let mut h = self.color_state.display_hsv_h;
+                    let mut s = self.color_state.display_hsv_s;
+                    let mut v = self.color_state.display_hsv_v;
+                    changed |= color_slider(ui, &theme, "H", &mut h, 0.0, 360.0);
+                    changed |= color_slider(ui, &theme, "S", &mut s, 0.0, 1.0);
+                    changed |= color_slider(ui, &theme, "V", &mut v, 0.0, 1.0);
+                    if changed {
+                        self.picker_tweening = false;
+                        self.color_state.hsv_h = h;
+                        self.color_state.hsv_s = s;
+                        self.color_state.hsv_v = v;
+                        self.color_state.display_hsv_h = h;
+                        self.color_state.display_hsv_s = s;
+                        self.color_state.display_hsv_v = v;
+                        self.color_state.foreground = hsv_to_rgba(h, s, v, fg[3]);
+                    }
+                }
+                PickerMode::Rgb => {
+                    let mut changed = false;
+                    let mut r = self.color_state.display_rgb_r;
+                    let mut g = self.color_state.display_rgb_g;
+                    let mut b = self.color_state.display_rgb_b;
+                    changed |= color_slider(ui, &theme, "R", &mut r, 0.0, 255.0);
+                    changed |= color_slider(ui, &theme, "G", &mut g, 0.0, 255.0);
+                    changed |= color_slider(ui, &theme, "B", &mut b, 0.0, 255.0);
+                    if changed {
+                        self.picker_tweening = false;
+                        self.color_state.rgb_r = r;
+                        self.color_state.rgb_g = g;
+                        self.color_state.rgb_b = b;
+                        self.color_state.display_rgb_r = r;
+                        self.color_state.display_rgb_g = g;
+                        self.color_state.display_rgb_b = b;
                         self.color_state.foreground = [r as u8, g as u8, b as u8, fg[3]];
                     }
                 }
             }
-            ui.add_space(7.0);
         });
     }
 
@@ -1923,7 +1731,8 @@ impl App {
                 let color = Color32::from_rgba_unmultiplied(swatch[0], swatch[1], swatch[2], swatch[3]);
                 painter.rect_filled(rect, 0.0, color);
 
-                if swatch == self.color_state.foreground {
+                let current_fg = self.color_state.foreground;
+                if swatch == current_fg {
                     painter.rect_stroke(rect, 0.0, egui::Stroke::new(2.0, theme.fg), egui::StrokeKind::Inside);
                 }
 
@@ -1933,6 +1742,7 @@ impl App {
                 }
                 if resp.clicked() {
                     self.color_state.foreground = swatch;
+                    sync_color_caches(&mut self.color_state);
                 }
             }
 
@@ -1987,7 +1797,7 @@ impl App {
                 }
             }
 
-            // --- Drag ghost ---
+            // --- Drag ghost for internal palette drag ---
             if let Some(drag_idx) = self.palette_drag_idx {
                 if is_dragging {
                     if let Some(pos) = pointer_pos {
@@ -2008,8 +1818,7 @@ impl App {
                     }
                 }
             }
-
-            // --- Ctrl+Click anywhere in the palette grid to collapse ---
+            // --- Ctrl+Click anywhere in grid to collapse ---
             if ui.input(|i| i.modifiers.ctrl && i.pointer.any_click()) {
                 if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
                     if grid_rect.contains(pos) {
@@ -3199,7 +3008,9 @@ impl App {
             }
             ActiveTool::Eyedropper => {
                 let layer = &self.project.animations[ai].frames[fi].layers[li];
-                self.color_state.foreground = apply_eyedropper(layer, px, py);
+                let picked = apply_eyedropper(layer, px, py);
+                self.color_state.foreground = picked;
+                sync_color_caches(&mut self.color_state);
             }
             ActiveTool::RectSelect => {
                 // Handled below in the live-drag block.
@@ -3641,8 +3452,9 @@ impl App {
     fn draw_logo(&mut self, ui: &mut egui::Ui, theme: &Theme) {
         // Lazy-load the sprite sheet once.
         if self.logo_sprite.is_none() {
-            let bytes = include_bytes!("../assets/logo_sprite.png");
-            if let Ok(img) = image::load_from_memory(bytes) {
+            // Load external PNG from desktop (preferred) falling back to bundled asset.
+            let bytes = std::fs::read("/Users/sasadukic/Desktop/logo.png").unwrap_or_else(|_| include_bytes!("../assets/logo_sprite.png").to_vec());
+            if let Ok(img) = image::load_from_memory(&bytes) {
                 let rgba = img.to_rgba8();
                 let (w, h) = (rgba.width() as usize, rgba.height() as usize);
                 let color_image = egui::ColorImage::from_rgba_unmultiplied([w, h], rgba.as_raw());
@@ -3651,24 +3463,48 @@ impl App {
                     color_image,
                     egui::TextureOptions::NEAREST,
                 ));
+                // compute frames assuming horizontal strip where each frame is 16px wide and 16px tall
+                self.logo_frames = (w / 16).max(1);
             }
         }
 
-        const FRAMES: usize = 16;
-        const FPS: f64 = 21.0;  // 30% slower than 30 FPS
+        let frames = self.logo_frames.max(1);
+        // Speed up animation by 40% relative to previous 21.0 FPS -> ~29.4 FPS
+        let fps: f64 = 21.0 * 1.4;
         let now = ui.ctx().input(|i| i.time);
-        let frame_idx: usize = match self.logo_anim_start {
-            Some(start) => {
-                let elapsed = now - start;
-                let idx = (elapsed * FPS) as usize;
-                if idx >= FRAMES {
+        // Determine which frame to show. Priority:
+        // 1) If we have a static frame (used when menu opens) show it.
+        // 2) If an animation is playing, compute frame from start time and clamp to a play_range if set.
+        // 3) Otherwise show frame 0.
+        let frame_idx: usize = if let Some(s) = self.logo_anim_static_frame {
+            s.min(frames - 1)
+        } else if let Some(start) = self.logo_anim_start {
+            // compute raw frame index from elapsed time
+            let elapsed = now - start;
+            let mut idx = (elapsed * fps) as isize;
+            // If a play range is set, map idx into that subrange
+            if let Some((r0, r1)) = self.logo_anim_play_range {
+                let len = (r1 as isize).saturating_sub(r0 as isize).max(1);
+                if idx >= len as isize {
+                    // Finished the subrange: snap to the last frame of the range and
+                    // keep it displayed statically. Clear play_range and stop timing.
+                    let last = (r1.saturating_sub(1)).min(frames - 1);
+                    self.logo_anim_static_frame = Some(last);
+                    self.logo_anim_play_range = None;
                     self.logo_anim_start = None;
-                    0
+                    idx = last as isize;
                 } else {
-                    idx
+                    idx = r0 as isize + idx;
+                }
+            } else {
+                if idx as usize >= frames {
+                    self.logo_anim_start = None;
+                    idx = 0;
                 }
             }
-            None => 0,
+            idx.max(0).min((frames - 1) as isize) as usize
+        } else {
+            0
         };
         if self.logo_anim_start.is_some() {
             ui.ctx().request_repaint();
@@ -3681,44 +3517,22 @@ impl App {
                 ui.spacing_mut().item_spacing = Vec2::ZERO;
                 ui.add_space(10.0);
 
-                // Icon: 20×20 clickable rect, painted with one sprite frame.
-                let (icon_rect, icon_resp) = ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::click());
+                // Icon: 20×20, painted with one sprite frame.
+                let (icon_rect, _) = ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::hover());
                 if let Some(tex) = &self.logo_sprite {
-                    let u0 = frame_idx as f32 / FRAMES as f32;
-                    let u1 = (frame_idx + 1) as f32 / FRAMES as f32;
+                    let u0 = frame_idx as f32 / frames as f32;
+                    let u1 = (frame_idx + 1) as f32 / frames as f32;
                     let uv = egui::Rect::from_min_max(Pos2::new(u0, 0.0), Pos2::new(u1, 1.0));
                     ui.painter().image(tex.id(), icon_rect, uv, Color32::WHITE);
                 }
 
                 ui.add_space(7.0);
 
-                // Text: also clickable.
+                // Text
                 let text = RichText::new("SQUAREZ")
                     .color(theme.fg)
                     .font(FontId::new(MENU_FONT_SIZE, FontFamily::Name("bold".into())));
-                let text_resp = ui.add(egui::Label::new(text).sense(egui::Sense::click()));
-
-                let clicked = icon_resp.clicked() || text_resp.clicked();
-                if clicked {
-                    // Play the sprite animation (if not already playing).
-                    if self.logo_anim_start.is_none() {
-                        self.logo_anim_start = Some(now);
-                    }
-                    // Toggle the File dropdown, anchored to the bottom-left of the icon.
-                    let already_open = matches!(self.top_menu_open, Some((TopMenu::File, _)));
-                    if already_open {
-                        self.top_menu_open = None;
-                    } else {
-                        let pos = Pos2::new(0.0, icon_rect.bottom() + DROPDOWN_TOP_GAP);
-                        self.top_menu_open = Some((TopMenu::File, pos));
-                        self.top_menu_opened_at = ui.ctx().input(|i| i.time);
-                        self.top_menu_hover_left = None;
-                        self.view_show_open = false;
-                        self.dropdown_clip_h   = 0.0;
-                        self.dropdown_clip_vel = 0.0;
-                        self.dropdown_full_h   = 0.0;
-                    }
-                }
+                ui.add(egui::Label::new(text).sense(egui::Sense::hover()));
             },
         );
     }
@@ -3740,8 +3554,7 @@ impl eframe::App for App {
         self.theme.apply(ctx);
 
         if cfg!(debug_assertions) {
-            let fg = self.color_state.foreground;
-            eprintln!("[APP_DBG] foreground={:?} rgba_to_oklch={:?} picker={:?}", fg, rgba_to_oklch(fg), self.color_state.active_picker);
+            // debug-only app state print removed
         }
 
         let fps = self.project.active_anim().fps;
@@ -3779,8 +3592,8 @@ impl eframe::App for App {
         }
 
         self.draw_top_bar(ctx);
+        self.draw_right_sidebar(ctx); // full height — right edge
         self.draw_anim_toolbar(ctx);  // full-width — must be first bottom panel
-        self.draw_right_sidebar(ctx); // claims full right column (topbar → anim toolbar)
         self.draw_timeline(ctx);      // gets x=0..W-176, frames start at left edge
         self.draw_left_toolbar(ctx);  // occupies left strip above timeline only
         self.draw_tool_submenu(ctx);  // floating tool group submenu (right of toolbar)
@@ -3788,266 +3601,9 @@ impl eframe::App for App {
         self.draw_layer_context_menu(ctx);
         self.draw_new_project_dialog(ctx);
 
-        // Draw Ramp Lab modal on top if open
-        self.draw_ramp_lab_modal(ctx);
-
         if self.playback.is_playing {
             ctx.request_repaint();
         }
-    }
-}
-
-impl App {
-    /// Draw Ramp Lab modal when open. Skeleton UI: left preview stub, right controls with Apply/Cancel.
-    fn draw_ramp_lab_modal(&mut self, ctx: &egui::Context) {
-        if !self.ramp_lab_open { return; }
-        // Keyboard handling: Esc cancels, Enter applies
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.ramp_lab_open = false;
-            return;
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-            self.apply_ramp_lab();
-            return;
-        }
-        let theme = self.theme.clone();
-        // Generate preview and detect gamut adjustments
-        let (preview, adjusted) = self.generate_ramp_preview();
-
-        let area = egui::Area::new(egui::Id::new("ramp_lab_modal")).order(egui::Order::Foreground).show(ctx, |ui| {
-            Frame::new()
-                .fill(theme.panel)
-                .corner_radius(8.0)
-                .shadow(egui::Shadow { offset: [0, 14], blur: 36, spread: 0, color: Color32::from_rgba_unmultiplied(0,0,0,89) })
-                .inner_margin(Margin::same(12))
-                .show(ui, |ui| {
-                    ui.set_width(520.0);
-                    ui.horizontal(|ui| {
-                        // Left: preview strip
-                        let (pv_rect, _pv_resp) = ui.allocate_exact_size(Vec2::new(220.0, 220.0), egui::Sense::hover());
-                        ui.painter().rect_filled(pv_rect, 4.0, theme.surface);
-                        // draw preview cells
-                        if !preview.is_empty() {
-                            let cell_w = pv_rect.width() / preview.len().max(1) as f32;
-                            for (i, rgba) in preview.iter().enumerate() {
-                                let r = egui::Rect::from_min_max(
-                                    Pos2::new(pv_rect.left() + i as f32 * cell_w, pv_rect.top()),
-                                    Pos2::new(pv_rect.left() + (i as f32 + 1.0) * cell_w, pv_rect.top() + 160.0),
-                                );
-                                ui.painter().rect_filled(r, 0.0, Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]));
-                            }
-                        } else {
-                            ui.painter().text(pv_rect.center(), egui::Align2::CENTER_CENTER, "Ramp Preview", FontId::new(14.0, FontFamily::Proportional), theme.fg_desc);
-                        }
-                        // Gamut badge
-                        if adjusted {
-                            let badge_rect = egui::Rect::from_min_size(Pos2::new(pv_rect.left() + 6.0, pv_rect.bottom() - 20.0), Vec2::new(110.0, 16.0));
-                            ui.painter().rect_filled(badge_rect, 4.0, theme.surface);
-                            ui.painter().text(badge_rect.center(), egui::Align2::CENTER_CENTER, "Gamut-adjusted", FontId::new(12.0, FontFamily::Proportional), theme.fg_desc);
-                        }
-
-                        ui.add_space(12.0);
-
-                        // Right: controls with curve editor
-                        ui.vertical(|ui| {
-                            ui.label(rich("Ramp Lab", theme.fg, FONT_SIZE_SM));
-                            ui.add_space(6.0);
-                            ui.label(rich("Curve Editor", theme.fg_desc, FONT_SIZE_SM));
-                            ui.add_space(6.0);
-                            // Small tab: Luma / Sat / Hue
-                            ui.horizontal(|ui| {
-                                let resp0 = tab_button(ui, &theme, self.ramp_lab_curve_edit_mode == 0, "Luma");
-                                ui.add_space(6.0);
-                                let resp1 = tab_button(ui, &theme, self.ramp_lab_curve_edit_mode == 1, "Sat");
-                                ui.add_space(6.0);
-                                let resp2 = tab_button(ui, &theme, self.ramp_lab_curve_edit_mode == 2, "Hue");
-                                if resp0.clicked() { self.ramp_lab_curve_edit_mode = 0; }
-                                if resp1.clicked() { self.ramp_lab_curve_edit_mode = 1; }
-                                if resp2.clicked() { self.ramp_lab_curve_edit_mode = 2; }
-                            });
-                            ui.add_space(6.0);
-
-                            // Curve editor area
-                            let editor_size = Vec2::new(260.0, 120.0);
-                            let (editor_rect, editor_resp) = ui.allocate_exact_size(editor_size, egui::Sense::drag());
-                            ui.painter().rect_filled(editor_rect, 4.0, theme.bg);
-                            // Draw baseline grid
-                            for i in 0..5 {
-                                let y = editor_rect.top() + editor_rect.height() * (i as f32 / 4.0);
-                                ui.painter().line_segment([Pos2::new(editor_rect.left(), y), Pos2::new(editor_rect.right(), y)], egui::Stroke::new(1.0, theme.fg_muted));
-                            }
-                            // Handles at x positions 0, 0.5, 1.0
-                            let xs = [0.0, 0.5, 1.0];
-                            let ys = match self.ramp_lab_curve_edit_mode {
-                                0 => [
-                                    self.ramp_lab_curve_start_luma,
-                                    self.ramp_lab_curve_mid_luma,
-                                    self.ramp_lab_curve_end_luma,
-                                ],
-                                1 => [
-                                    self.ramp_lab_curve_start_sat,
-                                    self.ramp_lab_curve_mid_sat,
-                                    self.ramp_lab_curve_end_sat,
-                                ],
-                                _ => [
-                                    self.ramp_lab_curve_start_hue,
-                                    self.ramp_lab_curve_mid_hue,
-                                    self.ramp_lab_curve_end_hue,
-                                ],
-                            };
-                            // Draw handles and allow dragging nearest handle vertically
-                            if let Some(ptr_pos) = editor_resp.interact_pointer_pos() {
-                                if editor_resp.dragged() {
-                                    // find nearest handle by x
-                                    let mut nearest = 0usize;
-                                    let mut best = f32::INFINITY;
-                                    for (i, &fx) in xs.iter().enumerate() {
-                                        let hx = editor_rect.left() + fx * editor_rect.width();
-                                        let d = (hx - ptr_pos.x).abs();
-                                        if d < best { best = d; nearest = i; }
-                                    }
-                                    let new_t = 1.0 - ((ptr_pos.y - editor_rect.top()) / editor_rect.height()).clamp(0.0, 1.0);
-                                    let new_v = new_t.clamp(0.0, 1.0);
-                                    match self.ramp_lab_curve_edit_mode {
-                                        0 => match nearest {
-                                            0 => self.ramp_lab_curve_start_luma = new_v,
-                                            1 => self.ramp_lab_curve_mid_luma = new_v,
-                                            2 => self.ramp_lab_curve_end_luma = new_v,
-                                            _ => {}
-                                        },
-                                        1 => match nearest {
-                                            0 => self.ramp_lab_curve_start_sat = new_v,
-                                            1 => self.ramp_lab_curve_mid_sat = new_v,
-                                            2 => self.ramp_lab_curve_end_sat = new_v,
-                                            _ => {}
-                                        },
-                                        _ => match nearest {
-                                            0 => self.ramp_lab_curve_start_hue = new_v,
-                                            1 => self.ramp_lab_curve_mid_hue = new_v,
-                                            2 => self.ramp_lab_curve_end_hue = new_v,
-                                            _ => {}
-                                        },
-                                    }
-                                }
-                            }
-                            for (i, &fx) in xs.iter().enumerate() {
-                                let hx = editor_rect.left() + fx * editor_rect.width();
-                                let hy = editor_rect.top() + (1.0 - ys[i]) * editor_rect.height();
-                                ui.painter().circle_filled(Pos2::new(hx, hy), 6.0, theme.accent);
-                                ui.painter().circle_stroke(Pos2::new(hx, hy), 6.0, egui::Stroke::new(1.0, theme.fg));
-                            }
-
-                            ui.add_space(6.0);
-                            ui.horizontal(|ui| {
-                                match self.ramp_lab_curve_edit_mode {
-                                    0 => {
-                                        ui.add(egui::DragValue::new(&mut self.ramp_lab_curve_start_luma).speed(0.01));
-                                        ui.add_space(6.0);
-                                        ui.add(egui::DragValue::new(&mut self.ramp_lab_curve_mid_luma).speed(0.01));
-                                        ui.add_space(6.0);
-                                        ui.add(egui::DragValue::new(&mut self.ramp_lab_curve_end_luma).speed(0.01));
-                                    }
-                                    1 => {
-                                        ui.add(egui::DragValue::new(&mut self.ramp_lab_curve_start_sat).speed(0.01));
-                                        ui.add_space(6.0);
-                                        ui.add(egui::DragValue::new(&mut self.ramp_lab_curve_mid_sat).speed(0.01));
-                                        ui.add_space(6.0);
-                                        ui.add(egui::DragValue::new(&mut self.ramp_lab_curve_end_sat).speed(0.01));
-                                    }
-                                    _ => {
-                                        ui.add(egui::DragValue::new(&mut self.ramp_lab_curve_start_hue).speed(0.01));
-                                        ui.add_space(6.0);
-                                        ui.add(egui::DragValue::new(&mut self.ramp_lab_curve_mid_hue).speed(0.01));
-                                        ui.add_space(6.0);
-                                        ui.add(egui::DragValue::new(&mut self.ramp_lab_curve_end_hue).speed(0.01));
-                                    }
-                                }
-                            });
-
-                            ui.add_space(8.0);
-                            // Buttons row
-                            ui.add_space(6.0);
-                            ui.checkbox(&mut self.ramp_lab_push_to_palette, "Push to palette");
-                            ui.add_space(6.0);
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.add(egui::Button::new("Cancel")).clicked() {
-                                    self.ramp_lab_open = false;
-                                }
-                                ui.add_space(8.0);
-                                if ui.add(egui::Button::new("Apply")).clicked() {
-                                    self.apply_ramp_lab();
-                                }
-                            });
-                        });
-                    });
-                });
-        });
-        let _ = area;
-    }
-
-    /// Generate preview colors for the current ramp_lab buffer.
-    /// Returns (rgba_vec, gamut_adjusted_flag)
-    fn generate_ramp_preview(&self) -> (Vec<crate::project::Rgba>, bool) {
-        use crate::project::Rgba;
-        use crate::color::{rgba_to_oklch, safe_oklch_to_rgba, generate_ramp, generate_ramp_hsv};
-        use crate::color::hsv::hsv_to_rgba;
-
-        let mut adjusted = false;
-        let mut n = self.ramp_lab_ramp_size;
-        if n < 3 { n = 3 } else if n > 9 { n = 9 }
-
-        match self.ramp_lab_mode {
-            PickerMode::OkLab => {
-                let fg = self.color_state.foreground;
-                let (base_l, base_c, base_h) = rgba_to_oklch(fg);
-                let ramp = generate_ramp(base_l, base_c, base_h, n, self.color_state.ramp_anchor, self.color_state.hue_shift_deg, self.color_state.sat_curve_depth, self.ramp_l_bounds().0, self.ramp_l_bounds().1, self.color_state.ramp_end_extremes);
-                // apply curves from modal buffer (approx: use luma curve fields)
-                // We'll map modal curve to temporary ColorState-like values by copying into a local copy
-                let mut rgba_out: Vec<Rgba> = Vec::new();
-                for (l, c, h) in ramp.iter() {
-                    let rgba = safe_oklch_to_rgba(*l, *c, *h, 255, true);
-                    // detect adjustment by comparing resulting oklch
-                    let (_l2, c2, _h2) = rgba_to_oklch(rgba);
-                    if (c2 - *c).abs() > 1e-3 { adjusted = true; }
-                    rgba_out.push(rgba);
-                }
-                (rgba_out, adjusted)
-            }
-            PickerMode::Hsv => {
-                let fg = self.color_state.foreground;
-                let (h, s, v) = rgba_to_hsv(fg);
-                let ramp_hsv = generate_ramp_hsv(h, s, v, n, self.color_state.ramp_anchor, self.color_state.hue_shift_deg, self.color_state.sat_curve_depth, self.ramp_v_bounds().0, self.ramp_v_bounds().1, self.color_state.ramp_end_extremes);
-                let mut rgba_out: Vec<Rgba> = Vec::new();
-                for (hh, ss, vv) in ramp_hsv.iter() {
-                    rgba_out.push(hsv_to_rgba(*hh, *ss, *vv, 255));
-                }
-                (rgba_out, adjusted)
-            }
-            PickerMode::Rgb => (Vec::new(), adjusted),
-        }
-    }
-
-    /// Apply ramp lab buffer into color_state and project (palette) and push undo snapshot.
-    fn apply_ramp_lab(&mut self) {
-        let before = self.color_state.clone();
-        self.color_state.ramp_size = self.ramp_lab_ramp_size;
-        self.color_state.ramp_curve_start_luma = self.ramp_lab_curve_start_luma;
-        self.color_state.ramp_curve_mid_luma = self.ramp_lab_curve_mid_luma;
-        self.color_state.ramp_curve_end_luma = self.ramp_lab_curve_end_luma;
-        self.color_state.ramp_curve_start_sat = self.ramp_lab_curve_start_sat;
-        self.color_state.ramp_curve_mid_sat = self.ramp_lab_curve_mid_sat;
-        self.color_state.ramp_curve_end_sat = self.ramp_lab_curve_end_sat;
-        self.color_state.ramp_curve_start_hue = self.ramp_lab_curve_start_hue;
-        self.color_state.ramp_curve_mid_hue = self.ramp_lab_curve_mid_hue;
-        self.color_state.ramp_curve_end_hue = self.ramp_lab_curve_end_hue;
-        self.color_state.last_oklch_h = self.ramp_lab_hue;
-        let (preview, _adj) = self.generate_ramp_preview();
-        if self.ramp_lab_push_to_palette {
-            for c in preview.iter() { self.project.palette.push(*c); }
-        }
-        self.undo_stack.push(Command::SetColorStateSnapshot { before, after: self.color_state.clone() });
-        self.ramp_lab_open = false;
-        self.canvas_dirty = true;
     }
 }
 
@@ -4155,237 +3711,108 @@ fn section_header_with_add(ui: &mut egui::Ui, theme: &Theme, state: &mut UiState
     (!collapsed, add_clicked, extra_clicked)
 }
 
-/// Slider with optional quantized snapping.
-/// - Ctrl+click on track toggles `snap_on` (does NOT change value on that click).
-/// - When `snap_on`: value snaps to the nearest of `n_steps` evenly spaced positions
-///   across `snap_range` (which may be a subrange of `range`).
-/// - When `snap_on`: tick marks are drawn at each step position on the track.
-/// Returns true if `value` or `snap_on` changed (caller should treat either as a redraw trigger;
-/// value-change is the only one that should rewrite the color).
-/// Outcome of a slider tick.
-struct SliderOut {
-    /// Value or snap state changed this frame.
-    changed: bool,
-    /// If the slider's label was right-clicked this frame, contains the screen-space click position.
-    label_rclick: Option<Pos2>,
+/// Color slider with label inside the handle. Returns true when value changed.
+fn smoothstep(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
-fn value_slider_snap(
-    ui: &mut egui::Ui,
-    theme: &Theme,
-    label: &str,
-    value: &mut f32,
-    range: std::ops::RangeInclusive<f32>,
-    snap_on: &mut bool,
-    snap_range: (f32, f32),
-    n_steps: usize,
-) -> SliderOut {
-    ui.horizontal(|ui| {
-        // Label as its own clickable rect (so we can detect right-click on it).
-        const LABEL_W: f32 = 8.0;
-        let (label_rect, label_resp) = ui.allocate_exact_size(
-            Vec2::new(LABEL_W, COLOR_SLIDER_TRACK_HEIGHT),
-            egui::Sense::click(),
-        );
-        ui.painter().text(
-            label_rect.left_center(),
-            egui::Align2::LEFT_CENTER,
-            label,
-            FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
-            theme.fg_muted,
-        );
-        let label_rclick = if label_resp.secondary_clicked() {
-            Some(label_resp.rect.left_bottom())
-        } else { None };
-
-        ui.add_space(4.0);
-        let desired_size = Vec2::new((ui.available_width() - 4.0).max(24.0), COLOR_SLIDER_TRACK_HEIGHT);
-        let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click_and_drag());
-        let start = *range.start();
-        let end = *range.end();
-        let span = end - start;
-        if span <= 0.0 { return SliderOut { changed: false, label_rclick }; }
-
-        let t = ((*value - start) / span).clamp(0.0, 1.0);
-        ui.painter().rect_filled(rect, 0.0, theme.bg);
-        let fill_rect = egui::Rect::from_min_max(
-            rect.left_top(),
-            Pos2::new(rect.left() + rect.width() * t, rect.bottom()),
-        );
-        ui.painter().rect_filled(fill_rect, 0.0, theme.accent);
-
-        if *snap_on && n_steps >= 2 {
-            let (sn_lo, sn_hi) = snap_range;
-            for i in 0..n_steps {
-                let s_val = sn_lo + (sn_hi - sn_lo) * (i as f32 / (n_steps - 1) as f32);
-                let s_t = ((s_val - start) / span).clamp(0.0, 1.0);
-                let x = rect.left() + rect.width() * s_t;
-                ui.painter().line_segment(
-                    [Pos2::new(x, rect.bottom() - 3.0), Pos2::new(x, rect.bottom())],
-                    egui::Stroke::new(1.0, theme.fg_muted),
-                );
-            }
-        }
-
-        let mut changed = false;
-        if let Some(pos) = response.interact_pointer_pos() {
-            if response.secondary_clicked() {
-                *snap_on = !*snap_on;
-                changed = true;
-            } else if response.dragged() || response.clicked() {
-                let new_t = ((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
-                let mut new_v = start + span * new_t;
-                if *snap_on && n_steps >= 2 {
-                    let (sn_lo, sn_hi) = snap_range;
-                    let step = (sn_hi - sn_lo) / (n_steps - 1) as f32;
-                    let idx = ((new_v - sn_lo) / step).round().clamp(0.0, (n_steps - 1) as f32);
-                    new_v = sn_lo + step * idx;
-                }
-                if (new_v - *value).abs() > f32::EPSILON {
-                    *value = new_v;
-                    changed = true;
-                }
-            }
-        }
-        SliderOut { changed, label_rclick }
-    }).inner
+fn lerp(a: f32, b: f32, t: f32) -> f32 {
+    a + (b - a) * t
 }
 
-/// Dual-thumb range slider. `lo` and `hi` are clamped to `range` and to each other (with a small gap).
-/// Returns `(changed, label_rclick)`.
-fn dual_value_slider(
-    ui: &mut egui::Ui,
-    theme: &Theme,
-    label: &str,
-    lo: &mut f32,
-    hi: &mut f32,
-    range: std::ops::RangeInclusive<f32>,
-) -> SliderOut {
-    ui.horizontal(|ui| {
-        const LABEL_W: f32 = 8.0;
-        let (label_rect, label_resp) = ui.allocate_exact_size(
-            Vec2::new(LABEL_W, COLOR_SLIDER_TRACK_HEIGHT),
-            egui::Sense::click(),
-        );
-        ui.painter().text(
-            label_rect.left_center(),
-            egui::Align2::LEFT_CENTER,
-            label,
-            FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
-            theme.fg_muted,
-        );
-        let label_rclick = if label_resp.secondary_clicked() {
-            Some(label_resp.rect.left_bottom())
-        } else { None };
-
-        ui.add_space(4.0);
-        let desired_size = Vec2::new((ui.available_width() - 4.0).max(24.0), COLOR_SLIDER_TRACK_HEIGHT);
-        let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click_and_drag());
-        let start = *range.start();
-        let end = *range.end();
-        let span = end - start;
-        if span <= 0.0 { return SliderOut { changed: false, label_rclick }; }
-
-        let t_lo = ((*lo - start) / span).clamp(0.0, 1.0);
-        let t_hi = ((*hi - start) / span).clamp(0.0, 1.0);
-
-        // Background.
-        ui.painter().rect_filled(rect, 0.0, theme.bg);
-        // Fill between thumbs.
-        let fill_rect = egui::Rect::from_min_max(
-            Pos2::new(rect.left() + rect.width() * t_lo, rect.top()),
-            Pos2::new(rect.left() + rect.width() * t_hi, rect.bottom()),
-        );
-        ui.painter().rect_filled(fill_rect, 0.0, theme.accent);
-        // Thumb markers (2px wide vertical bars).
-        let thumb_w = 2.0;
-        let lo_x = rect.left() + rect.width() * t_lo;
-        let hi_x = rect.left() + rect.width() * t_hi;
-        ui.painter().rect_filled(
-            egui::Rect::from_min_max(Pos2::new(lo_x - thumb_w * 0.5, rect.top()), Pos2::new(lo_x + thumb_w * 0.5, rect.bottom())),
-            0.0, theme.fg,
-        );
-        ui.painter().rect_filled(
-            egui::Rect::from_min_max(Pos2::new(hi_x - thumb_w * 0.5, rect.top()), Pos2::new(hi_x + thumb_w * 0.5, rect.bottom())),
-            0.0, theme.fg,
-        );
-
-        let mut changed = false;
-        // Persist which thumb is being dragged across frames using egui memory.
-        let drag_id = ui.id().with(("dual_slider_drag", label));
-        if let Some(pos) = response.interact_pointer_pos() {
-            let new_t = ((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
-            let new_v = start + span * new_t;
-            // Determine which thumb the user grabbed (on first frame of drag) and remember it.
-            let active: u8 = if response.drag_started() || response.clicked() {
-                let d_lo = (new_t - t_lo).abs();
-                let d_hi = (new_t - t_hi).abs();
-                let pick = if d_lo <= d_hi { 0u8 } else { 1u8 };
-                ui.ctx().data_mut(|d| d.insert_temp(drag_id, pick));
-                pick
-            } else if response.dragged() {
-                ui.ctx().data(|d| d.get_temp::<u8>(drag_id)).unwrap_or(0)
-            } else {
-                255
-            };
-            if active == 0 {
-                let clamped = new_v.min(*hi - 0.01).max(start);
-                if (clamped - *lo).abs() > f32::EPSILON { *lo = clamped; changed = true; }
-            } else if active == 1 {
-                let clamped = new_v.max(*lo + 0.01).min(end);
-                if (clamped - *hi).abs() > f32::EPSILON { *hi = clamped; changed = true; }
-            }
-        }
-        SliderOut { changed, label_rclick }
-    }).inner
+/// Sync all mode caches and display values from current foreground.
+fn sync_color_caches(state: &mut ColorState) {
+    let fg = state.foreground;
+    let (l, c, h) = rgba_to_oklch(fg);
+    state.oklch_l = l;
+    state.oklch_c = c;
+    state.oklch_h = h;
+    state.display_oklch_l = l;
+    state.display_oklch_c = c;
+    state.display_oklch_h = h;
+    let (h2, s, v) = rgba_to_hsv(fg);
+    state.hsv_h = h2;
+    state.hsv_s = s;
+    state.hsv_v = v;
+    state.display_hsv_h = h2;
+    state.display_hsv_s = s;
+    state.display_hsv_v = v;
+    state.rgb_r = fg[0] as f32;
+    state.rgb_g = fg[1] as f32;
+    state.rgb_b = fg[2] as f32;
+    state.display_rgb_r = fg[0] as f32;
+    state.display_rgb_g = fg[1] as f32;
+    state.display_rgb_b = fg[2] as f32;
 }
 
-fn value_slider(ui: &mut egui::Ui, theme: &Theme, label: &str, value: &mut f32, range: std::ops::RangeInclusive<f32>) -> bool {    ui.horizontal(|ui| {
-        ui.label(rich(label, theme.fg_muted, FONT_SIZE_SM));
-        ui.add_space(4.0); // gap between label letter and slider track
-        let desired_size = Vec2::new((ui.available_width() - 4.0).max(24.0), COLOR_SLIDER_TRACK_HEIGHT);
-        let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click_and_drag());
-        let start = *range.start();
-        let end = *range.end();
-        let span = end - start;
-        if span > 0.0 {
-            let t = ((*value - start) / span).clamp(0.0, 1.0);
-            ui.painter().rect_filled(rect, 0.0, theme.bg);
-            let fill_rect = egui::Rect::from_min_max(
-                rect.left_top(),
-                Pos2::new(rect.left() + rect.width() * t, rect.bottom()),
-            );
-            ui.painter().rect_filled(fill_rect, 0.0, theme.accent);
+fn color_slider(ui: &mut egui::Ui, theme: &Theme, label: &str, value: &mut f32, min: f32, max: f32) -> bool {
+    const TRACK_H: f32 = 16.0;
+    const PAD_BELOW: f32 = 6.0;
+    const RADIUS: f32 = TRACK_H * 0.01; // ~0.16px — subtle, near-sharp rounding
+    let mut changed = false;
 
-            if let Some(pos) = response.interact_pointer_pos() {
-                if response.dragged() || response.clicked() {
-                    let new_t = ((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
-                    *value = start + span * new_t;
-                    return true;
-                }
-            }
-        }
-        false
-    }).inner
-}
+    // Full-width track; no separate label — label drawn inside the thumb.
+    let (rect, resp) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), TRACK_H + PAD_BELOW),
+        egui::Sense::click_and_drag(),
+    );
 
-fn tab_button(ui: &mut egui::Ui, theme: &Theme, selected: bool, label: &str) -> egui::Response {
-    // Width = hex outer (94 inner + 6*2 margin = 106) / 3 tabs, spacing already 0.
-    const TAB_W: f32 = (94.0 + 12.0) / 3.0;
-    // Use allocate_exact_size so the FULL rect (including text pixels) owns the response.
-    // egui::Button only senses over its background, missing clicks on text glyphs.
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(TAB_W, 18.0), egui::Sense::click());
-    let bg = if selected { theme.accent } else if response.hovered() { theme.surface } else { theme.surface };
-    ui.painter().rect_filled(rect, 0.0, bg);
-    let text_color = if selected { theme.fg } else { theme.fg_desc };
+    let track_rect = egui::Rect::from_min_max(
+        rect.left_top(),
+        Pos2::new(rect.right(), rect.top() + TRACK_H),
+    );
+
+    let t = ((*value - min) / (max - min)).clamp(0.0, 1.0);
+
+    // Background
+    ui.painter().rect_filled(track_rect, RADIUS, theme.bg);
+
+    // Fill
+    let fill = egui::Rect::from_min_max(
+        track_rect.left_top(),
+        Pos2::new(track_rect.left() + track_rect.width() * t, track_rect.bottom()),
+    );
+    ui.painter().rect_filled(fill, RADIUS, theme.accent);
+
+    // Thumb (same height as track, matches fill color) — clamp center to track edges
+    let half = TRACK_H * 0.5;
+    let cx = (track_rect.left() + half + (track_rect.width() - TRACK_H) * t)
+        .clamp(track_rect.left() + half, track_rect.right() - half);
+    let cy = track_rect.center().y;
+    let thumb = egui::Rect::from_center_size(Pos2::new(cx, cy), Vec2::new(TRACK_H, TRACK_H));
+    ui.painter().rect_filled(thumb, RADIUS, theme.accent);
+
+    // Hover check: anywhere on the track rect makes handle text white
+    let is_hovered = ui.ctx().input(|i| {
+        i.pointer.latest_pos().map_or(false, |pos| track_rect.contains(pos))
+    }) || resp.hovered();
+
+    // Label inside thumb (white on hover, theme.fg otherwise)
+    let label_color = if is_hovered { Color32::WHITE } else { theme.fg };
     ui.painter().text(
-        rect.center(),
+        thumb.center(),
         egui::Align2::CENTER_CENTER,
         label,
         FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
-        text_color,
+        label_color,
     );
-    response
+
+    // Interaction — use latest pointer pos so drag works even if interact_pointer_pos is None.
+    let pointer = ui.ctx().input(|i| i.pointer.clone());
+    if resp.dragged() || (is_hovered && pointer.primary_down()) || resp.clicked() {
+        if let Some(pos) = pointer.latest_pos() {
+            let eff_w = (track_rect.width() - TRACK_H).max(1.0);
+            let rel = ((pos.x - track_rect.left() - half) / eff_w).clamp(0.0, 1.0);
+            let new_val = min + (max - min) * rel;
+            if (new_val - *value).abs() > 0.001 {
+                *value = new_val;
+                changed = true;
+            }
+        }
+    }
+
+    changed
 }
 
 fn tool_btn(ui: &mut egui::Ui, active_tool: &mut ActiveTool, theme: &Theme, tool: ActiveTool, icon: ImageSource<'static>) -> egui::Response {
