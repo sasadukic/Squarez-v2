@@ -2,6 +2,7 @@
 name = "squarez"
 version = "0.1.0"
 edition = "2021"
+default-run = "squarez"
 
 [dependencies]
 eframe = { version = "0.31", features = ["default"] }
@@ -11,13 +12,25 @@ serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 bincode = "1"
 lz4_flex = { version = "0.11", features = ["frame"] }
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "ico"] }
 gif = "0.13"
 palette = { version = "0.7", features = ["std"] }
 rfd = "0.15"
+tar = "0.4"
+sha2 = "0.10"
+hex = "0.4"
+tempfile = "3"
 
 [build-dependencies]
 winres = "0.1"
+
+[[bin]]
+name = "squarez"
+path = "src/main.rs"
+
+[[bin]]
+name = "sqr-recover"
+path = "src/bin/sqr_recover.rs"
 
 [profile.release]
 opt-level = 3

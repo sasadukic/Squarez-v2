@@ -1,0 +1,200 @@
+Commodore 64 | #000000, #626262, #898989, #adadad, #ffffff, #9f4e44, #cb7e75, #6d5412, #a1683c, #c9d487, #9ae29b, #5cab5e, #6abfc6, #887ecb, #50459b, #a057a3
+Commodore VIC-20 | #000000, #ffffff, #a8734a, #e9b287, #772d26, #b66862, #85d4dc, #c5ffff, #a85fb4, #e99df5, #559e4a, #92df87, #42348b, #7e70ca, #bdcc71, #ffffb0
+Endesga 16 | #e4a672, #b86f50, #743f39, #3f2832, #9e2835, #e53b44, #fb922b, #ffe762, #63c64d, #327345, #193d3f, #4f6781, #afbfd2, #ffffff, #2ce8f4, #0484d1
+Endesga 32 | #be4a2f, #d77643, #ead4aa, #e4a672, #b86f50, #733e39, #3e2731, #a22633, #e43b44, #f77622, #feae34, #fee761, #63c74d, #3e8948, #265c42, #193c3e, #124e89, #0099db, #2ce8f5, #ffffff, #c0cbdc, #8b9bb4, #5a6988, #3a4466, #262b44, #181425, #ff0044, #68386c, #b55088, #f6757a, #e8b796, #c28569
+Nintendo Entertainment System | #000000, #fcfcfc, #f8f8f8, #bcbcbc, #7c7c7c, #a4e4fc, #3cbcfc, #0078f8, #0000fc, #b8b8f8, #6888fc, #0058f8, #0000bc, #d8b8f8, #9878f8, #6844fc, #4428bc, #f8b8f8, #f878f8, #d800cc, #940084, #f8a4c0, #f85898, #e40058, #a80020, #f0d0b0, #f87858, #f83800, #a81000, #fce0a8, #fca044, #e45c10, #881400, #f8d878, #f8b800, #ac7c00, #503000, #d8f878, #b8f818, #00b800, #007800, #b8f8b8, #58d854, #00a800, #006800, #b8f8d8, #58f898, #00a844, #005800, #00fcfc, #00e8d8, #008888, #004058, #f8d8f8, #787878
+YKB-22 | #cfcfc9, #9c9c97, #28252a, #482e2b, #804a3e, #b89286, #d2b7ae, #d2c2ae, #e7e5d1, #807868, #745b41, #684a45, #4a685d, #53a170, #a5c787, #8da9ae, #477e88, #404859, #ae86b2, #cf9db9, #8a5f67, #a97777
+Banana Split | #252422, #666666, #bfbdad, #d36d62, #e29273, #ce6e96, #dbb3b3, #7d4f6d, #ae86b2, #9f4549, #af7662, #4f9dad, #7be1ea, #38663b, #427b63, #2a4b46, #48536f, #59333b, #f6e9ba
+Amstrad CPC | #040404, #808080, #ffffff, #800000, #ff0000, #ff8080, #ff7f00, #ffff80, #ffff00, #808000, #008000, #01ff00, #80ff00, #80ff80, #01ff80, #008080, #01ffff, #80ffff, #0080ff, #0000ff, #00007f, #7f00ff, #8080ff, #ff80ff, #ff00ff, #ff0080, #800080
+Fairy Tales | #0e30a6, #d20000, #4dd928, #ffe600, #4b3159, #83606f, #708f4d, #adb870
+Still Life | #3f2811, #7a2222, #d13b27, #e07f8a, #5d853a, #68c127, #b3e868, #122615, #513155, #286fb8, #9b8bff, #a8e4d4, #cc8218, #c7b581
+Easter Island | #f6f6bf, #e6d1d1, #868691, #794765, #f5e17a, #edc38d, #cc8d86, #ca657e, #39d4b9, #8dbcd2, #8184ab, #686086, #9dc085, #7ea788, #567864, #051625
+The Desert Level | #f4faaf, #e3d88f, #ccb690, #74aec6, #ae8d78, #8c7d66, #6d7073, #287051, #635751, #61444a, #3a383c
+A64 | #0b0b0b, #566262, #8d8d85, #a7b5ba, #f0e9cf, #d39f80, #b0703e, #5a4142, #d1d15b, #a7d254, #58a23c, #7ac2e0, #786aff, #3e489d, #8363ad, #c14867
+JMP (Japanese Machine Palette) | #000000, #191028, #46af45, #a1d685, #453e78, #7664fe, #833129, #9ec2e8, #dc534b, #e18d79, #d6b97b, #e9d8a1, #216c4b, #d365c8, #afaab9, #f5f4eb
+CGArne | #000000, #5e606e, #2234d1, #4c81fb, #0c7e45, #6cd947, #44aacc, #7be2f9, #8a3622, #eb8a60, #5c2e78, #e23d69, #aa5c3d, #ffd93f, #b5b5b5, #ffffff
+Psygnosia | #000000, #1b1e29, #362747, #443f41, #52524c, #64647c, #736150, #77785b, #9ea4a7, #cbe8f7, #e08b79, #a2324e, #003308, #084a3c, #546a00, #516cbf
+Eroge Copper | #0d080d, #4f2b24, #825b31, #c59154, #f0bd77, #fbdf9b, #fff9e4, #bebbb2, #7bb24e, #74adbb, #4180a0, #32535f, #2a2349, #7d3840, #c16c5b, #e89973
+3-bit RGB | #000000, #ff0000, #00ff00, #0000ff, #00ffff, #ff00ff, #ffff00, #ffffff
+6-bit RGB | #000000, #000055, #0000aa, #0000ff, #550000, #550055, #5500aa, #5500ff, #aa0000, #aa0055, #aa00aa, #aa00ff, #ff0000, #ff0055, #ff00aa, #ff00ff, #005500, #005555, #0055aa, #0055ff, #555500, #555555, #5555aa, #5555ff, #aa5500, #aa5555, #aa55aa, #aa55ff, #ff5500, #ff5555, #ff55aa, #ff55ff, #00aa00, #00aa55, #00aaaa, #00aaff, #55aa00, #55aa55, #55aaaa, #55aaff, #aaaa00, #aaaa55, #aaaaaa, #aaaaff, #ffaa00, #ffaa55, #ffaaaa, #ffaaff, #00ff00, #00ff55, #00ffaa, #00ffff, #55ff00, #55ff55, #55ffaa, #55ffff, #aaff00, #aaff55, #aaffaa, #aaffff, #ffff00, #ffff55, #ffffaa, #ffffff
+Color Graphics Adapter | #000000, #555555, #aaaaaa, #ffffff, #0000aa, #5555ff, #00aa00, #55ff55, #00aaaa, #55ffff, #aa0000, #ff5555, #aa00aa, #ff55ff, #aa5500, #ffff55
+CGA Palette 1 (Low) | #000000, #aa00aa, #00aaaa, #aaaaaa
+CGA Palette 1 (High) | #000000, #ff55ff, #55ffff, #ffffff
+CGA Palette 0 (Low) | #000000, #00aa00, #aa0000, #aa5500
+CGA Palette 0 (High) | #000000, #55ff55, #ff5555, #ffff55
+CGA Palette 2 (Low) | #000000, #aa0000, #00aaaa, #aaaaaa
+Copper Tech | #000000, #262144, #355278, #60748a, #898989, #5aa8b2, #91d9f3, #ffffff, #f4cd72, #bfb588, #c58843, #9e5b47, #5f4351, #dc392d, #6ea92c, #1651dd
+CPC Boy | #000000, #1b1b65, #3535c9, #661e25, #553361, #7f35c9, #bc3535, #c0466e, #df6d9b, #1b651b, #1b6e83, #1e79e5, #795f1b, #808080, #9194df, #c97f35, #e39b8d, #f878f8, #35af35, #35b78f, #35c1d7, #7fc935, #adc8aa, #8de1c7, #e1c643, #e4dd9a, #ffffff, #eeeae0, #acb56b, #768448, #3f503f, #243137
+JerryPie 22 | #1e2431, #245168, #37969b, #9cc6d9, #dceff8, #c4d7a4, #937946, #794122, #523c20, #9d7dae, #76446e, #29472d, #347750, #40d58e, #72b245, #538947, #cfbe5b, #e06e36, #d2391c, #35291d, #191716, #552e41
+atprises 22 | #dad6c6, #4f4153, #b06c81, #d1abb8, #d7be80, #cd9736, #b15c23, #86190b, #55312e, #412936, #181718, #4f6275, #7b8e43, #45502a, #3d3030, #784a44, #a38274, #b1aaa0, #99cad0, #1687b6, #13517d, #113350
+DB-ISO22 | #0c0816, #4c4138, #70503a, #bc5f4e, #ce9148, #e4da6c, #90c446, #698e34, #4d613c, #26323c, #2c4b73, #3c7373, #558dde, #74baea, #f0faff, #cfb690, #b67c74, #845a78, #555461, #746658, #6b7b89, #939388
+xaiue 22 | #fcfae4, #877469, #08060b, #372e23, #5b4d21, #9f7e2b, #6bcd63, #b3d6ef, #afb0e9, #4d8cd3, #4b4cb7, #b54537, #e58b37, #e0da2c, #70b03c, #3d7f4f, #2b404b, #1d183e, #6d4369, #b666a6, #ce989b, #f3d7bd
+nevercreature 22 | #0e0d28, #1e323e, #403d56, #74491d, #457074, #746d47, #665ba4, #3ba137, #2f938b, #01b0cf, #6b94ff, #880015, #c04110, #fb7760, #b7834f, #a6cd33, #f0b37b, #9e87dc, #99d9ea, #f5ea85, #c0c0c0, #daede9
+Irenaart 22 | #030505, #433c47, #706468, #c3ae86, #e4efff, #4de2f4, #2896c6, #11476c, #6440a2, #fe8c8f, #d1080e, #af3703, #731906, #734430, #d08150, #f9c89a, #f6d043, #df971a, #925a0b, #5d6606, #a4a718, #cce761
+CGA Palette 2 (High) | #000000, #FF5555, #55FFFF, #FFFFFF
+drazile 22 | #3f0909, #442038, #7a3123, #684a5d, #ce1c2b, #c16543, #ef6f2f, #efab62, #f7a8c5, #f7d942, #f2fbfc, #050004, #0c1223, #07353f, #38318e, #4e772b, #517cc1, #46af75, #9aa5a5, #8ed834, #4edbe8, #bdeef9
+galapogos 22 | #a31f5f, #3c1010, #702500, #ba3200, #ef6a3d, #ee9f84, #95c9bc, #678893, #413f45, #352b2b, #1f0614, #fffaeb, #3a2d1d, #603f3e, #81573b, #b87b34, #ffc83b, #eadf7a, #c7ce6c, #818b31, #284a36, #0c2a23
+d-jinn 22 | #141829, #2e2333, #353040, #373d2d, #6e3535, #a13535, #50568a, #606e3a, #5c6c70, #cf4e75, #4c877f, #cc7054, #00ffff, #bd78cc, #8f9e42, #ccad66, #7bb9e3, #bbcc66, #b0d9d1, #ebe288, #f5f2dc, #0e1224
+xaiue 22 3 | #f1efb7, #ded75c, #c7a439, #8c7b26, #7c5a26, #6c472b, #45381d, #2c1e12, #6a673a, #ad8b45, #ded5aa, #a37963, #ccbc8e, #7b6c5c, #49473f, #161212, #2d2f3b, #3e4f80, #76829e, #a9acb7, #a1948f, #5f6679
+mordfikosz 22 | #aaaaaa, #151515, #4d302c, #724927, #a46a39, #c58b4a, #e1da6a, #bbc05c, #95a74f, #6a7f42, #415262, #446c9b, #6aa4d5, #afcbe4, #8988a1, #7b629c, #50307b, #21101d, #a1334f, #cd738b, #e1b2bf, #f4f1f3
+2-bit Grayscale | #000000, #676767, #b6b6b6, #ffffff
+Nintendo Gameboy (Black Zero) | #2e463d, #385d49, #577b46, #7e8416
+Nintendo Super Gameboy | #331e50, #a63725, #d68e49, #f7e7c6
+Kid Icarus (SGB) | #1e0000, #9e0000, #f78e50, #cef7f7
+Kirby (SGB) | #2c2c96, #7733e7, #e78686, #f7bef7
+Super Mario Land 2 (SGB) | #000000, #11c600, #dfa677, #eff7b6
+Megaman V (SGB) | #102533, #42678e, #6f9edf, #cecece
+Metroid II (SGB) | #2c1700, #047e60, #b62558, #aedf1e
+Links Awakening (SGB) | #5a3921, #6b8c42, #7bc67b, #ffffb5
+Pokemon (SGB) | #181010, #84739c, #f7b58c, #ffefff
+Nintendo Gameboy (bgb) | #081820, #346856, #88c070, #e0f8d0
+Microsoft Windows | #000000, #7e7e7e, #bebebe, #ffffff, #7e0000, #fe0000, #047e00, #06ff04, #7e7e00, #ffff04, #00007e, #0000ff, #7e007e, #fe00ff, #047e7e, #06ffff
+Apple II | #000000, #515c16, #843d52, #ea7d27, #514888, #e85def, #f5b7c9, #006752, #00c82c, #919191, #c9d199, #00a6f0, #98dbc9, #c8c1f7, #ffffff
+darchangel 22 | #b4b884, #849a78, #5c7c68, #205e64, #585e5c, #144054, #404068, #142858, #c87c94, #b49ab8, #e4d4dc, #e4d488, #e4b884, #e49a80, #907c68, #885e54, #6c3444, #142230, #5c7c90, #849aac, #b4d4e0, #e8f0dc
+Macintosh II | #ffffff, #ffff00, #ff6500, #dc0000, #ff0097, #360097, #0000ca, #0097ff, #00a800, #006500, #653600, #976536, #b9b9b9, #868686, #454545, #000000
+Artifice Machine 22 | #fbfbc4, #eef0f0, #efa88f, #ff8080, #f34b76, #f39f4b, #8f9f60, #64db9f, #afafaf, #58c4e7, #80708f, #f34b4b, #130d0d, #843c3c, #582734, #3c0420, #241e1c, #3c3c04, #103028, #206060, #273458, #301e42
+RISC OS | #ffffff, #dcdcdc, #b9b9b9, #979797, #767676, #555555, #363636, #000000, #004597, #eded04, #05ca00, #dc0000, #ededb9, #558600, #ffb900, #04b9ff
+tuckie 22 | #f9f7b6, #f9de70, #e2a88e, #dd5d49, #84453b, #5d5b8c, #02566b, #161423, #4fb5ac, #e5f2fc, #a1d2fc, #f2d8a9, #f58b5d, #c96d61, #f87c90, #dd809c, #157bae, #688ed1, #d3ff97, #8ff79d, #0baeba, #312d47
+Crimso 22 | #332230, #274653, #504b79, #be3751, #6d7855, #c8773d, #80ac37, #e8ab93, #5fd37a, #d3daff, #fdfffc, #181018, #443a36, #73473f, #336625, #416ebb, #c76b90, #88959e, #5ebacb, #e7b44a, #eed6af, #e9e66b
+ZX Spectrum | #000000, #0000d8, #0000ff, #d80000, #ff0000, #d800d8, #ff00ff, #00d800, #00ff00, #00d8d8, #00ffff, #d8d800, #ffff00, #d8d8d8, #ffffff
+Nintendo Gameboy (Arne) | #243137, #3f503f, #768448, #acb56b
+MSX | #000000, #cacaca, #ffffff, #b75e51, #d96459, #fe877c, #cac15e, #ddce85, #3ca042, #40b64a, #73ce7c, #5955df, #7e75f0, #64daee, #b565b3
+Thomson M05 | #000000, #bbbbbb, #ff0000, #dd7777, #eebb00, #ffff00, #dddd77, #00ff00, #77dd77, #00ffff, #bbffff, #ffffff, #ff00ff, #dd77ee, #0000ff, #7777dd
+GrafxKid Gameboy Pocket (Green) | #4c625a, #7b9278, #abc396, #dbf4b4
+GZXP | #000000, #ad9ba8, #f3ead7, #9f253f, #da6252, #aa7c14, #e8ca00, #006a14, #0eaf03, #1f1daf, #4458d6
+Today Land Palette V2 | #141414, #31383d, #5a676c, #94a8aa, #edefef, #5e1632, #ae2432, #e37017, #f4bf42, #452323, #7e423a, #c67742, #f0b784, #1b3845, #21675f, #34b06f, #98e88a, #212363, #264ba4, #1e8fde, #6cd5e4, #441c5c, #8e307f, #e4629a, #f2b4b7
+Sweetie 16 | #1a1c2c, #5d275d, #b13e53, #ef7d57, #ffcd75, #a7f070, #38b764, #257179, #29366f, #3b5dc9, #41a6f6, #73eff7, #f4f4f4, #94b0c2, #566c86, #333c57
+Today Land Palette | #141414, #383838, #67615f, #a69f96, #f0eeec, #611732, #ae2633, #e86c18, #f1bb3b, #f26864, #4a2426, #844239, #c47540, #efb681, #d4705c, #206348, #42ad37, #b4e357, #1a363f, #20646c, #2bad96, #a1e4a0, #222664, #264fa4, #1f95e1, #6de0e5, #431c58, #8d2f7c, #e4669b, #f0b4ad, #32384a, #4f6872, #88a7a0
+Grapefruit | #65296c, #b76591, #f4b26b, #fff5dd
+Rabbit | #d47564, #e8c498, #ecece0, #4fa4a5, #aad395, #3b324a, #5c6182
+Generic 8 | #1c1121, #edece9, #a13b3b, #f37f9a, #ee961a, #2d5365, #40a933, #25a6c5
+Code: Melon | #b440a3, #ff91ab, #79c220, #f1e899, #2a1a54, #20798b
+Generic 15 | #222428, #5c596f, #a59ab6, #f4f0f4, #703f30, #d5555f, #ff95cf, #d7772d, #f3c775, #ffd8c3, #186444, #7ca230, #2b51a7, #169ac8, #81d5d7
+24P DX | #170f07, #484542, #897a6c, #c9b79c, #fcf5e8, #6f241d, #c0460e, #ee8300, #ffc42d, #4c2c35, #8e5340, #cc8c58, #f7c78b, #0d4157, #207949, #66b632, #c9e251, #00719d, #00abc4, #6fddd5, #632c53, #b7466c, #ff7986, #ffbda9
+15P DX | #6e3232, #bb5735, #df9245, #ecd274, #83a816, #277224, #173b47, #046894, #17a1a9, #81dbcd, #fdf9f1, #c7b295, #87715b, #463f3c, #201708
+20P DX | #170d20, #474757, #787876, #b1b9a6, #ebffda, #68293e, #a94400, #d97e00, #ebd000, #523c14, #816031, #bc8b57, #ebcd93, #0e4c58, #046e92, #01a3c3, #55deb7, #177947, #5ab217, #b1e329
+Linear Color Palette Basic | #0e0c0c, #5f2d56, #993970, #dc4a7b, #f78697, #9f294e, #62232f, #8f4029, #c56025, #ee8e2e, #fccba3, #da4e38, #facb3e, #97da3f, #4ba747, #3d734f, #314152, #417089, #49a790, #72d6ce, #5698cc, #5956bd, #473579, #8156aa, #c278d0, #f0b3dd, #fdf7ed, #d3bfa9, #aa8d7a, #775c55, #483b3a
+30 Color | #201923, #ffffff, #fcff5d, #7dfc00, #0ec434, #228c68, #8ad8e8, #235b54, #29bdab, #3998f5, #37294f, #277da7, #3750db, #f22020, #991919, #ffcba5, #e68f66, #c56133, #96341c, #632819, #ffc413, #f47a22, #2f2aa0, #b732cc, #772b9d, #f07cab, #d30b94, #edeff3, #c3a5b4, #946aa2, #5d4c86
+DawnBringer 16 | #140c1c, #442434, #30346d, #4e4a4e, #854c30, #346524, #d04648, #757161, #597dce, #d27d2c, #8595a1, #6daa2c, #d2aa99, #6dc2ca, #dad45e, #deeed6
+DawnBringer 32 | #000000, #222034, #45283c, #663931, #8f563b, #df7126, #d9a066, #eec39a, #fbf236, #99e550, #6abe30, #37946e, #4b692f, #524b24, #323c39, #3f3f74, #306082, #5b6ee1, #639bff, #5fcde4, #cbdbfc, #ffffff, #9badb7, #847e87, #696a6a, #595652, #76428a, #ac3232, #d95763, #d77bba, #8f974a, #8a6f30
+Andrew Kensler 16 | #000000, #ffffff, #c98f4c, #6e4e23, #e80200, #efe305, #6a8927, #195648, #16ed75, #32c1c3, #057fc1, #3f32ae, #baaaff, #ff949d, #e30ec2, #7a243d
+Andrew Kensler 32 | #d6a090, #fe3b1e, #a12c32, #fa2f7a, #fb9fda, #e61cf7, #992f7c, #47011f, #051155, #4f02ec, #2d69cb, #00a6ee, #6febff, #08a29a, #2a666a, #063619, #000000, #4a4957, #8e7ba4, #b7c0ff, #ffffff, #acbe9c, #827c70, #5a3b1c, #ae6507, #f7aa30, #f4ea5c, #9b9500, #566204, #11963b, #51e113, #08fdcc
+Andrew Kensler 54 | #05fec1, #32af87, #387261, #000000, #1c332a, #2a5219, #2d8430, #00b716, #50fe34, #a2d18e, #84926c, #aabab3, #cdfff1, #05dcdd, #499faa, #2f6d82, #3894d7, #78cef8, #bbc6ec, #8e8cfd, #1f64f4, #25477e, #72629f, #a48db5, #f5b8f4, #df6ff1, #a831ee, #3610e3, #241267, #7f2387, #471a3a, #93274e, #976877, #e57ea3, #d5309d, #dd385a, #f28071, #ee2911, #9e281f, #4e211a, #5b5058, #5e4d28, #7e751a, #a2af22, #e0f53f, #fffbc6, #ffffff, #dfb9ba, #ab8c76, #eec191, #c19029, #f8cb1a, #ea7924, #a15e30
+PICO-8 | #000000, #1D2B53, #7E2553, #008751, #AB5236, #5F574F, #C2C3C7, #FFF1E8, #FF004D, #FFA300, #FFEC27, #00E436, #29ADFF, #83769C, #FF77A8, #FFCCAA
+Andrade Gameboy | #202020, #5e6745, #aeba89, #e3eec0
+eishiya 22 | #35212e, #562e3c, #a14462, #eb998b, #fddbc8, #42465c, #356d67, #4c9568, #7fb961, #b0d45d, #ffe788, #b20000, #f06152, #7d4444, #9e6c69, #cca69c, #5066a1, #76afda, #abddff, #dcf2ff, #e8743c, #ffc556
+Daruda 22 | #dee5d9, #0f0e13, #230a29, #40002d, #56002c, #700d1a, #6d291c, #813221, #923d13, #9f4a14, #b05302, #b96915, #bf8109, #cf9213, #d5a627, #e0bc25, #e8cf50, #e8e36f, #e7e88d, #e7a079, #e8a9a3, #e7b5c6
+dpixel 22 | #040406, #4e4a36, #7e7256, #b0a480, #9da4b7, #131a21, #242e56, #2c5090, #6a8ab6, #a2c9dc, #edf0f1, #1b4331, #317d3c, #7db642, #c7e149, #fad43c, #c08b18, #dc5b28, #73230f, #2e1a23, #c8a090, #d6ced6
+BigPotato 22 | #030003, #f7f5ef, #c1decf, #eccd83, #d6ae87, #abb0c2, #74b1ce, #98af3c, #d89725, #be8867, #70838d, #bb6d3e, #aa6982, #3c7478, #966531, #616d36, #a6451f, #545b57, #73425f, #3a4164, #4a2525, #24162b
+DimWiddy 22 | #000000, #fae8e9, #e0cdf2, #e2e15c, #bab7a9, #b9abfa, #eba750, #c3be21, #e47251, #bb66e3, #7189e5, #519a4b, #897f7f, #cb4667, #a64887, #3a6d69, #38662c, #9e1f71, #ab2c29, #183776, #5d203e, #1e1647, #07060d
+keeling00 22 | #d0e0c6, #89a0d1, #35902b, #2ede4e, #8ce13a, #dde04c, #db972b, #94742e, #7b292e, #db303e, #d98489, #db8ee0, #933689, #e12ec4, #9538df, #282c44, #3626b4, #374ee6, #29add0, #54e8c9, #367887, #85ad73
+bogdanr5000 22 | #d48d5d, #f5c15f, #f0ec8d, #5a6699, #547fab, #7bb7c7, #6b928f, #8db697, #adc2a7, #bdd2cc, #e4eaed, #0e0e14, #585870, #2e2c29, #3d4463, #e0c0a6, #937296, #b88499, #cf9786, #9c5c6b, #944038, #b37a6f
+|||| 22 | #faf9f9, #463b52, #5c575a, #57627a, #617351, #6b9755, #990b2d, #b56172, #878774, #a6a49c, #b4b4b4, #0d0d0d, #121682, #4e40a6, #7160ba, #4c7ed8, #169c78, #ad655f, #e36625, #eb9488, #ffc192, #f8e200
+mordfikosz 11 | #be783c, #d7af87, #ebebaf, #64af50, #556e6e, #3c3c5f, #96d2f0, #a07da0, #9b4146, #46282d, #14141e
+SpeedyCube 11 | #f2fdff, #85c8e2, #97d374, #93928d, #5e5a93, #222849, #efdd8b, #e5a57e, #ce6d5c, #875d4e, #663358
+Nevercreature 11 | #3a3746, #99d9ea, #c06170, #a98b3d, #446499, #933c2d, #3c6738, #e9fabc, #6194c7, #f88878, #f4d055
+Arne 16 | #000000, #493c2b, #be2633, #e06f8b, #9d9d9d, #a46422, #eb8931, #f7e26b, #ffffff, #1b2632, #2f484e, #44891a, #a3ce27, #005784, #31a2f2, #b2dcef
+Night 11 | #183048, #507088, #b0e0d8, #98b880, #fff0b8, #e8b4a0, #9890a8, #705180, #743838, #986858, #d07050
+Arne 32 | #000000, #493c2b, #be2633, #e06f8b, #a46422, #eb8931, #f7e26b, #ffffff, #9d9d9d, #2f484e, #1b2632, #44891a, #a3ce27, #005784, #31a2f2, #b2dcef, #342a97, #656d71, #cccccc, #732930, #cb43a7, #524f40, #ad9d33, #ec4700, #fab40b, #115e33, #14807e, #15c2a5, #225af6, #9964f9, #f78ed6, #f4b990
+Finlal 11 | #171419, #530c1e, #223555, #af3451, #3b6688, #238433, #9f8474, #889eb7, #bda0bc, #cbc990, #e4e5f1
+GB Easy Greens | #004333, #0d8833, #a1bc00, #ebdd77
+Arcade Standard 29 | #f1f0ee, #ff4d4d, #9f1e31, #ffc438, #f06c00, #f1c284, #c97e4f, #973f3f, #57142e, #72cb25, #238531, #0a4b4d, #30c5ad, #2f7e83, #69deff, #33a5ff, #3259e2, #28237b, #c95cd1, #6c349d, #ffaabc, #e55dac, #17191b, #96a5ab, #586c79, #2a3747, #b9a588, #7e6352, #412f2f
+GrafxKid Gameboy Pocket (Gray) | #2b2b26, #706b66, #a89f94, #e0dbcd
+Fun16 | #080008, #5e6660, #2a3443, #5d4632, #44508c, #a6414d, #c86b36, #8375af, #52903c, #db7ebd, #5b99f4, #deac85, #94cc4e, #84dbfc, #f2de70, #fcfffe
+MSPaint XP | #000000, #808080, #c0c0c0, #ffffff, #800000, #ff0000, #808000, #ffff00, #008000, #00ff00, #008080, #00ffff, #000080, #0000ff, #800080, #ff00ff, #808040, #ffff80, #004040, #00ff80, #0080ff, #80ffff, #004080, #8080ff, #8000ff, #ff0080, #804000, #ff8040
+Crimso 11 | #ffffe3, #f3d762, #bf9651, #769a55, #cb5e31, #8e393d, #7a4962, #5e4531, #8ec3cf, #867696, #456e51, #3d6286, #353d5a, #232e32, #41292d, #110b11
+Night 16 | #0f0f1e, #fff8bc, #0c2133, #48586d, #79a0b0, #b0ce9d, #657f49, #3f4536, #b99d6a, #ffdd91, #dd945b, #9a5142, #644b48, #333033, #767088, #c5a3b3
+MSPaint Vista | #000000, #464646, #787878, #b4b4b4, #dcdcdc, #ffffff, #990030, #9c5a3c, #ed1c24, #ffa3b1, #ff7e00, #e5aa7a, #ffc20e, #f5e49c, #fff200, #fff9bd, #a8e61d, #d3f9bc, #22b14c, #9dbb61, #00b7ef, #99d9ea, #4d6df3, #709ad1, #2f3699, #546d8e, #6f3198, #b5a5d5
+Super17 16 | #240909, #28171a, #371a2e, #342b41, #57333f, #323764, #2a5a51, #334591, #834848, #d73860, #507952, #265ace, #947a6c, #c3b570, #df8ac7, #eaf4b7
+FlyGuy 16 | #271620, #242d42, #326b3c, #64b450, #eeea44, #f0e9db, #a93630, #3f3025, #533c60, #24495e, #379589, #a4e8df, #eeb691, #db8333, #785136, #566969
+PJ Gameboy | #1f1f1f, #4d533c, #8b956d, #c4cfa1
+[thUg] 16 | #504050, #a04040, #d06060, #f08080, #ffc0c0, #b0d0e0, #70b0c0, #4080b0, #000030, #102040, #204040, #306050, #409060, #50c060, #50ff90, #f0f0d0
+Unseven | #62507e, #a096d1, #c3cbdb, #fcfcfc, #0a0b0f, #14161f, #252a32, #424556, #32222e, #453c3c, #585651, #888c78, #9c0565, #d50964, #ff2245, #ff8f8f, #bf0000, #e93100, #ff9000, #ffd800, #0a5d45, #4ab907, #a7ed00, #e5ff05, #1664c5, #008df0, #00b9ff, #00fff0, #e5233e, #e56335, #ffa939, #ffe822, #915816, #be8420, #ebb70a, #fffc00, #793d4e, #b15c51, #d77e4b, #ffb35b, #45064b, #611381, #ff22a9, #ff70df, #017687, #00c19a, #6df7b1, #ccfff5, #3d2e93, #6440d8, #6c88ff, #7bd5f3, #323751, #683395, #676cad, #85a3c7, #331685, #6e10ab, #c51aea, #ff59be, #93278f, #b53772, #e97461, #fb9585
+Drazile 16 | #d1a649, #dd7252, #c64b3b, #754653, #9b7269, #bc8dad, #ccb4a1, #cad86c, #abbabc, #6fbc6f, #4f737c, #303a35, #5c3a96, #8a878e, #6f96d6, #e2e2c7
+pavanz 16 | #200037, #ffeedc, #65253f, #333e55, #b42f4b, #845a75, #406b81, #8f693d, #2b7d5f, #888da3, #c78f86, #d89763, #a1b25c, #a2ccc9, #e1cbc7, #efd497
+Naji 16 | #101a3a, #3d0e26, #64113d, #482e69, #3f425a, #6a3465, #74434a, #595579, #b73e62, #8d6d9c, #64967c, #c0719f, #c8926c, #dca286, #f2c966, #e6d1d5
+Chip16 | #d64b61, #3a2333, #000014, #538cc1, #70c6e5, #063e4c, #637272, #8e3737, #598e33, #7cb649, #565349, #eac879, #c4854e, #6f1a71, #e5e5e5, #d8a2a2
+Froste 16 | #f2a2a2, #e6a0a0, #d9a7a7, #cca4a4, #bfa1a1, #b39f9f, #a69c9c, #999999, #666666, #595963, #4d4d61, #40405e, #33335b, #262662, #1a1a60, #0d0d5d
+Super Plum 21 | #000000, #341f34, #4d1f4d, #a63a82, #a64b4b, #15788c, #266eff, #283b73, #ffbca6, #ff5983, #f37c55, #14cc80, #00d5ff, #8cb2ff, #642db3, #ffffff, #ffeecc, #ffc34d, #cbe545, #80ffea, #daeaf2, #6f66cc
+Matriax8c | #f0f0dc, #fac800, #10c840, #00a0c8, #d24040, #a0694b, #736464, #101820
+Kirokaze Gameboy | #332c50, #46878f, #94e344, #e2f3e4
+AAP-16 | #070708, #332222, #774433, #cc8855, #993311, #dd7711, #ffdd55, #ffff33, #55aa44, #115522, #44eebb, #3388dd, #5544aa, #555577, #aabbbb, #ffffff
+AAP-64 | #060608, #141013, #3b1725, #73172d, #b4202a, #df3e23, #fa6a0a, #f9a31b, #ffd541, #fffc40, #d6f264, #9cdb43, #59c135, #14a02e, #1a7a3e, #24523b, #122020, #143464, #285cc4, #249fde, #20d6c7, #a6fcdb, #ffffff, #fef3c0, #fad6b8, #f5a097, #e86a73, #bc4a9b, #793a80, #403353, #242234, #221c1a, #322b28, #71413b, #bb7547, #dba463, #f4d29c, #dae0ea, #b3b9d1, #8b93af, #6d758d, #4a5462, #333941, #422433, #5b3138, #8e5252, #ba756a, #e9b5a3, #e3e6ff, #b9bffb, #849be4, #588dbe, #477d85, #23674e, #328464, #5daf8d, #92dcba, #cdf7e2, #e4d2aa, #c7b08b, #a08662, #796755, #5a4e44, #423934
+Famicube | #000000, #e03c28, #ffffff, #d7d7d7, #a8a8a8, #7b7b7b, #343434, #151515, #0d2030, #415d66, #71a6a1, #bdffca, #25e2cd, #0a98ac, #005280, #00604b, #20b562, #58d332, #139d08, #004e00, #172808, #376d03, #6ab417, #8cd612, #beeb71, #eeffa9, #b6c121, #939717, #cc8f15, #ffbb31, #ffe737, #f68f37, #ad4e1a, #231712, #5c3c0d, #ae6c37, #c59782, #e2d7b5, #4f1507, #823c3d, #da655e, #e18289, #f5b784, #ffe9c5, #ff82ce, #cf3c71, #871646, #a328b3, #cc69e4, #d59cfc, #fec9ed, #e2c9ff, #a675fe, #6a31ca, #5a1991, #211640, #3d34a5, #6264dc, #9ba0ef, #98dcff, #5ba8ff, #0a89ff, #024aca, #00177d
+DawnBringer's 8 color | #000000, #55415f, #646964, #d77355, #508cd7, #64b964, #e6c86e, #dcf5ff
+Endesga 36 | #dbe0e7, #a3acbe, #67708b, #4e5371, #393a56, #26243a, #141020, #7bcf5c, #509b4b, #2e6a42, #1a453b, #0f2738, #0d2f6d, #0f4da3, #0e82ce, #13b2f2, #41f3fc, #f0d2af, #e5ae78, #c58158, #945542, #623530, #46211f, #97432a, #e57028, #f7ac37, #fbdf6b, #fe979b, #ed5259, #c42c36, #781f2c, #351428, #4d2352, #7f3b86, #b45eb3, #e38dd6
+Endesga Soft 16 | #fefed7, #dbbc96, #ddac46, #c25940, #683d64, #9c6659, #88434f, #4d2831, #a9aba3, #666869, #51b1ca, #1773b8, #639f5b, #376e49, #323441, #161323
+Nature’s Embrace 55 | #1b141e, #fe935a, #e25322, #a82424, #691b28, #ffbf89, #e7825a, #be5340, #7a321c, #d08058, #974e49, #5a303f, #ffc95c, #eb8a06, #cde042, #68b229, #257d2c, #1b4e44, #7becbf, #38aa91, #29777e, #25446c, #5ed7ef, #2096cd, #2662ab, #303386, #a3ccff, #788dde, #5458c0, #efa1ce, #b66cbe, #74448d, #432f65, #ffb2b2, #ea6d9d, #af407f, #75224a, #eb7171, #b1415c, #e3c4b0, #b18e8e, #74647f, #3e3f64, #dfdd9a, #9caa74, #617b47, #2a4e32, #b8d8d1, #759da9, #526a98, #fdf5f1, #ccc1be, #918692, #5d5b6e, #38384c
+GB Chocolate | #ffe4c2, #dca456, #a9604c, #422936
+Oil 6 | #fbf5ef, #f2d3ab, #c69fa5, #8b6d9c, #494d7e, #272744
+Humers | #fcf6df, #b3ac9a, #605f49, #343329, #0a0117, #3b1e61, #7c4892, #c4769f, #ffa092, #9b415a, #6b1d16, #431815, #95492a, #d5764b, #f7dd9a, #e1b64f, #94873b, #265315, #8bba70, #1a7c60, #132127, #1b21b3, #187dcf, #3ebab9, #85e4ed
+GNOME 32 | #eae8e3, #bab5ab, #807d74, #565248, #c5d2c8, #83a67f, #5d7555, #445632, #e0b6af, #c1665a, #884631, #663822, #ada7c8, #887fa3, #625b81, #494066, #9db8d2, #7590ae, #4b6983, #314e6c, #efe0cd, #e0c39e, #b39169, #826647, #df421e, #990000, #eed680, #d1940c, #46a046, #267726, #ffffff, #000000
+Optimum | #000000, #575757, #a0a0a0, #ffffff, #2a4bd7, #1d6914, #814a19, #8126c0, #9dafff, #81c57a, #e9debb, #ad2323, #29d0d0, #ffee33, #ff9233, #ffcdf3
+Starmancer | #1b2037, #293362, #1f447d, #2561a5, #2a81cb, #2ea2eb, #32bbf8, #1d1826, #2b2037, #472d58, #693c81, #8846a0, #aa56b9, #de73df, #34131a, #511922, #782029, #a22828, #be3522, #e94525, #fa6a39, #4d2416, #804227, #ba5f1c, #e48914, #eab208, #ffe345, #fff56c, #0a231f, #0d4035, #076146, #0a8057, #0e9e5e, #08c874, #08e77b, #102030, #153242, #124c5d, #0e7079, #0c9d94, #12cbaf, #21e9c1, #262933, #40414c, #656a73, #848d90, #a8b0b3, #c8cdcf, #dde3e3, #090711, #191a23, #53555e
+Fleja  Master Palette | #1f1833, #2b2e42, #414859, #68717a, #90a1a8, #b6cbcf, #ffffff, #fcbf8a, #b58057, #8a503e, #5c3a41, #c93038, #de6a38, #ffad3b, #ffe596, #fcf960, #b4d645, #51c43f, #309c63, #236d7a, #264f6e, #233663, #417291, #4c93ad, #63c2c9, #94d2d4, #b8fdff, #3c2940, #46275c, #826481, #f7a48b, #c27182, #852d66
+EGA-COM Extended | #292929, #52575c, #94999e, #deeedc, #7b2d2f, #d04043, #cb8f21, #e6c439, #6c4b37, #8c6946, #538a6a, #63b465, #2c4267, #38668b, #775780, #f4a66c, #576e54, #82e8e8, #9d446a, #eb7272
+DinoKnight 16 | #0f151b, #292732, #535867, #95928f, #f1f1ea, #c58d65, #8d5242, #513d3d, #ecd56d, #ea7730, #cd3d3d, #7c3f8c, #304271, #0083c8, #47a44d, #1f6143
+Colodore | #000000, #4a4a4a, #7b7b7b, #b2b2b2, #ffffff, #813338, #c46c71, #553800, #8e5029, #edf171, #a9ff9f, #56ac4d, #75cec8, #706deb, #2e2c9b, #8e3c97
+Softmilk 32 | #23213d, #d95b9a, #9e4491, #633662, #903d62, #bd515a, #d69a4e, #f3d040, #ffe88c, #f2f2f0, #94e092, #1f9983, #22636b, #57546f, #c56876, #76747d, #5c3841, #945848, #d17f6b, #eb9f7f, #f1c28f, #b9b5c3, #454194, #425bbd, #4884d4, #45a1de, #7cd8eb, #e2f266, #c3d442, #82aa28, #597f1e, #376129
+MortMort | #0f0e17, #50576b, #8d87a2, #bcb7c5, #ae57a4, #ea71bd, #ff8b9c, #ad3e50, #e1534a, #b8614e, #f29546, #ffce00, #3f7e00, #6ca800, #bdd156, #00a383, #3fc778, #a1ef79, #007dc7, #42cafd, #92f4ff
+Gameboy Pop | #ff0033, #ff3366, #bd7100, #ffcc00, #76ec08, #33ccff, #2086fd, #57001a, #b2194c
+CD-BAC | #000000, #da835c, #7f3710, #c4c466, #f4fb4a, #c7f0dc, #77e28e, #31983f, #37368d, #8e64e3, #d697ff, #f5cee6, #fdf5f9, #ce3f50, #5d0929, #301421
+Nyx8 | #08141e, #0f2a3f, #20394f, #f6d6bd, #c3a38a, #997577, #816271, #4e495f
+Mail 24 | #17111a, #372538, #7a213a, #e14141, #ffa070, #c44d29, #ffbf36, #fff275, #753939, #cf7957, #ffd1ab, #39855a, #83e04c, #dcff70, #243b61, #3898ff, #6eeeff, #682b82, #bf3fb3, #ff80aa, #3e375c, #7884ab, #b2bcc2, #ffffff
+Blessing | #74569b, #96fbc7, #f7ffae, #ffb3cb, #d8bfd8
+Zughy 32 | #472d3c, #5e3643, #7a444a, #a05b53, #bf7958, #eea160, #f4cca1, #b6d53c, #71aa34, #397b44, #3c5956, #302c2e, #5a5353, #7d7071, #a0938e, #cfc6b8, #dff6f5, #8aebf1, #28ccdf, #3978a8, #394778, #39314b, #564064, #8e478c, #cd6093, #ffaeb6, #f4b41b, #f47e1b, #e6482e, #a93b3b, #827094, #4f546b
+SimpleJPC-16 | #050403, #221f31, #543516, #9b6e2d, #e1b047, #f5ee9b, #fefefe, #8be1e0, #7cc264, #678fcb, #316f23, #404a68, #a14d3f, #a568d4, #9a93b7, #ea9182
+Mist GB | #2d1b00, #1e606e, #5ab9a8, #c4f0c2
+Ice Cream GB | #7c3f58, #eb6b6f, #f9a875, #fff6d3
+Nymph GB | #2c2137, #446176, #3fac95, #a1ef8c
+Wish GB | #622e4c, #7550e8, #608fcf, #8be5ff
+Rustic GB | #2c2137, #764462, #edb4a1, #a96868
+Peachy Pop 16 | #fdffff, #ff8686, #fb4771, #ce186a, #8f0b5f, #53034b, #ad6dea, #9fb9ff, #567feb, #0a547b, #278c7f, #0ce7a7, #acfcad, #ffec6d, #ffa763, #ff4040
+Island Joy 16 | #ffffff, #6df7c1, #11adc1, #606c81, #393457, #1e8875, #5bb361, #a1e55a, #f7e476, #f99252, #cb4d68, #6a3771, #c92464, #f48cb6, #f7b69e, #9b9c82
+/r/Place | #FFFFFF, #E4E4E4, #888888, #222222, #FFA7D1, #E50000, #E59500, #A06A42, #E5D900, #94E044, #02BE01, #00D3DD, #0083C7, #0000EA, #CF6EE4, #820080
+c20 | #fcfcf5, #b9bbbb, #606060, #354353, #27215f, #f8bf87, #f76f2d, #cc4633, #c81530, #60322d, #111117, #770961, #c10d6b, #ec626c, #f4cc2d, #88dd3c, #2daa3d, #3e661a, #0c6f94, #1bb0b8
+Endesga 64 | #ff0040, #131313, #1b1b1b, #272727, #3d3d3d, #5d5d5d, #858585, #b4b4b4, #ffffff, #c7cfdd, #92a1b9, #657392, #424c6e, #2a2f4e, #1a1932, #0e071b, #1c121c, #391f21, #5d2c28, #8a4836, #bf6f4a, #e69c69, #f6ca9f, #f9e6cf, #edab50, #e07438, #c64524, #8e251d, #ff5000, #ed7614, #ffa214, #ffc825, #ffeb57, #d3fc7e, #99e65f, #5ac54f, #33984b, #1e6f50, #134c4c, #0c2e44, #00396d, #0069aa, #0098dc, #00cdf9, #0cf1ff, #94fdff, #fdd2ed, #f389f5, #db3ffd, #7a09fa, #3003d9, #0c0293, #03193f, #3b1443, #622461, #93388f, #ca52c9, #c85086, #f68187, #f5555d, #ea323c, #c42430, #891e2b, #571c27
+Endesga 8 | #fdfdf8, #d32734, #da7d22, #e6da29, #28c641, #2d93dd, #7b53ad, #1b1c33
+EN4 | #fbf7f3, #e5b083, #426e5d, #20283d
+ENOS16 | #fafafa, #d4d4d4, #9d9d9d, #4b4b4b, #f9d381, #eaaf4d, #f9938a, #e75952, #9ad1f9, #58aeee, #8deda7, #44c55b, #c3a7e1, #9569c8, #bab5aa, #948e82
+Arq4 | #ffffff, #6772a9, #3a3277, #000000
+Vine's Flexible Linear Ramps | #150a1f, #280b26, #361027, #681824, #b42313, #f4680b, #f4c047, #fffdf0, #0c1327, #03282b, #09493f, #118337, #57c52b, #b9ed5e, #1a112e, #291945, #5e1c5a, #8f1767, #f45d92, #feb58b, #0e092f, #1b1853, #222d81, #465be7, #2ac0f2, #7df2cf, #220c27, #2f1316, #431e1e, #74341a, #af5d23, #f8993a, #19102e, #241e44, #25315e, #3a5c85, #56a1bf, #97dbd2
+Fantasy 24 | #1f240a, #39571c, #a58c27, #efac28, #efd8a1, #ab5c1c, #183f39, #ef692f, #efb775, #a56243, #773421, #724113, #2a1d0d, #392a1c, #684c3c, #927e6a, #276468, #ef3a0c, #45230d, #3c9f9c, #9b1a0a, #36170c, #550f0a, #300f0a
+Mort vs Zughy | #f8f8f8, #bcb7c5, #8d87a2, #50576b, #2e3740, #101e29, #302c2e, #5a5353, #7d7071, #a0938e, #cfc6b8, #f4cca1, #eea160, #bf7958, #a05b53, #7a444a, #5e3643, #472d3c, #39314b, #64468d, #8e478c, #ae57a4, #ea71bd, #ffaeb6, #ff8b9c, #e1534a, #a93b3b, #f47e1b, #f4b41b, #ffce00, #fbfcaa, #b6d53c, #71aa34, #3f7e00, #005f1b, #00635c, #00a383, #3fc778, #a1ef79, #dff6f5, #92f4ff, #42cafd, #3978a8, #243f72, #564064, #827094, #4f546b
+AAP-Splendor128 | #050403, #0e0c0c, #2d1b1e, #612721, #b9451d, #f1641f, #fca570, #ffe0b7, #ffffff, #fff089, #f8c53a, #e88a36, #b05b2c, #673931, #271f1b, #4c3d2e, #855f39, #d39741, #f8f644, #d5dc1d, #adb834, #7f8e44, #586335, #333c24, #181c19, #293f21, #477238, #61a53f, #8fd032, #c4f129, #d0ffea, #97edca, #59cf93, #42a459, #3d6f43, #27412d, #14121d, #1b2447, #2b4e95, #2789cd, #42bfe8, #73efe8, #f1f2ff, #c9d4fd, #8aa1f6, #4572e3, #494182, #7864c6, #9c8bdb, #ceaaed, #fad6ff, #eeb59c, #d480bb, #9052bc, #171516, #373334, #695b59, #b28b78, #e2b27e, #f6d896, #fcf7be, #ecebe7, #cbc6c1, #a69e9a, #807b7a, #595757, #323232, #4f342f, #8c5b3e, #c68556, #d6a851, #b47538, #724b2c, #452a1b, #61683a, #939446, #c6b858, #efdd91, #b5e7cb, #86c69a, #5d9b79, #486859, #2c3b39, #171819, #2c3438, #465456, #64878c, #8ac4c3, #afe9df, #dceaee, #b8ccd8, #88a3bc, #5e718e, #485262, #282c3c, #464762, #696682, #9a97b9, #c5c7dd, #e6e7f0, #eee6ea, #e3cddf, #bfa5c9, #87738f, #564f5b, #322f35, #36282b, #654956, #966888, #c090a9, #d4b8b8, #eae0dd, #f1ebdb, #ddcebf, #bda499, #886e6a, #594d4d, #33272a, #b29476, #e1bf89, #f8e398, #ffe9e3, #fdc9c9, #f6a2a8, #e27285, #b25266, #64364b, #2a1e23
+haretro8 | #ffe6d2, #ffb400, #32b4ff, #0ac832, #cc66cc, #c73b32, #995f3d, #1e2832
+Generic 8 Color | #000000, #cc3500, #5ec809, #1d286f, #00c4ff, #8e8e8e, #ffe052, #ffffff
+Arne 4 | #000000, #00519c, #b84b12, #afd84f
+Pear36 | #5e315b, #8c3f5d, #ba6156, #f2a65e, #ffe478, #cfff70, #8fde5d, #3ca370, #3d6e70, #323e4f, #322947, #473b78, #4b5bab, #4da6ff, #66ffe3, #ffffeb, #c2c2d1, #7e7e8f, #606070, #43434f, #272736, #3e2347, #57294b, #964253, #e36956, #ffb570, #ff9166, #eb564b, #b0305c, #73275c, #422445, #5a265e, #80366b, #bd4882, #ff6b97, #ffb5b5
+JB4 | #daf3ec, #00bff3, #ed008c, #260016
+Hybrid32 | #101b21, #2e2a35, #645964, #979ea8, #c0c7b7, #e4edf5, #ffffff, #e5df52, #c2c237, #6aba3b, #3b8f5b, #526626, #376129, #335a5c, #296291, #38c2d6, #5095e6, #565299, #353456, #613755, #903d62, #955b8d, #d467a2, #f21e44, #a83135, #ec6b24, #edce9f, #dd9c68, #d96f67, #ae6253, #9d5a33, #593339
+ARQ16 | #ffffff, #ffd19d, #aeb5bd, #4d80c9, #e93841, #100820, #511e43, #054494, #f1892d, #823e2c, #ffa9a9, #5ae150, #ffe947, #7d3ebf, #eb6c82, #1e8a4c
+ZXArne 5.2 | #000000, #3c351f, #313390, #1559db, #a73211, #d85525, #a15589, #cd7a50, #629a31, #9cd33c, #28a4cb, #65dcd6, #e8bc50, #f1e782, #bfbfbd, #f2f1ed
+Castpixel 16 | #2d1b2e, #218a91, #3cc2fa, #9af6fd, #4a247c, #574b67, #937ac5, #8ae25d, #8e2b45, #f04156, #f272ce, #d3c0a8, #c5754a, #f2a759, #f7db53, #f9f4ea
+Hybrid20 | #140f1c, #474757, #6c6c6b, #b5bab1, #f4fee7, #5e322a, #955219, #df6620, #f0ce17, #bc8b57, #ebcd93, #1e5851, #086f93, #01a3c3, #38c7b8, #44ae2a, #9de033, #493049, #f8bf87, #d22c58
+NOPAL-12 | #e2e4df, #c5cfc4, #a8b5ae, #92929c, #ffeced, #fbd4d2, #f1b4b4, #cca3a3, #f1eab6, #e4dba0, #cac18a, #aba47b
+FZT Ethereal 16 | #f3f3f3, #f9c2a4, #b8700e, #5e0d24, #a29eb4, #c259df, #8f27b8, #c1002b, #6c606f, #0047ed, #00a8f3, #ddb411, #004952, #07865c, #00c37d, #051c25
+AAP-Micro12 | #040303, #1c1618, #47416b, #6c8c50, #e3d245, #d88038, #a13d3b, #4e282e, #9a407e, #f0d472, #f9f5ef, #8a8fc4
+Lux2K | #25131a, #3d253b, #523b40, #1f3736, #2a5a39, #427f3b, #80a53f, #bbc44e, #96c641, #ccf61f, #8a961f, #5c6b53, #895a45, #d1851e, #ffd569, #bf704d, #e1a171, #e6deca, #9b4c51, #802954, #d01946, #e84444, #40369f, #7144ff, #af69bf, #eaa5ff, #5880cc, #62abd4, #9bf0fd, #cae6f5, #ffffff, #a7acba, #606060, #56587b, #9a8571, #dfbbb3
+ZyKro-32 | #000000, #181a1a, #3b494f, #5d6d72, #7a8e95, #99aab0, #bfced3, #ffffff, #7a0724, #8f091d, #a70a0a, #ca1818, #de4c35, #c74c20, #cc7223, #e6a029, #f7ca40, #f7d87c, #581414, #7b402a, #a76542, #ca8655, #064022, #066625, #39a32a, #86cc3e, #c2f576, #2d0f84, #4044dc, #4085dc, #6ec1ed, #bbf5ff
+Turd32 | #fffed6, #b0dcd2, #7bb2a2, #7b8d78, #e99ced, #ee71ce, #f23c85, #c22346, #c58e25, #b25618, #9c2519, #711919, #f0d839, #f9b351, #7ad679, #2bd234, #779c21, #248d1f, #246200, #2c400d, #1bd2a8, #1f7877, #2b2e0b, #062a0f, #222834, #1a2524, #131c25, #050a19, #2f4848, #263642, #1c396a, #182446
+Cabana-64 | #000000, #a79a5f, #67541f, #473513, #30201a, #3a1603, #5a260b, #c3680a, #f16e03, #fda414, #ffe22c, #ffd887, #f09d51, #e06926, #b24e2c, #823314, #ffffff, #fffcdb, #a9805a, #6d4734, #452d25, #680b76, #951cbc, #da48dd, #f276ff, #ffaffc, #fff5f6, #ff7693, #dd3939, #c02214, #900c47, #600119, #4a4a4a, #d2ccf3, #a392d4, #615476, #332f3a, #3f0d76, #611894, #8f4bec, #d291ff, #f2edff, #dafffe, #96daff, #39aeff, #2274ff, #343af1, #221478, #101010, #69849c, #a2bcc5, #719f93, #435655, #2c3233, #084339, #1b744a, #5bbe61, #b6ff8c, #d1ffcc, #aaffd8, #4cd494, #1c8393, #0d396f, #0a2563
+Steam Lords | #213b25, #3a604a, #4f7754, #a19f7c, #77744f, #775c4f, #603b3a, #3b2137, #170e19, #2f213b, #433a60, #4f5277, #65738c, #7c94a1, #a0b9ba, #c0d1cc
+cm16 | #e7ebf8, #adb1e0, #b06bb5, #6d2ea4, #aae474, #14ada0, #597acd, #7dc9de, #fff7a7, #ffbe6c, #ff6773, #bb027a, #f8c8af, #a17374, #2e5b86, #0c2a47
+Ink | #1f1f29, #413a42, #596070, #96a2b3, #eaf0d8
+Jewel | #321e2d, #662431, #b8281c, #d26a12, #f2c53c, #f0e89c, #dfb77f, #bc7b62, #79416b, #566094, #4a8fa9, #4dc1b3, #73e37b, #7482a1, #9cacba
+Mother Earth | #eeeec7, #dec26d, #cd9957, #bd6b44, #ac4136, #6c3434, #3e2d2e, #6e4c49, #94725d, #bfa17a, #ddcf95, #96c083, #5fa367, #4a806b, #3e625e, #384d52, #4c547a, #676786, #b1b0bf, #8e8897, #786072, #5a444e
+Graveyard | #857a68, #a38a79, #beb590, #8a6966, #765b62, #1b1a1f, #302d33, #453c49, #5b4d5e, #756376, #8f7a8d, #a693a0, #8d7f98, #767488, #65686f, #4f554f, #6c6f65, #7b847a, #838798, #9fa8b3, #bdc9ce
+ZyKro-48 | #000000, #181a1c, #3f454a, #6c7880, #b5c1c9, #dfe7ed, #ffffff, #380a11, #4d1318, #701c22, #a13428, #cc4033, #f06c60, #803020, #9e5528, #cf8634, #dea350, #fad578, #fae09d, #8f2b00, #cc4b00, #ff7900, #ffa321, #ffc44c, #c78418, #ebb01c, #f2dd1d, #f9ff54, #123d52, #12524f, #186b53, #218f4b, #2fcc4e, #7eed4e, #04112c, #092346, #264e70, #346a99, #438cc4, #4fcfe3, #130623, #2c0b4f, #50177b, #7824b9, #a54dca, #8f3364, #bd4f8a, #e66eae
+Bubblegum 16 | #16171a, #7f0622, #d62411, #ff8426, #ffd100, #fafdff, #ff80a4, #ff2674, #94216a, #430067, #234975, #68aed4, #bfff3c, #10d275, #007899, #002859
+Pineapple 32 | #43002a, #890027, #d9243c, #ff6157, #ffb762, #c76e46, #73392e, #34111f, #030710, #273b2d, #458239, #9cb93b, #ffd832, #ff823b, #d1401f, #7c191a, #310c1b, #833f34, #eb9c6e, #ffdaac, #ffffe4, #bfc3c6, #6d8a8d, #293b49, #041528, #033e5e, #1c92a7, #77d6c1, #ffe0dc, #ff88a9, #c03b94, #601761
+Rosy 42 | #21181b, #3b2027, #7d3833, #ab5130, #cf752b, #f0b541, #ffee83, #c8d45d, #63ab3f, #3b7d4f, #2f5753, #283540, #1b1f21, #2b2b45, #3a3f5e, #4c6885, #4fa4b8, #92e8c0, #f5ffe8, #dfe0e8, #a3a7c2, #686f99, #404973, #2c354d, #14182e, #4b1d52, #692464, #9c2a70, #cc2f7b, #ff5277, #ffc2a1, #ff8933, #e64539, #ad2f45, #781d4f, #4f1d4c, #291d2b, #3d2936, #52333f, #8f4d57, #bd6a62, #ffae70
+Taffy 16 | #222533, #6275ba, #a3c0e6, #fafffc, #ffab7b, #ff6c7a, #dc435b, #3f48c2, #448de7, #2bdb72, #a7f547, #ffeb33, #f58931, #db4b3d, #a63d57, #36354d
+FuzzyFour | #302387, #ff3796, #00faac, #fffdaf
+Battery24 | #f8ffba, #332431, #573752, #784465, #8f476a, #a64c6c, #d9577c, #e04646, #e6634c, #e89851, #e8cb58, #e2ed82, #fcffde, #76e856, #3ae056, #c9fa75, #b5f26b, #41c47c, #46b38e, #4c90a1, #497791, #466287, #424a70, #303042
+BLK 36 | #000000, #12173d, #293268, #464b8c, #6b74b2, #909edd, #c1d9f2, #ffffff, #ffccd0, #e5959f, #c16a7d, #8c4b63, #66334b, #3f233c, #29174c, #412866, #643499, #8c51cc, #b991f2, #a5e6ff, #5ab9e5, #4185d8, #354ab2, #36277f, #0a2a33, #0f4a4c, #14665b, #22896e, #42bc7f, #8cff9b, #ffe091, #ff965f, #cc5250, #872a38, #d83843, #ff6866
+Fantastic 8 | #dbdbdd, #9c8e8e, #524ba3, #1f1e23, #6a9254, #dcac6c, #e55656, #73493c
+Westmost 8 | #131315, #4a5381, #b96f5a, #dadada, #343651, #644338, #4c9453, #cab17a
+Fantasy 16 | #8e6d34, #513a18, #332710, #14130c, #461820, #a63c1e, #d37b1e, #e7bc4f, #eeeefa, #d9d55b, #757320, #14210f, #040405, #1c1b2f, #435063, #60a18f
+UFO 50 | #ffffff, #a48080, #feb854, #e8ea4a, #58f5b1, #64a4a4, #cc68e4, #fe626e, #c8c8c8, #e03c32, #fe7000, #63b31d, #a4f022, #27badb, #fe48de, #d10f4c, #707070, #991515, #ca4a00, #a3a324, #008456, #006ab4, #9600dc, #861650, #000000, #4c0000, #783450, #8a6042, #003d10, #202040, #340058, #4430ba
+Tranquil Fantasy 23 | #a52d27, #c96d45, #d1ca80, #a29d6b, #836b3f, #63492c, #413325, #28221f, #3a3b3d, #5f6367, #869598, #acc2c3, #d4eded, #97b58a, #65845c, #3a5941, #223a30, #503b68, #855b69, #dfb9ca, #acdcf1, #7ca8d5, #4c6ead
