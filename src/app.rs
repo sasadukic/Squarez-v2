@@ -15,7 +15,7 @@ use crate::top_bar::{
     menu_zone_width, BRAND_WIDTH, DROPDOWN_CORNER_RADIUS, DROPDOWN_ROW_HEIGHT, DROPDOWN_TOP_GAP,
     DROPDOWN_WIDTH, MENU_FONT_SIZE, TOP_BAR_HEIGHT,
 };
-use crate::tools::{apply_eraser, apply_eyedropper, apply_ellipse, apply_fill, apply_line, apply_pencil, apply_rect, ActiveTool, SelectState, SelectInteraction, Handle, FloatBuffer, DragAnchor, sample_transformed};
+use crate::tools::{apply_eraser, apply_eyedropper, apply_ellipse, apply_fill, apply_line, apply_pencil, apply_rect, bresenham_positions, ActiveTool, SelectState, SelectInteraction, Handle, FloatBuffer, DragAnchor, sample_transformed};
 use crate::ui_metrics::RIGHT_SECTION_STACK_GAP;
 use crate::ui_state::{Panel, UiState};
 
@@ -32,6 +32,9 @@ pub struct App {
     pub ui_state: UiState,
     drag_start: Option<(u32, u32)>,
     stroke_edits: Vec<crate::tools::PixelEdit>,
+    last_pencil_pos: Option<(u32, u32)>,
+    stroke_painted: std::collections::HashSet<(u32, u32)>,
+    stroke_pixel_sequence: Vec<(u32, u32)>,
     canvas_dirty: bool,
     show_new_dialog: bool,
     new_width: u32,
@@ -224,6 +227,9 @@ impl App {
             ui_state: layout.as_ref().map(|l| l.ui_state.clone()).unwrap_or_default(),
             drag_start: None,
             stroke_edits: Vec::new(),
+            last_pencil_pos: None,
+            stroke_painted: std::collections::HashSet::new(),
+            stroke_pixel_sequence: Vec::new(),
             canvas_dirty: true,
             show_new_dialog: false,
             new_width: 16,
@@ -2832,6 +2838,43 @@ impl App {
         }
     }
 
+    /// Check if the last three pixels in the stroke form an L-shape inside a 2x2 area.
+    /// If so, remove the middle (corner) pixel from the layer, stroke_edits, stroke_painted,
+    /// and stroke_pixel_sequence. Repeats until no more L-shapes at the tail.
+    fn check_and_remove_l_shape(&mut self, ai: usize, fi: usize, li: usize) {
+        while self.stroke_pixel_sequence.len() >= 3 {
+            let n = self.stroke_pixel_sequence.len();
+            let a = self.stroke_pixel_sequence[n - 3];
+            let b = self.stroke_pixel_sequence[n - 2];
+            let c = self.stroke_pixel_sequence[n - 1];
+
+            // a and c must be diagonal neighbors (dx=1, dy=1)
+            let dx = (a.0 as i32 - c.0 as i32).abs();
+            let dy = (a.1 as i32 - c.1 as i32).abs();
+            if dx != 1 || dy != 1 {
+                break;
+            }
+
+            // b must be inside the 2x2 bounding box of a and c, and not equal to a or c
+            let min_x = a.0.min(c.0);
+            let max_x = a.0.max(c.0);
+            let min_y = a.1.min(c.1);
+            let max_y = a.1.max(c.1);
+            if b.0 < min_x || b.0 > max_x || b.1 < min_y || b.1 > max_y || b == a || b == c {
+                break;
+            }
+
+            // L-shape found: remove b (the corner pixel)
+            if let Some(idx) = self.stroke_edits.iter().position(|(x, y, _, _)| *x == b.0 && *y == b.1) {
+                let (_, _, old_color, _) = self.stroke_edits.remove(idx);
+                self.project.animations[ai].frames[fi].layers[li].set_pixel(b.0, b.1, old_color);
+                self.canvas_dirty = true;
+            }
+            self.stroke_painted.remove(&b);
+            self.stroke_pixel_sequence.remove(n - 2);
+        }
+    }
+
     fn handle_canvas_input(&mut self, response: egui::Response, canvas_rect: egui::Rect) {
         let w = self.project.canvas_width;
         let h = self.project.canvas_height;
@@ -2915,6 +2958,9 @@ impl App {
                 let edits = std::mem::take(&mut self.stroke_edits);
                 self.undo_stack.push(Command::PaintPixels { animation_id: ai, frame_id: fi, layer_id: li, edits });
             }
+            self.last_pencil_pos = None;
+            self.stroke_painted.clear();
+            self.stroke_pixel_sequence.clear();
             // RectSelect: lift selected pixels into a floating buffer.
             if is_select_tool {
                 if let Some(rect) = self.select_state.rect {
@@ -2971,6 +3017,9 @@ impl App {
             self.drag_start = Some(start);
             self.stroke_edits.clear();
             self.shape_preview.clear();
+            self.last_pencil_pos = None;
+            self.stroke_painted.clear();
+            self.stroke_pixel_sequence.clear();
             if is_select_tool {
                 self.select_state.rect = None; // clear previous selection on new drag
             }
@@ -2979,19 +3028,47 @@ impl App {
         let color = self.color_state.foreground;
         match &self.active_tool.clone() {
             ActiveTool::Pencil => {
-                let edits = apply_pencil(&self.project.animations[ai].frames[fi].layers[li], px, py, color);
-                for &(x, y, _old, new) in &edits {
-                    self.project.animations[ai].frames[fi].layers[li].set_pixel(x, y, new);
+                let positions = if let Some((lx, ly)) = self.last_pencil_pos {
+                    bresenham_positions(lx as i32, ly as i32, px as i32, py as i32)
+                } else {
+                    vec![(px, py)]
+                };
+                for pos in positions {
+                    if self.stroke_painted.contains(&pos) {
+                        continue;
+                    }
+                    self.stroke_pixel_sequence.push(pos);
+                    let edits = apply_pencil(&self.project.animations[ai].frames[fi].layers[li], pos.0, pos.1, color);
+                    for &(x, y, old, new) in &edits {
+                        self.project.animations[ai].frames[fi].layers[li].set_pixel(x, y, new);
+                        self.stroke_edits.push((x, y, old, new));
+                    }
+                    self.stroke_painted.insert(pos);
+                    self.check_and_remove_l_shape(ai, fi, li);
                 }
-                self.stroke_edits.extend(edits);
+                self.last_pencil_pos = Some((px, py));
                 self.canvas_dirty = true;
             }
             ActiveTool::Eraser => {
-                let edits = apply_eraser(&self.project.animations[ai].frames[fi].layers[li], px, py);
-                for &(x, y, _old, new) in &edits {
-                    self.project.animations[ai].frames[fi].layers[li].set_pixel(x, y, new);
+                let positions = if let Some((lx, ly)) = self.last_pencil_pos {
+                    bresenham_positions(lx as i32, ly as i32, px as i32, py as i32)
+                } else {
+                    vec![(px, py)]
+                };
+                for pos in positions {
+                    if self.stroke_painted.contains(&pos) {
+                        continue;
+                    }
+                    self.stroke_pixel_sequence.push(pos);
+                    let edits = apply_eraser(&self.project.animations[ai].frames[fi].layers[li], pos.0, pos.1);
+                    for &(x, y, old, new) in &edits {
+                        self.project.animations[ai].frames[fi].layers[li].set_pixel(x, y, new);
+                        self.stroke_edits.push((x, y, old, new));
+                    }
+                    self.stroke_painted.insert(pos);
+                    self.check_and_remove_l_shape(ai, fi, li);
                 }
-                self.stroke_edits.extend(edits);
+                self.last_pencil_pos = Some((px, py));
                 self.canvas_dirty = true;
             }
             ActiveTool::Fill => {

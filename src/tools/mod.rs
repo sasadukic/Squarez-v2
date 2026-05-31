@@ -5,7 +5,7 @@ pub mod eyedropper;
 pub mod shapes;
 pub mod select;
 
-pub use pencil::{apply_pencil, apply_eraser, bresenham_line};
+pub use pencil::{apply_pencil, apply_eraser, bresenham_line, bresenham_positions};
 pub use fill::apply_fill;
 pub use eyedropper::apply_eyedropper;
 pub use shapes::{apply_rect, apply_ellipse, apply_line};
