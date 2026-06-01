@@ -2984,6 +2984,41 @@ impl App {
             return;
         }
 
+        // --- Hover pixel preview (no mouse button pressed, no active drag) ---
+        // Reuses shape_preview to show the pixel that would be drawn if the user clicked.
+        // Uses response.hover_pos() so it fires on hover without requiring a button press.
+        // Only active when the layer is paintable (not locked, not a group).
+        {
+            let is_preview_tool = matches!(self.active_tool,
+                ActiveTool::Pencil | ActiveTool::Eraser
+                    | ActiveTool::Rectangle { .. } | ActiveTool::Ellipse { .. } | ActiveTool::Line);
+            let layer_paintable = !self.project.animations[ai].frames[fi].layers[li].locked
+                && !self.project.animations[ai].frames[fi].layers[li].is_group;
+            let hover_canvas = response.hover_pos()
+                .and_then(|p| self.canvas.screen_to_canvas(p, canvas_rect, w, h))
+                .filter(|&(hx, hy)| hx < w && hy < h);
+            if is_preview_tool && layer_paintable && !primary_down && self.drag_start.is_none() {
+                let color = self.color_state.foreground;
+                let new_preview: Vec<(u32, u32, Rgba)> = match hover_canvas {
+                    Some((hx, hy)) => match &self.active_tool {
+                        ActiveTool::Pencil                         => vec![(hx, hy, color)],
+                        ActiveTool::Eraser                         => vec![(hx, hy, [0, 0, 0, 0])],
+                        _ /* Rectangle, Ellipse, Line */            => vec![(hx, hy, color)],
+                    },
+                    None => vec![],
+                };
+                if self.shape_preview != new_preview {
+                    self.shape_preview = new_preview;
+                    self.canvas_dirty = true;
+                }
+            } else if self.drag_start.is_none() && !self.shape_preview.is_empty() {
+                // Clear stale hover preview when the button is pressed, drag begins,
+                // or cursor leaves the canvas.
+                self.shape_preview.clear();
+                self.canvas_dirty = true;
+            }
+        }
+
         // --- For everything else we need a valid position ---
         let pos = match pos_opt {
             Some(p) => p,
