@@ -2261,7 +2261,23 @@ impl App {
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.add_space(10.0);
                                         let mut fps = self.project.animations[i].fps as f32;
-                                        ui.visuals_mut().override_text_color = Some(theme.fg_muted);
+                                        let bg = if selected { theme.surface } else { theme.panel };
+                                        let text_col = theme.fg_desc;
+                                        let v = ui.visuals_mut();
+                                        v.widgets.inactive.bg_fill = bg;
+                                        v.widgets.inactive.weak_bg_fill = bg;
+                                        v.widgets.hovered.bg_fill = bg;
+                                        v.widgets.hovered.weak_bg_fill = bg;
+                                        v.widgets.active.bg_fill = bg;
+                                        v.widgets.active.weak_bg_fill = bg;
+                                        v.widgets.inactive.fg_stroke.color = text_col;
+                                        v.widgets.hovered.fg_stroke.color = Color32::WHITE;
+                                        v.widgets.active.fg_stroke.color = Color32::WHITE;
+                                        v.widgets.inactive.bg_stroke = egui::Stroke::NONE;
+                                        v.widgets.hovered.bg_stroke = egui::Stroke::NONE;
+                                        v.widgets.active.bg_stroke = egui::Stroke::NONE;
+                                        v.selection.stroke.color = text_col;
+                                        v.override_text_color = Some(text_col);
                                         if ui.add(
                                             egui::DragValue::new(&mut fps)
                                                 .range(1.0..=60.0)
