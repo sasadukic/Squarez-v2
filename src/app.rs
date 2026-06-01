@@ -1097,6 +1097,28 @@ impl App {
 
                             let y_before = ui.next_widget_position().y;
 
+                            let (handle_rect, handle_resp) = ui.allocate_exact_size(
+                                Vec2::new(ui.available_width(), 4.0),
+                                egui::Sense::click_and_drag(),
+                            );
+                            let handle_active = handle_resp.hovered() || dragging == Some(panel);
+                            if handle_active {
+                                let y = handle_rect.center().y;
+                                let color = if dragging == Some(panel) { Color32::WHITE } else { self.theme.fg_muted };
+                                ui.painter().line_segment(
+                                    [egui::pos2(handle_rect.left(), y), egui::pos2(handle_rect.right(), y)],
+                                    egui::Stroke::new(1.0, color),
+                                );
+                            }
+                            if handle_resp.double_clicked() {
+                                self.ui_state.toggle_collapsed(panel);
+                            }
+                            if handle_resp.drag_started() {
+                                self.sidebar_drag = Some(panel);
+                                self.sidebar_drag_over_idx = Some(i);
+                                self.sidebar_press_start = None;
+                            }
+
                             if dragging == Some(panel) {
                                 // Placeholder for the section being dragged
                                 let theme = self.theme.clone();
@@ -1137,61 +1159,22 @@ impl App {
         // Update stored rects with this frame's positions
         self.sidebar_icon_rects = new_icon_rects;
 
-        // ── Long-press drag-to-reorder state machine (narrow mode only) ──
-        const LONG_PRESS_SECS: f64 = 0.4;
-        let now             = ctx.input(|i| i.time);
+        // ── Top-line drag-to-reorder state machine ───────────────────────
         let pointer_pos     = ctx.input(|i| i.pointer.hover_pos());
-        let primary_pressed  = ctx.input(|i| i.pointer.primary_pressed());
         let primary_released = ctx.input(|i| i.pointer.primary_released());
-        let primary_down     = ctx.input(|i| i.pointer.primary_down());
 
-        if !all_narrow {
-            // Left narrow mode — cancel everything
-            self.sidebar_drag       = None;
-            self.sidebar_drag_over_idx = None;
-            self.sidebar_press_start   = None;
-        } else {
-            // Record press start on icon row
-            if primary_pressed {
-                if let Some(pos) = pointer_pos {
-                    for &(panel, rect) in &self.sidebar_icon_rects {
-                        if rect.contains(pos) {
-                            self.sidebar_press_start = Some((panel, now));
-                            break;
-                        }
+        if self.sidebar_drag.is_some() {
+            if let Some(pos) = pointer_pos {
+                let mut drop_idx = self.sidebar_icon_rects.len();
+                for (i, &(_, rect)) in self.sidebar_icon_rects.iter().enumerate() {
+                    if pos.y < rect.center().y {
+                        drop_idx = i;
+                        break;
                     }
                 }
+                self.sidebar_drag_over_idx = Some(drop_idx);
             }
-
-            // Promote to drag after long-press threshold
-            if let Some((panel, t0)) = self.sidebar_press_start {
-                if primary_down && now - t0 >= LONG_PRESS_SECS && self.sidebar_drag.is_none() {
-                    self.sidebar_drag       = Some(panel);
-                    self.sidebar_drag_over_idx = None;
-                    self.sidebar_press_start   = None;
-                } else if !primary_down {
-                    // Released before threshold — normal click, clear timer
-                    self.sidebar_press_start = None;
-                } else {
-                    // Still within threshold — keep repainting so we hit it
-                    ctx.request_repaint();
-                }
-            }
-
-            // Update drop position while dragging
-            if self.sidebar_drag.is_some() {
-                if let Some(pos) = pointer_pos {
-                    let mut drop_idx = self.sidebar_icon_rects.len();
-                    for (i, &(_, rect)) in self.sidebar_icon_rects.iter().enumerate() {
-                        if pos.y < rect.center().y {
-                            drop_idx = i;
-                            break;
-                        }
-                    }
-                    self.sidebar_drag_over_idx = Some(drop_idx);
-                }
-                ctx.request_repaint();
-            }
+            ctx.request_repaint();
         }
 
         // Commit on release
