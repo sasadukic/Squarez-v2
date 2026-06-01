@@ -124,16 +124,8 @@ pub struct App {
     sidebar_press_start: Option<(Panel, f64)>,
     // Icon row rects recorded each frame for hit-testing (screen space)
     sidebar_icon_rects: Vec<(Panel, egui::Rect)>,
-    /// Sprite sheet for the animated logo (16 frames horizontal, 16×16 each). Loaded on first draw.
+    /// Static icon texture. Loaded once on first draw.
     logo_sprite: Option<egui::TextureHandle>,
-    /// When `Some(start_time)`, the logo plays its animation once. Cleared after last frame.
-    logo_anim_start: Option<f64>,
-    /// Number of frames in the logo sprite sheet (horizontal frames).
-    logo_frames: usize,
-    /// If Some(idx), show that frame index statically (used when opening the menu).
-    logo_anim_static_frame: Option<usize>,
-    /// Optional play range (inclusive start, exclusive end) used to play subranges of the sprite.
-    logo_anim_play_range: Option<(usize, usize)>,
 }
 
 #[allow(dead_code)]
@@ -296,10 +288,6 @@ impl App {
             sidebar_press_start: None,
             sidebar_icon_rects: Vec::new(),
             logo_sprite: None,
-            logo_anim_start: None,
-            logo_frames: 16,
-            logo_anim_static_frame: None,
-            logo_anim_play_range: None,
         }
     }
 
@@ -456,9 +444,6 @@ impl App {
             if already_open {
                 self.close_top_menu_with_animation(now);
             } else {
-                self.logo_anim_static_frame = None;
-                self.logo_anim_play_range = Some((1, 8));
-                self.logo_anim_start = Some(now);
                 let pos = Pos2::new(0.0, TOP_BAR_HEIGHT + DROPDOWN_TOP_GAP);
                 self.top_menu_open = Some((TopMenu::File, pos));
                 self.top_menu_opened_at = now;
@@ -488,12 +473,8 @@ impl App {
         self.draw_top_menu_dropdown(ctx);
     }
 
-    /// Close the top menu and play the logo closing subrange animation.
-    fn close_top_menu_with_animation(&mut self, now: f64) {
-        // Play closing frames 7..=12 (exclusive end 13)
-        self.logo_anim_play_range = Some((7, 13));
-        self.logo_anim_start = Some(now);
-        self.logo_anim_static_frame = None;
+    /// Close the top menu.
+    fn close_top_menu_with_animation(&mut self, _now: f64) {
         self.top_menu_open = None;
         self.top_menu_hover_left = None;
     }
@@ -3566,74 +3547,21 @@ impl App {
             });
     }
 
-    /// Animated logo (sprite sheet, 16 frames horizontal, 16×16 each).
-    ///
-    /// Frame 0 is shown by default. Clicking the icon OR the "SQUAREZ" text
-    /// plays frames 0..15 once at 30 FPS, then returns to frame 0.
+    /// Static icon in the top-left brand area.
     fn draw_logo(&mut self, ui: &mut egui::Ui, theme: &Theme) {
-        // Lazy-load the sprite sheet once.
+        // Lazy-load the icon texture once.
         if self.logo_sprite.is_none() {
-            // Load external PNG from desktop (preferred) falling back to bundled asset.
-            let bytes = std::fs::read("/Users/sasadukic/Desktop/logo.png").unwrap_or_else(|_| include_bytes!("../assets/logo_sprite.png").to_vec());
-            if let Ok(img) = image::load_from_memory(&bytes) {
+            let bytes = include_bytes!("../assets/icon.png");
+            if let Ok(img) = image::load_from_memory(bytes) {
                 let rgba = img.to_rgba8();
                 let (w, h) = (rgba.width() as usize, rgba.height() as usize);
                 let color_image = egui::ColorImage::from_rgba_unmultiplied([w, h], rgba.as_raw());
                 self.logo_sprite = Some(ui.ctx().load_texture(
-                    "logo_sprite",
+                    "logo_icon",
                     color_image,
-                    egui::TextureOptions::NEAREST,
+                    egui::TextureOptions::LINEAR,
                 ));
-                // compute frames assuming horizontal strip where each frame is 16px wide and 16px tall
-                self.logo_frames = (w / 16).max(1);
             }
-        }
-
-        let frames = self.logo_frames.max(1);
-        // Speed up animation by 40% relative to previous 21.0 FPS -> ~29.4 FPS
-        let fps: f64 = 21.0 * 1.4;
-        let now = ui.ctx().input(|i| i.time);
-        // Determine which frame to show. Priority:
-        // 1) If we have a static frame (used when menu opens) show it.
-        // 2) If an animation is playing, compute frame from start time and clamp to a play_range if set.
-        // 3) Otherwise show frame 0.
-        let frame_idx: usize = if let Some(s) = self.logo_anim_static_frame {
-            s.min(frames - 1)
-        } else if let Some(start) = self.logo_anim_start {
-            // compute raw frame index from elapsed time
-            let elapsed = now - start;
-            let mut idx = (elapsed * fps) as isize;
-            // If a play range is set, map idx into that subrange
-            if let Some((r0, r1)) = self.logo_anim_play_range {
-                let len = (r1 as isize).saturating_sub(r0 as isize).max(1);
-                if idx >= len as isize {
-                    // Finished the subrange. For closing animation (r0 >= 7),
-                    // snap to frame 0 so we're ready for next open. Otherwise
-                    // snap to the last frame of the range.
-                    let last = if r0 >= 7 {
-                        0
-                    } else {
-                        (r1.saturating_sub(1)).min(frames - 1)
-                    };
-                    self.logo_anim_static_frame = Some(last);
-                    self.logo_anim_play_range = None;
-                    self.logo_anim_start = None;
-                    idx = last as isize;
-                } else {
-                    idx = r0 as isize + idx;
-                }
-            } else {
-                if idx as usize >= frames {
-                    self.logo_anim_start = None;
-                    idx = 0;
-                }
-            }
-            idx.max(0).min((frames - 1) as isize) as usize
-        } else {
-            0
-        };
-        if self.logo_anim_start.is_some() {
-            ui.ctx().request_repaint();
         }
 
         ui.allocate_ui_with_layout(
@@ -3643,12 +3571,10 @@ impl App {
                 ui.spacing_mut().item_spacing = Vec2::ZERO;
                 ui.add_space(10.0);
 
-                // Icon: 20×20, painted with one sprite frame.
+                // Icon: 20×20 static.
                 let (icon_rect, _) = ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::hover());
                 if let Some(tex) = &self.logo_sprite {
-                    let u0 = frame_idx as f32 / frames as f32;
-                    let u1 = (frame_idx + 1) as f32 / frames as f32;
-                    let uv = egui::Rect::from_min_max(Pos2::new(u0, 0.0), Pos2::new(u1, 1.0));
+                    let uv = egui::Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0));
                     ui.painter().image(tex.id(), icon_rect, uv, Color32::WHITE);
                 }
 
