@@ -2260,7 +2260,17 @@ impl App {
                                     }
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.add_space(10.0);
-                                        ui.label(rich(&format!("{}fps", self.project.animations[i].fps), theme.fg_muted, FONT_SIZE_SM));
+                                        let mut fps = self.project.animations[i].fps as f32;
+                                        ui.visuals_mut().override_text_color = Some(theme.fg_muted);
+                                        if ui.add(
+                                            egui::DragValue::new(&mut fps)
+                                                .range(1.0..=60.0)
+                                                .speed(0.5)
+                                                .suffix("fps"),
+                                        ).changed() {
+                                            self.project.animations[i].fps = fps.round().clamp(1.0, 60.0) as u8;
+                                        }
+                                        ui.visuals_mut().override_text_color = None;
                                     });
                                 }
                             },
@@ -3644,6 +3654,23 @@ impl eframe::App for App {
             self.commit_float_to_layer();
         }
 
+        if !ctx.wants_keyboard_input() {
+            let total = self.project.active_anim().frames.len();
+            if total > 0 {
+                if ctx.input(|i| i.key_pressed(egui::Key::A)) {
+                    self.project.active_frame = (self.project.active_frame + total - 1) % total;
+                    self.canvas_dirty = true;
+                }
+                if ctx.input(|i| i.key_pressed(egui::Key::D)) {
+                    self.project.active_frame = (self.project.active_frame + 1) % total;
+                    self.canvas_dirty = true;
+                }
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::Space)) {
+                self.playback.is_playing = !self.playback.is_playing;
+            }
+        }
+
         let ctrl_z = ctx.input(|i| i.key_pressed(egui::Key::Z) && i.modifiers.ctrl);
         let ctrl_y = ctx.input(|i| i.key_pressed(egui::Key::Y) && i.modifiers.ctrl);
         if ctrl_z {
@@ -3658,7 +3685,6 @@ impl eframe::App for App {
 
         self.draw_top_bar(ctx);
         self.draw_right_sidebar(ctx); // full height — right edge
-        self.draw_anim_toolbar(ctx);  // full-width — must be first bottom panel
         self.draw_timeline(ctx);      // gets x=0..W-176, frames start at left edge
         self.draw_left_toolbar(ctx);  // occupies left strip above timeline only
         self.draw_tool_submenu(ctx);  // floating tool group submenu (right of toolbar)
