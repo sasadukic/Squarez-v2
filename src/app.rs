@@ -1295,28 +1295,30 @@ impl App {
                 ui.painter().rect_stroke(text_rect, 2.0, egui::Stroke::new(1.0, theme.accent), egui::StrokeKind::Inside);
 
                 let buf = &mut self.renaming_tab.as_mut().unwrap().1;
-                let text_resp = ui.put(
-                    text_rect,
-                    egui::TextEdit::singleline(buf)
-                        .frame(false)
-                        .margin(egui::Margin::symmetric(4, ((text_h - FONT_SIZE_SM) / 2.0) as i8))
-                        .text_color(theme.fg)
-                        .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
-                        .desired_width(text_w - 8.0)
-                );
-                if !self.renaming_tab_focused {
-                    text_resp.request_focus();
-                    self.renaming_tab_focused = true;
-                }
-                if text_resp.lost_focus() {
-                    if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                        rename_cancelled = true;
-                    } else {
+                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(text_rect), |ui| {
+                    ui.set_clip_rect(text_rect);
+                    let text_resp = ui.add(
+                        egui::TextEdit::singleline(buf)
+                            .frame(false)
+                            .margin(egui::Margin::symmetric(4, ((text_h - FONT_SIZE_SM) / 2.0) as i8))
+                            .text_color(theme.fg)
+                            .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
+                            .desired_width(text_w - 8.0)
+                    );
+                    if !self.renaming_tab_focused {
+                        text_resp.request_focus();
+                        self.renaming_tab_focused = true;
+                    }
+                    if text_resp.lost_focus() {
+                        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                            rename_cancelled = true;
+                        } else {
+                            rename_finished = Some((i, buf.clone()));
+                        }
+                    } else if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                         rename_finished = Some((i, buf.clone()));
                     }
-                } else if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    rename_finished = Some((i, buf.clone()));
-                }
+                });
             } else {
                 // Tab label text
                 let text_color = if selected { theme.fg } else { theme.fg_desc };
