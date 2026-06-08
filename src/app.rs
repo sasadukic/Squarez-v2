@@ -1050,7 +1050,14 @@ impl App {
 
         // ── Compute tab sizes before entering the Area ────────────────────
         let all_narrow = self.sidebar_order.iter().all(|&p| {
-            !self.ui_state.is_visible(p) || self.ui_state.is_collapsed(p)
+            let visible_in_sidebar = if p == Panel::Tiles && !self.project.is_tiled() {
+                false
+            } else if p == Panel::Preview && self.preview_popped_out {
+                false
+            } else {
+                self.ui_state.is_visible(p)
+            };
+            !visible_in_sidebar || self.ui_state.is_collapsed(p)
         });
         let sidebar_w     = if all_narrow { 38.0 } else { 176.0 };
         let max_tab_area_w = (screen_w - tabs_x - sidebar_w).max(0.0);
@@ -2049,7 +2056,14 @@ impl App {
 
         // Narrow mode: every visible panel is collapsed (only icon rows visible)
         let all_narrow = sidebar_order.iter().all(|&p| {
-            !self.ui_state.is_visible(p) || self.ui_state.is_collapsed(p)
+            let visible_in_sidebar = if p == Panel::Tiles && !self.project.is_tiled() {
+                false
+            } else if p == Panel::Preview && self.preview_popped_out {
+                false
+            } else {
+                self.ui_state.is_visible(p)
+            };
+            !visible_in_sidebar || self.ui_state.is_collapsed(p)
         });
         let sidebar_w = if all_narrow { 38.0 } else { 176.0 };
 
