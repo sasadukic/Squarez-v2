@@ -15,13 +15,49 @@ use crate::top_bar::{
     menu_zone_width, BRAND_WIDTH, DROPDOWN_CORNER_RADIUS, DROPDOWN_ROW_HEIGHT, DROPDOWN_TOP_GAP,
     DROPDOWN_WIDTH, MENU_FONT_SIZE, TOP_BAR_HEIGHT,
 };
-use crate::tools::{apply_eraser, apply_eyedropper, apply_ellipse, apply_fill, apply_line, apply_pencil, apply_rect, bresenham_positions, ActiveTool, SelectState, SelectInteraction, Handle, FloatBuffer, DragAnchor, sample_transformed};
+use crate::tools::{apply_eraser, apply_eyedropper, apply_ellipse, apply_fill, fill_enclosed_region, apply_line, apply_pencil, apply_rect, bresenham_positions, iso_box_preview, iso_box_pixels, iso_cylinder_preview, iso_cylinder_pixels, ActiveTool, SelectState, SelectInteraction, Handle, FloatBuffer, DragAnchor, sample_transformed};
 use crate::ui_metrics::RIGHT_SECTION_STACK_GAP;
 use crate::ui_state::{Panel, UiState};
+use crate::ui_widgets::{show_context_menu, ContextMenuState};
+use crate::ramp_lab::RampLab;
+
+/// Per-tab state parked in the background while a different tab is active.
+struct InactiveTab {
+    project: Project,
+    current_path: Option<std::path::PathBuf>,
+    undo_stack: UndoStack,
+    thumbnails: Vec<Vec<FrameThumbnail>>,
+    modified: bool,
+}
+
+#[derive(Debug, Clone)]
+struct IsoBoxHeightPhase {
+    x0: u32,
+    y0: u32,
+    x1: u32,
+    y1: u32,
+}
+
+#[derive(Debug, Clone)]
+struct IsoCylinderPhase {
+    x0: u32,
+    y0: u32,
+    x1: u32,
+    y1: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum MirrorStream {
+    Original,
+    X,
+    Y,
+    XY,
+}
 
 pub struct App {
     pub project: Project,
     pub theme: Theme,
+    pub default_theme: Theme,
     pub canvas: CanvasState,
     pub color_state: ColorState,
     pub active_tool: ActiveTool,
@@ -30,6 +66,12 @@ pub struct App {
     pub thumbnails: Vec<Vec<FrameThumbnail>>,
     pub current_path: Option<std::path::PathBuf>,
     pub ui_state: UiState,
+    // Multi-file tabs ─────────────────────────────────────────────────────────
+    // Logical tab list = other_tabs[..active_tab_idx] + [active] + other_tabs[active_tab_idx..]
+    other_tabs: Vec<InactiveTab>,
+    active_tab_idx: usize,
+    active_modified: bool,
+    close_tab_pending: Option<usize>, // tab index awaiting save-confirm dialog
     drag_start: Option<(u32, u32)>,
     stroke_edits: Vec<crate::tools::PixelEdit>,
     last_pencil_pos: Option<(u32, u32)>,
@@ -37,12 +79,35 @@ pub struct App {
     stroke_pixel_sequence: Vec<(u32, u32)>,
     canvas_dirty: bool,
     show_new_dialog: bool,
+    show_shortcuts_window: bool,
+    replace_project_pending: bool, // replace project in-place instead of new tab
     new_width: u32,
     new_height: u32,
+    new_width_str: String,
+    new_height_str: String,
     new_name: String,
+    new_name_focused: bool,
+    new_width_focused: bool,
+    new_height_focused: bool,
+    new_tiles_w_focused: bool,
+    new_tiles_h_focused: bool,
+    new_tiles_w: u32,
+    new_tiles_h: u32,
+    new_tiles_w_str: String,
+    new_tiles_h_str: String,
+    new_aspect_locked: bool,
+    new_tiles_aspect_locked: bool,
+    // Compact clip-only display for multi-tile (hides non-clip tiles, rearranges clip tiles)
+    tile_display_active: bool,
+    tile_display_cols: u32,
+    tile_display_rows: u32,
+    show_start_end_markers: bool,
     frame_menu: Option<(usize, Pos2, f64)>,  // (frame_idx, screen_pos, opened_at_time)
+    anim_tile_menu: Option<(usize, Pos2, f64)>,  // (anim_idx, screen_pos, opened_at_time) for tile range
     layer_ctx_menu: Option<(usize, Pos2, f64)>,  // (layer_idx, screen_pos, opened_at_time)
     top_menu_open: Option<(TopMenu, Pos2)>,
+    export_menu_open: Option<Pos2>,
+    export_menu_frame: u64,
     toolbar_anim_y: f32,
     toolbar_anim_vel: f32,
     // Currently displayed tool for each grouped slot (persisted)
@@ -57,8 +122,23 @@ pub struct App {
     shape_slot_rect: Option<egui::Rect>,
     select_slot_rect: Option<egui::Rect>,
     alt_was_down: bool,
+    iso_box_dragging: bool,
+    iso_cylinder_dragging: bool,
+    iso_box_phase: Option<IsoBoxHeightPhase>,
+    iso_cylinder_phase: Option<IsoCylinderPhase>,
+    mirror_x: bool,
+    mirror_y: bool,
+    grid_size: u32,
+    grid_visible: bool,
+    pen_size: u32,
+    pen_size_scroll_accum: f32,
+    canvas_ctx_menu: Option<ContextMenuState>,
     top_menu_hover_left: Option<f64>,
     top_menu_opened_at: f64,
+    // ── Mirror symmetry sequences (one per stream for L-shape removal) ───────
+    mirror_x_sequence: Vec<(u32, u32)>,
+    mirror_y_sequence: Vec<(u32, u32)>,
+    mirror_xy_sequence: Vec<(u32, u32)>,
     // Spring-animated sliding highlight in the top menu bar
     menu_anim_x: f32,
     menu_anim_vel: f32,
@@ -87,6 +167,8 @@ pub struct App {
     renaming_layer: Option<(usize, String)>,
     // Inline rename state for animations: (anim_index, current_edit_string)
     renaming_animation: Option<(usize, String)>,
+    // Inline rename state for tabs: (tab_index, current_edit_string)
+    renaming_tab: Option<(usize, String)>,
     // Palette drag-and-drop reorder
     palette_drag_idx: Option<usize>,
     // Spring-animated selection highlight for layers panel
@@ -100,17 +182,24 @@ pub struct App {
     layer_drag_over: Option<usize>,
     // Manual double-click detection for zoom tool
     last_zoom_click_time: f64,
+    last_okl_tab_click_time: f64,
     // Double-click on zoom tool button → fit canvas on next canvas render
     last_zoom_tool_btn_click: f64,
     pending_zoom_fit: bool,
     // Manual double-click detection for layer rename: (layer_idx, click_time)
     last_layer_click: Option<(usize, f64)>,
+    // Manual double-click detection for tab rename: (tab_idx, click_time)
+    last_tab_click: Option<(usize, f64)>,
     // Real-time preview pixels for shape tools (overlaid during drag, cleared on commit)
     shape_preview: Vec<(u32, u32, Rgba)>,
     // Selection tool state: current rect (x0, y0, x1, y1) in canvas pixel coords
     select_state: SelectState,
     // Accumulated scroll delta for timeline frame navigation (slows down scroll speed)
     timeline_scroll_accum: f32,
+    // Drag-to-reorder state for animation frames in the timeline
+    frame_drag: Option<usize>,
+    // Floating tab resize options context menu state: (tab_index, screen_pos, opened_at)
+    tab_resize_menu: Option<(usize, egui::Pos2, f64)>,
     // View > Show sub-menu open state
     view_show_open: bool,
     // Screen-space right-top of the "Show" row, used to position side submenu
@@ -124,12 +213,22 @@ pub struct App {
     sidebar_press_start: Option<(Panel, f64)>,
     // Icon row rects recorded each frame for hit-testing (screen space)
     sidebar_icon_rects: Vec<(Panel, egui::Rect)>,
-    /// Static icon texture. Loaded once on first draw.
-    logo_sprite: Option<egui::TextureHandle>,
-    /// Track the timeline visible state from the previous frame to trigger auto zoom-to-fit
-    last_timeline_visible: bool,
-    /// Accordion-style layout animation transition progress [0..1] when playback is active
-    play_anim_t: f32,
+    /// Animated logo frames. Loaded once on first draw.
+    logo_frames: Vec<(egui::TextureHandle, f32)>, // (texture, duration_seconds)
+    logo_frame_idx: usize,
+    logo_last_frame_time: f64,
+    /// Ramp Lab floating window state.
+    pub ramp_lab: RampLab,
+    /// Lospec Palette Browser window state.
+    pub palette_browser: crate::palette_browser::PaletteBrowser,
+    /// Tile Browser window state (for Wang/Blob tilesets).
+    pub tile_browser: crate::tile_browser::TileBrowser,
+    /// Wang/Blob tile mode state (expanded canvas with edge-matching).
+    pub wang_blob: crate::wang_blob::WangBlobState,
+    /// Onion skinning: show previous frame with red tint and next with blue tint.
+    pub onion_skinning: bool,
+    /// Cached left-edge x of the right sidebar content area (set each frame in draw_right_sidebar).
+    sidebar_left_x: f32,
 }
 
 #[allow(dead_code)]
@@ -150,14 +249,6 @@ impl TopMenu {
             Self::Layer => "Layer",
             Self::Animation => "Animation",
             Self::Windows => "Windows",
-        }
-    }
-
-    /// Pixel width of this menu's hit zone in the top bar.
-    fn zone_width(self) -> f32 {
-        match self {
-            Self::File => 38.0, // icon button, no text
-            _ => menu_zone_width(self.label()),
         }
     }
 }
@@ -213,6 +304,7 @@ impl App {
         Self {
             project,
             theme: Theme::default(),
+            default_theme: Theme::default(),
             canvas: CanvasState::default(),
             color_state,
             active_tool: ActiveTool::Pencil,
@@ -221,6 +313,10 @@ impl App {
             thumbnails,
             current_path: None,
             ui_state: layout.as_ref().map(|l| l.ui_state.clone()).unwrap_or_default(),
+            other_tabs: Vec::new(),
+            active_tab_idx: 0,
+            active_modified: false,
+            close_tab_pending: None,
             drag_start: None,
             stroke_edits: Vec::new(),
             last_pencil_pos: None,
@@ -228,12 +324,34 @@ impl App {
             stroke_pixel_sequence: Vec::new(),
             canvas_dirty: true,
             show_new_dialog: false,
+            show_shortcuts_window: false,
+            replace_project_pending: false,
             new_width: 16,
             new_height: 16,
+            new_width_str: "16".to_string(),
+            new_height_str: "16".to_string(),
             new_name: "Untitled".to_string(),
+            new_name_focused: false,
+            new_width_focused: false,
+            new_height_focused: false,
+            new_tiles_w_focused: false,
+            new_tiles_h_focused: false,
+            new_tiles_w: 1,
+            new_tiles_h: 1,
+            new_tiles_w_str: "1".to_string(),
+            new_tiles_h_str: "1".to_string(),
+            new_aspect_locked: false,
+            new_tiles_aspect_locked: false,
+            tile_display_active: false,
+            tile_display_cols: 0,
+            tile_display_rows: 0,
+            show_start_end_markers: true,
             frame_menu: None,
+            anim_tile_menu: None,
             layer_ctx_menu: None,
             top_menu_open: None,
+            export_menu_open: None,
+            export_menu_frame: 0,
             toolbar_anim_y: 0.0,
             toolbar_anim_vel: 0.0,
             pen_group_current: ActiveTool::Pencil,
@@ -246,6 +364,20 @@ impl App {
             shape_slot_rect: None,
             select_slot_rect: None,
             alt_was_down: false,
+            iso_box_dragging: false,
+            iso_cylinder_dragging: false,
+            iso_box_phase: None,
+            iso_cylinder_phase: None,
+            mirror_x: false,
+            mirror_y: false,
+            grid_size: 8,
+            grid_visible: false,
+            pen_size: 1,
+            pen_size_scroll_accum: 0.0,
+            canvas_ctx_menu: None,
+            mirror_x_sequence: Vec::new(),
+            mirror_y_sequence: Vec::new(),
+            mirror_xy_sequence: Vec::new(),
             top_menu_hover_left: None,
             top_menu_opened_at: 0.0,
             menu_anim_x: 0.0,
@@ -270,6 +402,7 @@ impl App {
             dropdown_full_h: 0.0,
             renaming_layer: None,
             renaming_animation: None,
+            renaming_tab: None,
             palette_drag_idx: None,
             layer_sel_y: 0.0,
             layer_sel_vel: 0.0,
@@ -278,22 +411,40 @@ impl App {
             layer_drag: None,
             layer_drag_over: None,
             last_zoom_click_time: -1.0,
+            last_okl_tab_click_time: -1.0,
             last_zoom_tool_btn_click: -1.0,
             pending_zoom_fit: false,
             last_layer_click: None,
+            last_tab_click: None,
             shape_preview: Vec::new(),
             select_state: SelectState::default(),
             timeline_scroll_accum: 0.0,
+            frame_drag: None,
+            tab_resize_menu: None,
             view_show_open: false,
             view_show_pos: None,
-            sidebar_order: layout.map(|l| l.sidebar_order).unwrap_or_else(|| vec![Panel::Palette, Panel::Color, Panel::Layers, Panel::Animations, Panel::Preview]),
+            sidebar_order: {
+                let mut order = layout.map(|l| l.sidebar_order).unwrap_or_else(|| {
+                    vec![Panel::Palette, Panel::Color, Panel::Layers, Panel::Animations, Panel::Preview, Panel::Tiles]
+                });
+                if !order.contains(&Panel::Tiles) {
+                    order.push(Panel::Tiles);
+                }
+                order
+            },
             sidebar_drag: None,
             sidebar_drag_over_idx: None,
             sidebar_press_start: None,
             sidebar_icon_rects: Vec::new(),
-            logo_sprite: None,
-            last_timeline_visible: true,
-            play_anim_t: 0.0,
+            logo_frames: Vec::new(),
+            logo_frame_idx: 0,
+            logo_last_frame_time: 0.0,
+            ramp_lab: RampLab::default(),
+            palette_browser: crate::palette_browser::PaletteBrowser::default(),
+            tile_browser: crate::tile_browser::TileBrowser::default(),
+            wang_blob: crate::wang_blob::WangBlobState::default(),
+            onion_skinning: false,
+            sidebar_left_x: 0.0,
         }
     }
 
@@ -305,6 +456,303 @@ impl App {
         )
     }
 
+    fn mark_all_thumbnails_dirty(&mut self) {
+        let ai = self.project.active_animation;
+        if ai < self.thumbnails.len() {
+            for thumb in &mut self.thumbnails[ai] {
+                thumb.dirty = true;
+            }
+        }
+    }
+
+    fn stitch_temp_layer(&self, ai: usize, li: usize) -> Layer {
+        let cw = self.project.canvas_width;
+        let ch = self.project.canvas_height;
+        let mut temp = Layer::new("temp".to_string(), cw, ch);
+        if self.project.is_tiled() {
+            let tile_w = self.project.tile_w;
+            let tile_h = self.project.tile_h;
+            let tiles_w = self.project.tiles_w;
+            let tiles_h = self.project.tiles_h;
+            let anim = &self.project.animations[ai];
+            for ty in 0..tiles_h {
+                for tx in 0..tiles_w {
+                    let fi = (ty * tiles_w + tx) as usize;
+                    if fi < anim.frames.len() {
+                        let frame_layer = &anim.frames[fi].layers[li];
+                        for py in 0..tile_h {
+                            for px in 0..tile_w {
+                                let c = frame_layer.get_pixel(px, py);
+                                temp.set_pixel(tx * tile_w + px, ty * tile_h + py, c);
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            if let Some(frame) = self.project.animations[ai].frames.get(self.project.active_frame) {
+                if li < frame.layers.len() {
+                    temp.pixels = frame.layers[li].pixels.clone();
+                }
+            }
+        }
+        temp
+    }
+
+    /// Return the original pixel plus any mirrored positions based on the current
+    /// symmetry settings.  Mirroring is across the canvas centre.
+    fn mirror_positions(&self, x: u32, y: u32, w: u32, h: u32) -> Vec<(u32, u32)> {
+        self.mirror_positions_with_streams(x, y, w, h).into_iter().map(|(p, _)| p).collect()
+    }
+
+    fn mirror_positions_with_streams(&self, x: u32, y: u32, w: u32, h: u32) -> Vec<((u32, u32), MirrorStream)> {
+        let mut r = Vec::with_capacity(4);
+        r.push(((x, y), MirrorStream::Original));
+        if self.mirror_x && w > 0 {
+            let mx = (w - 1).saturating_sub(x);
+            if mx != x { r.push(((mx, y), MirrorStream::X)); }
+        }
+        if self.mirror_y && h > 0 {
+            let my = (h - 1).saturating_sub(y);
+            if my != y { r.push(((x, my), MirrorStream::Y)); }
+        }
+        if self.mirror_x && self.mirror_y && w > 0 && h > 0 {
+            let mx = (w - 1).saturating_sub(x);
+            let my = (h - 1).saturating_sub(y);
+            if mx != x && my != y { r.push(((mx, my), MirrorStream::XY)); }
+        }
+        r
+    }
+
+    /// Return all pixel positions in a square brush centred on (cx, cy) with the
+    /// current pen_size.  Clamped to canvas bounds; deduplicated.
+    fn pen_square(&self, cx: u32, cy: u32, w: u32, h: u32) -> Vec<(u32, u32)> {
+        let half = (self.pen_size / 2) as i32;
+        let offset = if self.pen_size % 2 == 0 { 0 } else { half };
+        let mut pts = Vec::new();
+        for dy in 0..self.pen_size as i32 {
+            for dx in 0..self.pen_size as i32 {
+                let x = (cx as i32 + dx - offset).clamp(0, w as i32 - 1) as u32;
+                let y = (cy as i32 + dy - offset).clamp(0, h as i32 - 1) as u32;
+                pts.push((x, y));
+            }
+        }
+        pts.sort_unstable();
+        pts.dedup();
+        pts
+    }
+
+    // ── Multi-file tab helpers ────────────────────────────────────────────────
+
+    fn tab_count(&self) -> usize {
+        self.other_tabs.len() + 1
+    }
+
+    /// Display name for tab at logical index `i`.
+    fn tab_display_name(&self, i: usize) -> String {
+        let (path, name, modified) = if i == self.active_tab_idx {
+            (self.current_path.as_ref(), self.project.name.as_str(), self.active_modified)
+        } else {
+            let slot = self.other_tabs_slot(i);
+            let t = &self.other_tabs[slot];
+            (t.current_path.as_ref(), t.project.name.as_str(), t.modified)
+        };
+        let base = path
+            .and_then(|p| p.file_stem())
+            .and_then(|s| s.to_str())
+            .unwrap_or(name)
+            .to_string();
+        if modified { format!("*{base}") } else { base }
+    }
+
+    /// Convert logical index → other_tabs Vec index (panics on active tab).
+    fn other_tabs_slot(&self, logical_i: usize) -> usize {
+        assert!(logical_i != self.active_tab_idx);
+        if logical_i < self.active_tab_idx { logical_i } else { logical_i - 1 }
+    }
+
+    fn tab_is_modified(&self, i: usize) -> bool {
+        if i == self.active_tab_idx { self.active_modified }
+        else { self.other_tabs[self.other_tabs_slot(i)].modified }
+    }
+
+    /// Rebuild thumbnails Vec from project (all dirty).
+    fn thumbnails_for(project: &Project) -> Vec<Vec<FrameThumbnail>> {
+        project.animations.iter()
+            .map(|a| a.frames.iter().map(|_| FrameThumbnail::default()).collect())
+            .collect()
+    }
+
+    /// Clear all transient per-canvas drawing state.
+    fn clear_transient_state(&mut self) {
+        self.drag_start = None;
+        self.stroke_edits.clear();
+        self.last_pencil_pos = None;
+        self.stroke_painted.clear();
+        self.stroke_pixel_sequence.clear();
+        self.mirror_x_sequence.clear();
+        self.mirror_y_sequence.clear();
+        self.mirror_xy_sequence.clear();
+        self.shape_preview.clear();
+        self.select_state = crate::tools::SelectState::default();
+        self.frame_menu = None;
+        self.layer_ctx_menu = None;
+        self.anim_tile_menu = None;
+        self.tab_resize_menu = None;
+    }
+
+    /// Returns true when any floating modal is currently on screen.
+    /// Used to enforce one-modal-at-a-time: no second dialog can open while one is already open.
+    fn any_modal_open(&self) -> bool {
+        self.show_new_dialog
+            || self.close_tab_pending.is_some()
+            || self.ramp_lab.open
+            || self.tab_resize_menu.is_some()
+    }
+
+    fn open_new_dialog(&mut self, replace_pending: bool) {
+        if self.any_modal_open() { return; }
+        self.replace_project_pending = replace_pending;
+        self.show_new_dialog = true;
+        self.new_name_focused = false;
+        self.new_width_focused = false;
+        self.new_height_focused = false;
+        self.new_tiles_w_focused = false;
+        self.new_tiles_h_focused = false;
+        self.new_tiles_w = 1;
+        self.new_tiles_h = 1;
+        self.new_aspect_locked = false;
+        self.new_tiles_aspect_locked = false;
+        self.new_width_str = self.new_width.to_string();
+        self.new_height_str = self.new_height.to_string();
+        self.new_tiles_w_str = self.new_tiles_w.to_string();
+        self.new_tiles_h_str = self.new_tiles_h.to_string();
+    }
+
+    /// Open `project` / `path` in a new tab to the right of the current active tab.
+    fn open_in_new_tab(&mut self, project: Project, path: Option<std::path::PathBuf>) {
+        // Pack the currently active tab into other_tabs at active_tab_idx.
+        let snap = InactiveTab {
+            project: std::mem::replace(&mut self.project, project),
+            current_path: std::mem::replace(&mut self.current_path, path),
+            undo_stack: std::mem::replace(&mut self.undo_stack, UndoStack::new()),
+            thumbnails: std::mem::replace(&mut self.thumbnails, Vec::new()),
+            modified: self.active_modified,
+        };
+        self.other_tabs.insert(self.active_tab_idx, snap);
+        // New tab position is one to the right of the old active tab.
+        self.active_tab_idx += 1;
+        // Rebuild thumbnails for the new project.
+        self.thumbnails = Self::thumbnails_for(&self.project);
+        self.active_modified = false;
+        self.clear_transient_state();
+        self.canvas_dirty = true;
+        self.pending_zoom_fit = true;
+    }
+
+    /// Switch to the tab at logical index `i`.
+    fn switch_to_tab(&mut self, i: usize) {
+        if i == self.active_tab_idx { return; }
+        // Pack active into other_tabs at its current position.
+        let snap = InactiveTab {
+            project: self.project.clone(),
+            current_path: self.current_path.clone(),
+            undo_stack: std::mem::replace(&mut self.undo_stack, UndoStack::new()),
+            thumbnails: std::mem::replace(&mut self.thumbnails, Vec::new()),
+            modified: self.active_modified,
+        };
+        self.other_tabs.insert(self.active_tab_idx, snap);
+        // After insert, target is at other_tabs[i] (see plan for proof).
+        let loaded = self.other_tabs.remove(i);
+        self.project = loaded.project;
+        self.current_path = loaded.current_path;
+        self.undo_stack = loaded.undo_stack;
+        self.thumbnails = loaded.thumbnails;
+        self.active_modified = loaded.modified;
+        self.active_tab_idx = i;
+        self.clear_transient_state();
+        self.canvas_dirty = true;
+        self.pending_zoom_fit = true;
+    }
+
+    /// Close the tab at logical index `i` without any save check.
+    fn close_tab(&mut self, i: usize) {
+        if i == self.active_tab_idx {
+            // Closing the active tab.
+            if self.tab_count() == 1 {
+                // Last tab — close and show new project dialog.
+                self.project = Project::new(16, 16, "Untitled".to_string());
+                self.current_path = None;
+                self.undo_stack = UndoStack::new();
+                self.thumbnails = Self::thumbnails_for(&self.project);
+                self.active_modified = false;
+                self.active_tab_idx = 0;
+                
+                // Collapse the right sidebar panels
+                self.ui_state.collapse_color = true;
+                self.ui_state.collapse_palette = true;
+                self.ui_state.collapse_preview = true;
+                self.ui_state.collapse_layers = true;
+                self.ui_state.collapse_animations = true;
+                self.ui_state.collapse_tiles = true;
+
+                self.open_new_dialog(true);
+            } else {
+                // Pick adjacent tab (prefer left, else right).
+                let new_logical = if i > 0 { i - 1 } else { 1 };
+                let slot = self.other_tabs_slot(new_logical);
+                let loaded = self.other_tabs.remove(slot);
+                self.project = loaded.project;
+                self.current_path = loaded.current_path;
+                self.undo_stack = loaded.undo_stack;
+                self.thumbnails = loaded.thumbnails;
+                self.active_modified = loaded.modified;
+                // Recalculate active_tab_idx: we removed the new_logical tab from other_tabs.
+                // If new_logical < i (left): active is now at i-1 (we removed from left).
+                // If new_logical > i (right): active stays at i.
+                self.active_tab_idx = if new_logical < i { i - 1 } else { i };
+            }
+        } else {
+            // Closing an inactive tab — just remove it.
+            let slot = self.other_tabs_slot(i);
+            self.other_tabs.remove(slot);
+            // If we removed a tab to the left of active, active index shifts left.
+            if i < self.active_tab_idx {
+                self.active_tab_idx -= 1;
+            }
+        }
+        self.clear_transient_state();
+        self.canvas_dirty = true;
+        self.pending_zoom_fit = true;
+    }
+
+    /// Save the active tab. Shows rfd Save As picker if no path. Returns true if saved.
+    fn save_active_tab(&mut self) -> bool {
+        if self.current_path.is_none() {
+            match rfd_save_as() {
+                Some(p) => self.current_path = Some(p),
+                None => return false,
+            }
+        }
+        if let Some(path) = self.current_path.clone() {
+            if save_sqr(&self.project, &path).is_ok() {
+                self.active_modified = false;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Close with check: show save dialog if modified, else close immediately.
+    fn close_tab_with_check(&mut self, i: usize) {
+        if self.any_modal_open() { return; }
+        if self.tab_is_modified(i) {
+            self.close_tab_pending = Some(i);
+        } else {
+            self.close_tab(i);
+        }
+    }
+
     /// Creates a new animation whose first frame has the same layer structure
     /// (names, visibility, lock state) as the current animation's active frame,
     /// but with blank pixel data. New animations always inherit the layer count
@@ -312,14 +760,23 @@ impl App {
     fn new_animation_from_layers(&self, name: String) -> Animation {
         let w = self.project.canvas_width;
         let h = self.project.canvas_height;
+        let frame_count = if self.project.is_tiled() {
+            self.project.tiles_w * self.project.tiles_h
+        } else {
+            1
+        };
+        let mut frames = Vec::with_capacity(frame_count as usize);
         let layers: Vec<Layer> = self.project.active_frame_ref().layers.iter().map(|l| {
             let mut new = Layer::new_with_id(l.name.clone(), w, h, l.id);
             new.visible = l.visible;
             new.locked  = l.locked;
             new
         }).collect();
-        let frame = ProjectFrame { duration_ms: 0, layers, dirty: true };
-        Animation { name, fps: 12, frames: vec![frame], tile_start: 0, tile_end: 0, tile_visible: true }
+        for _ in 0..frame_count {
+            frames.push(ProjectFrame { duration_ms: 0, layers: layers.clone(), dirty: true });
+        }
+        let tile_end = if frame_count > 0 { frame_count as usize - 1 } else { 0 };
+        Animation { name, fps: 12, frames, tile_start: 0, tile_end, tile_visible: true }
     }
 
     fn active_tool_index(&self) -> usize {
@@ -376,30 +833,173 @@ impl App {
     }
 
     fn rebuild_canvas_texture(&mut self, ctx: &egui::Context) {
-        let mut pixels = self.composite_active_frame();
+        let cw = self.project.canvas_width;
+        let ch = self.project.canvas_height;
+        let (out_w, out_h) = if self.tile_display_active && self.project.is_tiled() {
+            (self.tile_display_cols * self.project.tile_w, self.tile_display_rows * self.project.tile_h)
+        } else {
+            (cw, ch)
+        };
+        let mut pixels: Vec<u8>;
+
+        if self.project.is_tiled() {
+            let tile_w = self.project.tile_w;
+            let tile_h = self.project.tile_h;
+            let tiles_w = self.project.tiles_w;
+            let tiles_h = self.project.tiles_h;
+            let ai = self.project.active_animation;
+            let anim = &self.project.animations[ai];
+            let show_only_clip = self.tile_display_active && !anim.tile_visible;
+            pixels = vec![0u8; (out_w * out_h * 4) as usize];
+            for ty in 0..tiles_h {
+                for tx in 0..tiles_w {
+                    let fi = (ty * tiles_w + tx) as usize;
+                    if fi >= anim.frames.len() { continue; }
+                    if show_only_clip && (fi < anim.tile_start || fi > anim.tile_end) { continue; }
+                    let frame_pixels = crate::layers::composite_frame_tile(&anim.frames[fi], cw, tile_w, tile_h);
+                    // Copy tile region from frame composite into output
+                    let (dst_tx, dst_ty) = if self.tile_display_active {
+                        let clip_idx = (fi - anim.tile_start) as u32;
+                        let drow = self.tile_display_rows;
+                        // Distribute tiles evenly across rows
+                        let base = (anim.tile_end - anim.tile_start + 1) as u32 / drow;
+                        let extra = (anim.tile_end - anim.tile_start + 1) as u32 % drow;
+                        let row_tiles = |r: u32| if r < extra { base + 1 } else { base };
+                        let mut r = 0u32;
+                        let mut remaining = clip_idx;
+                        while r < drow {
+                            let cnt = row_tiles(r);
+                            if remaining < cnt { break; }
+                            remaining -= cnt;
+                            r += 1;
+                        }
+                        (remaining, r)
+                    } else {
+                        (tx, ty)
+                    };
+                    for py in 0..tile_h {
+                        for px in 0..tile_w {
+                            let src_idx = ((py * tile_w + px) * 4) as usize;
+                            let dst_x = dst_tx * tile_w + px;
+                            let dst_y = dst_ty * tile_h + py;
+                            if dst_x >= out_w || dst_y >= out_h { continue; }
+                            let dst_idx = ((dst_y * out_w + dst_x) * 4) as usize;
+                            pixels[dst_idx]     = frame_pixels[src_idx];
+                            pixels[dst_idx + 1] = frame_pixels[src_idx + 1];
+                            pixels[dst_idx + 2] = frame_pixels[src_idx + 2];
+                            pixels[dst_idx + 3] = frame_pixels[src_idx + 3];
+                        }
+                    }
+                }
+            }
+        } else {
+            pixels = self.composite_active_frame();
+        }
+
+        // Upload thumbnail for active frame from clean composite (before in-flight overlays)
+        {
+            let ai = self.project.active_animation;
+            let fi = self.project.active_frame;
+            if ai < self.thumbnails.len() && fi < self.thumbnails[ai].len() {
+                let (thumb_pixels, thumb_w, thumb_h) = if self.project.is_tiled() {
+                    let tile_w = self.project.tile_w;
+                    let tile_h = self.project.tile_h;
+                    (crate::layers::composite_frame_tile(
+                        &self.project.animations[ai].frames[fi],
+                        cw, tile_w, tile_h,
+                    ), tile_w, tile_h)
+                } else {
+                    (composite_frame(
+                        &self.project.animations[ai].frames[fi],
+                        cw, ch,
+                    ), cw, ch)
+                };
+                let img = egui::ColorImage::from_rgba_unmultiplied([thumb_w as usize, thumb_h as usize], &thumb_pixels);
+                let handle = ctx.load_texture(
+                    format!("thumb_{}_{}", ai, fi),
+                    img,
+                    egui::TextureOptions::NEAREST,
+                );
+                self.thumbnails[ai][fi].handle = Some(handle);
+                self.thumbnails[ai][fi].dirty = false;
+            }
+        }
+
+        // ── Onion skinning: overlay previous/next frame with tint ──────────
+        if !self.tile_display_active && self.onion_skinning && !self.project.is_tiled() {
+            let ai = self.project.active_animation;
+            let fi = self.project.active_frame;
+            let frame_count = self.project.animations[ai].frames.len();
+            if frame_count > 1 {
+                let prev_fi = if fi == 0 { frame_count - 1 } else { fi - 1 };
+                let next_fi = (fi + 1) % frame_count;
+                let px_count = (cw * ch) as usize;
+
+                // Previous frame — red tint (keep R, suppress G/B)
+                let prev_pixels = composite_frame(&self.project.animations[ai].frames[prev_fi], cw, ch);
+                for i in 0..px_count {
+                    let idx = i * 4;
+                    let sa = prev_pixels[idx + 3] as f32 / 255.0 * 0.25;
+                    if sa == 0.0 { continue; }
+                    let r = prev_pixels[idx] as f32 / 255.0;
+                    let g = prev_pixels[idx + 1] as f32 / 255.0;
+                    let b = prev_pixels[idx + 2] as f32 / 255.0;
+                    let da = pixels[idx + 3] as f32 / 255.0;
+                    let out_a = sa + da * (1.0 - sa);
+                    if out_a > 0.0 {
+                        pixels[idx]     = ((r * sa + pixels[idx] as f32 / 255.0 * da * (1.0 - sa)) / out_a * 255.0).round() as u8;
+                        pixels[idx + 1] = ((g * 0.15 * sa + pixels[idx + 1] as f32 / 255.0 * da * (1.0 - sa)) / out_a * 255.0).round() as u8;
+                        pixels[idx + 2] = ((b * 0.15 * sa + pixels[idx + 2] as f32 / 255.0 * da * (1.0 - sa)) / out_a * 255.0).round() as u8;
+                        pixels[idx + 3] = (out_a * 255.0).round() as u8;
+                    }
+                }
+
+                // Next frame — blue tint (keep B, suppress R/G)
+                let next_pixels = composite_frame(&self.project.animations[ai].frames[next_fi], cw, ch);
+                for i in 0..px_count {
+                    let idx = i * 4;
+                    let sa = next_pixels[idx + 3] as f32 / 255.0 * 0.25;
+                    if sa == 0.0 { continue; }
+                    let r = next_pixels[idx] as f32 / 255.0;
+                    let g = next_pixels[idx + 1] as f32 / 255.0;
+                    let b = next_pixels[idx + 2] as f32 / 255.0;
+                    let da = pixels[idx + 3] as f32 / 255.0;
+                    let out_a = sa + da * (1.0 - sa);
+                    if out_a > 0.0 {
+                        pixels[idx]     = ((r * 0.15 * sa + pixels[idx] as f32 / 255.0 * da * (1.0 - sa)) / out_a * 255.0).round() as u8;
+                        pixels[idx + 1] = ((g * 0.15 * sa + pixels[idx + 1] as f32 / 255.0 * da * (1.0 - sa)) / out_a * 255.0).round() as u8;
+                        pixels[idx + 2] = ((b * sa + pixels[idx + 2] as f32 / 255.0 * da * (1.0 - sa)) / out_a * 255.0).round() as u8;
+                        pixels[idx + 3] = (out_a * 255.0).round() as u8;
+                    }
+                }
+            }
+        }
+
         // Overlay real-time shape preview on top of composited frame
-        for &(x, y, color) in &self.shape_preview {
-            if x < self.project.canvas_width && y < self.project.canvas_height {
-                let i = (y * self.project.canvas_width + x) as usize * 4;
-                pixels[i]     = color[0];
-                pixels[i + 1] = color[1];
-                pixels[i + 2] = color[2];
-                pixels[i + 3] = color[3];
+        if !self.tile_display_active {
+            for &(x, y, color) in &self.shape_preview {
+                if x < cw && y < ch {
+                    let i = (y * cw + x) as usize * 4;
+                    pixels[i]     = color[0];
+                    pixels[i + 1] = color[1];
+                    pixels[i + 2] = color[2];
+                    pixels[i + 3] = color[3];
+                }
             }
         }
         // Overlay floating selection (sampled with nearest-neighbor through the transform)
-        if self.select_state.has_float() {
+        if !self.tile_display_active && self.select_state.has_float() {
             if let Some((ax, ay, aw, ah)) = self.select_state.transformed_aabb() {
-                let w = self.project.canvas_width as i32;
-                let h = self.project.canvas_height as i32;
+                let w_i = cw as i32;
+                let h_i = ch as i32;
                 let x0 = (ax.floor() as i32).max(0);
                 let y0 = (ay.floor() as i32).max(0);
-                let x1 = ((ax + aw).ceil() as i32).min(w);
-                let y1 = ((ay + ah).ceil() as i32).min(h);
+                let x1 = ((ax + aw).ceil() as i32).min(w_i);
+                let y1 = ((ay + ah).ceil() as i32).min(h_i);
                 for cy in y0..y1 {
                     for cx in x0..x1 {
                         if let Some(sample) = sample_transformed(&self.select_state, cx, cy) {
-                            let i = (cy as u32 * self.project.canvas_width + cx as u32) as usize * 4;
+                            let i = (cy as u32 * cw + cx as u32) as usize * 4;
                             // Alpha-over: draw sampled pixel over existing
                             let sa = sample[3] as f32 / 255.0;
                             let inv = 1.0 - sa;
@@ -415,8 +1015,8 @@ impl App {
         self.canvas.upload_texture(
             ctx,
             &pixels,
-            self.project.canvas_width,
-            self.project.canvas_height,
+            out_w,
+            out_h,
         );
         self.canvas_dirty = false;
     }
@@ -438,45 +1038,391 @@ impl App {
     }
 
     fn draw_top_bar(&mut self, ctx: &egui::Context) {
-        let bar_rect = egui::Rect::from_min_size(Pos2::ZERO, Vec2::new(BRAND_WIDTH, TOP_BAR_HEIGHT));
+        let file_icons_w: f32 = 0.0;
+        let tabs_x  = BRAND_WIDTH + file_icons_w;
+        let screen_w = ctx.screen_rect().width();
 
-        // Full-width click zone for dropdown toggle (manual hit test, no layout)
-        let was_clicked = ctx.input(|i| {
-            i.pointer.any_pressed() && i.pointer.hover_pos().is_some_and(|p| bar_rect.contains(p))
+        // ── Compute tab sizes before entering the Area ────────────────────
+        let all_narrow = self.sidebar_order.iter().all(|&p| {
+            !self.ui_state.is_visible(p) || self.ui_state.is_collapsed(p)
         });
-        if was_clicked {
-            let now = ctx.input(|i| i.time);
-            let already_open = matches!(self.top_menu_open, Some((TopMenu::File, _)));
-            if already_open {
-                self.close_top_menu_with_animation(now);
-            } else {
-                let pos = Pos2::new(0.0, TOP_BAR_HEIGHT + DROPDOWN_TOP_GAP);
-                self.top_menu_open = Some((TopMenu::File, pos));
-                self.top_menu_opened_at = now;
-                self.top_menu_hover_left = None;
-                self.view_show_open = false;
-                self.dropdown_clip_h   = 0.0;
-                self.dropdown_clip_vel = 0.0;
-                self.dropdown_full_h   = 0.0;
-            }
-        }
+        let sidebar_w     = if all_narrow { 38.0 } else { 176.0 };
+        let max_tab_area_w = (screen_w - tabs_x - sidebar_w).max(0.0);
+
+        const TAB_PADDING_LEFT: f32  = 12.0;
+        const TAB_CLOSE_W: f32       = 16.0;
+        const TAB_PADDING_RIGHT: f32 = 4.0;
+        const TAB_MIN_W: f32         = 100.0; // Fixed static width for all tabs
+
+        let tab_count  = self.tab_count();
+        let tab_names: Vec<String> = (0..tab_count).map(|i| self.tab_display_name(i)).collect();
+        let tab_widths: Vec<f32>   = vec![TAB_MIN_W; tab_count];
+
+        let total_tabs_w: f32 = tab_widths.iter().sum();
+        // Strip is only as wide as the tabs need, capped before the right sidebar.
+        let tab_area_w  = total_tabs_w.min(max_tab_area_w);
+        let needs_scroll = total_tabs_w > max_tab_area_w;
+
+        // Background only covers logo + file button — tab cells paint their own fills.
+        let bar_rect = egui::Rect::from_min_size(Pos2::ZERO, Vec2::new(tabs_x, TOP_BAR_HEIGHT));
+
+        let active_idx = self.active_tab_idx;
 
         egui::Area::new("top_bar".into())
             .fixed_pos(Pos2::ZERO)
             .show(ctx, |ui| {
                 let theme = self.theme.clone();
 
-                // Background fill
                 ui.painter().rect_filled(bar_rect, 0.0, theme.panel);
 
-                // Draw logo on top
-                ui.set_min_size(Vec2::new(BRAND_WIDTH, TOP_BAR_HEIGHT));
+                // No set_min_size — let the Area be only as wide as its contents.
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing = Vec2::ZERO;
+
+                    // Logo (non-interactive)
                     self.draw_logo(ui, &theme);
+
+                    // ── Tab strip ────────────────────────────────────────────
+                    let mut switch_to: Option<usize> = None;
+                    let mut close_req: Option<usize> = None;
+
+                    let add_tab_w = if tab_count > 0 { tab_widths[active_idx] } else { TAB_MIN_W };
+                    let add_tab_clicked = std::cell::Cell::new(false);
+                    let add_tab_hovered: std::cell::Cell<bool> = std::cell::Cell::new(false);
+
+                    if needs_scroll {
+                        egui::ScrollArea::horizontal()
+                            .id_salt("tab_scroll")
+                            .max_width(tab_area_w)
+                            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                            .show(ui, |ui| {
+                                ui.spacing_mut().item_spacing = Vec2::ZERO;
+                                self.draw_tab_cells(ui, &theme, &tab_names, &tab_widths, active_idx,
+                                    TAB_PADDING_LEFT, TAB_CLOSE_W, TAB_PADDING_RIGHT,
+                                    &mut switch_to, &mut close_req);
+                                Self::draw_add_tab_btn(ui, &theme, add_tab_w, &add_tab_clicked, &add_tab_hovered);
+                            });
+                    } else {
+                        // Call directly on the outer horizontal ui — no wrapper to avoid vertical offset.
+                        ui.spacing_mut().item_spacing = Vec2::ZERO;
+                        self.draw_tab_cells(ui, &theme, &tab_names, &tab_widths, active_idx,
+                            TAB_PADDING_LEFT, TAB_CLOSE_W, TAB_PADDING_RIGHT,
+                            &mut switch_to, &mut close_req);
+                        Self::draw_add_tab_btn(ui, &theme, add_tab_w, &add_tab_clicked, &add_tab_hovered);
+                    }
+
+                    if add_tab_clicked.get() { self.open_new_dialog(false); }
+                    if add_tab_hovered.get() { ctx.request_repaint(); }
+
+                    if let Some(i) = switch_to { self.switch_to_tab(i); }
+                    if let Some(i) = close_req  { self.close_tab_with_check(i); }
                 });
             });
         self.draw_top_menu_dropdown(ctx);
+        self.draw_export_popup(ctx);
+    }
+
+    fn draw_export_popup(&mut self, ctx: &egui::Context) {
+        let Some(pos) = self.export_menu_open else { return; };
+
+        let theme = self.theme.clone();
+        let mut close_popup = false;
+
+        egui::Area::new("export_popup".into())
+            .fixed_pos(pos)
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                Frame::new()
+                    .fill(theme.panel)
+                    .stroke(egui::Stroke::new(1.0, theme.surface))
+                    .corner_radius(0)
+                    .shadow(egui::Shadow {
+                        offset: [0, 6], blur: 18, spread: 0,
+                        color: Color32::from_black_alpha(80),
+                    })
+                    .inner_margin(Margin::symmetric(0, 4))
+                    .show(ui, |ui| {
+                        ui.set_min_width(180.0);
+
+                        let row_h = 30.0;
+                        let items: [(&str, crate::io::export::ExportFormat); 3] = [
+                            ("Export frame as PNG",    crate::io::export::ExportFormat::Png),
+                            ("Export as GIF",          crate::io::export::ExportFormat::Gif),
+                            ("Export as spritesheet",  crate::io::export::ExportFormat::Spritesheet),
+                        ];
+                        for (label, fmt) in items {
+                            let (r, resp) = ui.allocate_exact_size(Vec2::new(180.0, row_h), egui::Sense::click());
+                            let bg = if resp.hovered() { theme.surface } else { Color32::TRANSPARENT };
+                            if bg != Color32::TRANSPARENT {
+                                ui.painter().rect_filled(r, 0.0, bg);
+                            }
+                            ui.painter().text(
+                                r.center(), egui::Align2::LEFT_CENTER, label,
+                                FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
+                                if resp.hovered() { theme.fg } else { theme.fg_desc },
+                            );
+                            if resp.clicked() {
+                                let (ext, name) = match fmt {
+                                    crate::io::export::ExportFormat::Png =>
+                                        ("png", format!("{}_frame{}", self.project.name, self.project.active_frame)),
+                                    crate::io::export::ExportFormat::Gif =>
+                                        ("gif", format!("{}.gif", self.project.name)),
+                                    crate::io::export::ExportFormat::Spritesheet =>
+                                        ("png", format!("{}_spritesheet.png", self.project.name)),
+                                };
+                                if let Some(path) = rfd::FileDialog::new()
+                                    .add_filter(ext.to_uppercase(), &[ext])
+                                    .set_file_name(&name)
+                                    .save_file()
+                                {
+                                    let opts = crate::io::export::ExportOptions {
+                                        format: fmt,
+                                        scale: 1,
+                                        animation_index: self.project.active_animation,
+                                        frame_index: self.project.active_frame,
+                                    };
+                                    let _ = crate::io::export::export(&self.project, &path, opts);
+                                }
+                                close_popup = true;
+                            }
+                        }
+                    });
+            });
+
+        let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+        if escape { close_popup = true; }
+        let frame = ctx.cumulative_pass_nr();
+        if frame != self.export_menu_frame {
+            let any_click = ctx.input(|i| i.pointer.any_click());
+            if any_click && !close_popup {
+                if let Some(p) = ctx.input(|i| i.pointer.latest_pos()) {
+                    let menu_rect = egui::Rect::from_min_size(pos, Vec2::new(180.0, 90.0 + 8.0));
+                    if !menu_rect.contains(p) {
+                        close_popup = true;
+                    }
+                }
+            }
+        }
+        if close_popup {
+            self.export_menu_open = None;
+        }
+    }
+
+    fn draw_tab_cells(
+        &mut self,
+        ui: &mut egui::Ui,
+        theme: &crate::theme::Theme,
+        tab_names: &[String],
+        tab_widths: &[f32],
+        active_idx: usize,
+        pad_left: f32,
+        close_w: f32,
+        pad_right: f32,
+        switch_to: &mut Option<usize>,
+        close_req: &mut Option<usize>,
+    ) {
+        let mut rename_finished = None;
+        let mut rename_cancelled = false;
+
+        for (i, (name, &w)) in tab_names.iter().zip(tab_widths.iter()).enumerate() {
+            let selected = i == active_idx;
+            let (tab_rect, tab_resp) = ui.allocate_exact_size(
+                Vec2::new(w, TOP_BAR_HEIGHT),
+                egui::Sense::click(),
+            );
+
+            // Background
+            let bg = if selected { theme.surface } else if tab_resp.hovered() { theme.accent } else { theme.panel };
+            ui.painter().rect_filled(tab_rect, 0.0, bg);
+
+            // × close button (right-aligned)
+            let close_rect = egui::Rect::from_min_size(
+                Pos2::new(tab_rect.right() - close_w - pad_right, tab_rect.center().y - close_w / 2.0),
+                Vec2::splat(close_w),
+            );
+            let close_resp = ui.interact(close_rect, ui.id().with(("tab_close", i)), egui::Sense::click());
+            let close_color = if close_resp.hovered() { theme.fg } else { theme.fg_muted };
+            ui.painter().text(
+                close_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "×",
+                FontId::new(FONT_SIZE_SM + 2.0, FontFamily::Proportional),
+                close_color,
+            );
+
+            let is_renaming = matches!(&self.renaming_tab, Some((idx, _)) if *idx == i);
+
+            if is_renaming {
+                // Inline rename input box
+                let text_w = close_rect.left() - tab_rect.left() - pad_left - 4.0;
+                let text_rect = egui::Rect::from_min_max(
+                    Pos2::new(tab_rect.left() + pad_left, tab_rect.top() + 4.0),
+                    Pos2::new(tab_rect.left() + pad_left + text_w, tab_rect.bottom() - 4.0),
+                );
+                let buf = &mut self.renaming_tab.as_mut().unwrap().1;
+                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(text_rect), |ui| {
+                    let text_resp = ui.add(
+                        egui::TextEdit::singleline(buf)
+                            .frame(false)
+                            .text_color(theme.fg)
+                            .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
+                    );
+                    text_resp.request_focus();
+                    if text_resp.lost_focus() {
+                        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                            rename_cancelled = true;
+                        } else {
+                            rename_finished = Some((i, buf.clone()));
+                        }
+                    } else if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        rename_finished = Some((i, buf.clone()));
+                    }
+                });
+            } else {
+                // Tab label text
+                let text_color = if selected { theme.fg } else { theme.fg_desc };
+                let text_x = tab_rect.left() + pad_left;
+                let text_max_x = close_rect.left() - 4.0;
+                let text_center_y = tab_rect.center().y;
+                // Clip text to available area
+                let text_clip = egui::Rect::from_min_max(
+                    Pos2::new(text_x, tab_rect.top()),
+                    Pos2::new(text_max_x, tab_rect.bottom()),
+                );
+                let clipped_painter = ui.painter().with_clip_rect(
+                    ui.painter().clip_rect().intersect(text_clip)
+                );
+                clipped_painter.text(
+                    Pos2::new(text_x, text_center_y),
+                    egui::Align2::LEFT_CENTER,
+                    name,
+                    FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
+                    text_color,
+                );
+
+                // Interactions
+                if close_resp.clicked() {
+                    *close_req = Some(i);
+                } else if tab_resp.secondary_clicked() && !self.any_modal_open() && !close_rect.contains(ui.ctx().input(|inp| inp.pointer.hover_pos().unwrap_or(Pos2::ZERO))) {
+                    if i != active_idx {
+                        *switch_to = Some(i);
+                    }
+                    self.canvas_ctx_menu = None;
+                    
+                    self.new_width = self.project.tile_w;
+                    self.new_height = self.project.tile_h;
+                    self.new_tiles_w = self.project.tiles_w;
+                    self.new_tiles_h = self.project.tiles_h;
+                    self.new_width_str = self.new_width.to_string();
+                    self.new_height_str = self.new_height.to_string();
+                    self.new_tiles_w_str = self.new_tiles_w.to_string();
+                    self.new_tiles_h_str = self.new_tiles_h.to_string();
+                    self.new_aspect_locked = false;
+                    self.new_tiles_aspect_locked = false;
+
+                    let now = ui.ctx().input(|inp| inp.time);
+                    self.tab_resize_menu = Some((i, Pos2::ZERO, now));
+                } else if tab_resp.clicked() && !close_rect.contains(ui.ctx().input(|inp| inp.pointer.hover_pos().unwrap_or(Pos2::ZERO))) {
+                    let now = ui.ctx().input(|inp| inp.time);
+                    if let Some((last_i, last_t)) = self.last_tab_click {
+                        if last_i == i && (now - last_t) < 0.4 {
+                            let current_name = if i == self.active_tab_idx {
+                                self.project.name.clone()
+                            } else {
+                                let slot = self.other_tabs_slot(i);
+                                self.other_tabs[slot].project.name.clone()
+                            };
+                            self.renaming_tab = Some((i, current_name));
+                            self.last_tab_click = None;
+                        } else {
+                            *switch_to = Some(i);
+                            self.last_tab_click = Some((i, now));
+                        }
+                    } else {
+                        *switch_to = Some(i);
+                        self.last_tab_click = Some((i, now));
+                    }
+                }
+            }
+        }
+
+        if let Some((i, new_name)) = rename_finished {
+            let clean_name = new_name.trim();
+            if !clean_name.is_empty() {
+                if i == self.active_tab_idx {
+                    self.project.name = clean_name.to_string();
+                    self.active_modified = true;
+                } else {
+                    let slot = self.other_tabs_slot(i);
+                    self.other_tabs[slot].project.name = clean_name.to_string();
+                    self.other_tabs[slot].modified = true;
+                }
+            }
+            self.renaming_tab = None;
+            self.canvas_dirty = true;
+        }
+
+        if rename_cancelled {
+            self.renaming_tab = None;
+        }
+    }
+
+    fn draw_add_tab_btn(
+        ui: &mut egui::Ui,
+        theme: &crate::theme::Theme,
+        w: f32,
+        clicked: &std::cell::Cell<bool>,
+        hovered: &std::cell::Cell<bool>,
+    ) {
+        let (r, resp) = ui.allocate_exact_size(Vec2::new(w, TOP_BAR_HEIGHT), egui::Sense::click());
+        let is_hovered = resp.hovered();
+        hovered.set(is_hovered);
+        if is_hovered {
+            ui.ctx().request_repaint();
+        }
+
+        ui.painter().rect_filled(r, 0.0, theme.bg);
+
+        let symbol_color = if is_hovered { theme.accent } else { theme.surface };
+        ui.painter().text(
+            r.center(),
+            egui::Align2::CENTER_CENTER,
+            "+",
+            FontId::new(22.0, FontFamily::Proportional),
+            symbol_color,
+        );
+
+        let stroke = egui::Stroke::new(1.0, symbol_color);
+        let dash = 4.0_f32;
+        let gap = 4.0_f32;
+        let perim = 2.0 * (w + TOP_BAR_HEIGHT);
+        let off = if is_hovered {
+            let t = ui.ctx().input(|i| i.time) as f32;
+            (t * 20.0).rem_euclid(perim)
+        } else {
+            0.0
+        };
+        let (start, pts): (Pos2, Vec<Pos2>) = if off < w {
+            (Pos2::new(r.left() + off, r.top()),
+             vec![r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()])
+        } else if off < w + TOP_BAR_HEIGHT {
+            (Pos2::new(r.right(), r.top() + (off - w)),
+             vec![r.right_bottom(), r.left_bottom(), r.left_top(), r.right_top()])
+        } else if off < 2.0 * w + TOP_BAR_HEIGHT {
+            (Pos2::new(r.right() - (off - w - TOP_BAR_HEIGHT), r.bottom()),
+             vec![r.left_bottom(), r.left_top(), r.right_top(), r.right_bottom()])
+        } else {
+            (Pos2::new(r.left(), r.bottom() - (off - 2.0 * w - TOP_BAR_HEIGHT)),
+             vec![r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom()])
+        };
+        let mut path = vec![start];
+        path.extend(pts);
+        path.push(start);
+        ui.painter().extend(egui::Shape::dashed_line(&path, stroke, dash, gap));
+
+        if resp.clicked() {
+            clicked.set(true);
+        }
     }
 
     /// Close the top menu.
@@ -561,60 +1507,78 @@ impl App {
 
                         match menu {
                             TopMenu::File => {
-                                // Horizontal icon row: New | Open | Save | Exit
-                                // Layout: inner_margin(8) each side + 4×36px buttons + 3×8px gaps = 184px
-                                const BTN: f32 = 36.0;
-                                Frame::new()
-                                    .inner_margin(Margin::same(8))
-                                    .show(ui, |ui| {
-                                        ui.spacing_mut().item_spacing = Vec2::splat(8.0);
-                                        ui.horizontal(|ui| {
-                                            // New
-                                            let (r, resp) = ui.allocate_exact_size(Vec2::splat(BTN), egui::Sense::click());
-                                            if resp.hovered() { ui.painter().rect_filled(r, 0.0, theme.accent); }
-                                            let tint = if resp.hovered() { Color32::WHITE } else { theme.fg_desc };
-                                            ui.put(egui::Rect::from_center_size(r.center(), Vec2::splat(20.0)),
-                                                Image::new(egui::include_image!("../assets/icons/new.svg")).tint(tint).fit_to_exact_size(Vec2::splat(20.0)));
-                                            if resp.clicked() { self.show_new_dialog = true; close_menu = true; }
-
-                                            // Open
-                                            let (r, resp) = ui.allocate_exact_size(Vec2::splat(BTN), egui::Sense::click());
-                                            if resp.hovered() { ui.painter().rect_filled(r, 0.0, theme.accent); }
-                                            let tint = if resp.hovered() { Color32::WHITE } else { theme.fg_desc };
-                                            ui.put(egui::Rect::from_center_size(r.center(), Vec2::splat(20.0)),
-                                                Image::new(egui::include_image!("../assets/icons/open.svg")).tint(tint).fit_to_exact_size(Vec2::splat(20.0)));
-                                            if resp.clicked() {
-                                                if let Some(path) = rfd_open() {
-                                                    if let Ok(p) = load_sqr(&path) {
-                                                        self.project = p;
-                                                        self.canvas_dirty = true;
-                                                        self.current_path = Some(path);
-                                                    }
-                                                }
-                                                close_menu = true;
-                                            }
-
-                                            // Save
-                                            let (r, resp) = ui.allocate_exact_size(Vec2::splat(BTN), egui::Sense::click());
-                                            if resp.hovered() { ui.painter().rect_filled(r, 0.0, theme.accent); }
-                                            let tint = if resp.hovered() { Color32::WHITE } else { theme.fg_desc };
-                                            ui.put(egui::Rect::from_center_size(r.center(), Vec2::splat(20.0)),
-                                                Image::new(egui::include_image!("../assets/icons/save.svg")).tint(tint).fit_to_exact_size(Vec2::splat(20.0)));
-                                            if resp.clicked() {
-                                                let path = self.current_path.clone().unwrap_or_else(|| std::path::PathBuf::from("untitled.sqr"));
-                                                let _ = save_sqr(&self.project, &path);
-                                                close_menu = true;
-                                            }
-
-                                            // Exit
-                                            let (r, resp) = ui.allocate_exact_size(Vec2::splat(BTN), egui::Sense::click());
-                                            if resp.hovered() { ui.painter().rect_filled(r, 0.0, theme.accent); }
-                                            let tint = if resp.hovered() { Color32::WHITE } else { theme.fg_desc };
-                                            ui.put(egui::Rect::from_center_size(r.center(), Vec2::splat(20.0)),
-                                                Image::new(egui::include_image!("../assets/icons/exit.svg")).tint(tint).fit_to_exact_size(Vec2::splat(20.0)));
-                                            if resp.clicked() { ctx.send_viewport_cmd(egui::ViewportCommand::Close); }
-                                        });
-                                    });
+                                // Vertical text rows: New | Open | Save | Exit
+                                if dropdown_row(ui, &theme, "New", None, true).clicked() {
+                                    self.open_new_dialog(false);
+                                    close_menu = true;
+                                }
+                                if dropdown_row(ui, &theme, "Open", None, true).clicked() {
+                                    if let Some(path) = rfd_open() {
+                                        if let Ok(p) = load_sqr(&path) {
+                                            self.open_in_new_tab(p, Some(path));
+                                        }
+                                    }
+                                    close_menu = true;
+                                }
+                                if dropdown_row(ui, &theme, "Save", None, true).clicked() {
+                                    self.save_active_tab();
+                                    close_menu = true;
+                                }
+                                // ── Export ──
+                                if dropdown_row(ui, &theme, "Export current frame as PNG…", None, true).clicked() {
+                                    let name = format!("{}_frame{}", self.project.name, self.project.active_frame);
+                                    if let Some(path) = rfd::FileDialog::new()
+                                        .add_filter("PNG", &["png"])
+                                        .set_file_name(&name)
+                                        .save_file()
+                                    {
+                                        let opts = crate::io::export::ExportOptions {
+                                            format: crate::io::export::ExportFormat::Png,
+                                            scale: 1,
+                                            animation_index: self.project.active_animation,
+                                            frame_index: self.project.active_frame,
+                                        };
+                                        let _ = crate::io::export::export(&self.project, &path, opts);
+                                    }
+                                    close_menu = true;
+                                }
+                                if dropdown_row(ui, &theme, "Export animation as GIF…", None, true).clicked() {
+                                    let name = format!("{}.gif", self.project.name);
+                                    if let Some(path) = rfd::FileDialog::new()
+                                        .add_filter("GIF", &["gif"])
+                                        .set_file_name(&name)
+                                        .save_file()
+                                    {
+                                        let opts = crate::io::export::ExportOptions {
+                                            format: crate::io::export::ExportFormat::Gif,
+                                            scale: 1,
+                                            animation_index: self.project.active_animation,
+                                            frame_index: 0,
+                                        };
+                                        let _ = crate::io::export::export(&self.project, &path, opts);
+                                    }
+                                    close_menu = true;
+                                }
+                                if dropdown_row(ui, &theme, "Export animation as spritesheet…", None, true).clicked() {
+                                    let name = format!("{}_spritesheet.png", self.project.name);
+                                    if let Some(path) = rfd::FileDialog::new()
+                                        .add_filter("PNG", &["png"])
+                                        .set_file_name(&name)
+                                        .save_file()
+                                    {
+                                        let opts = crate::io::export::ExportOptions {
+                                            format: crate::io::export::ExportFormat::Spritesheet,
+                                            scale: 1,
+                                            animation_index: self.project.active_animation,
+                                            frame_index: 0,
+                                        };
+                                        let _ = crate::io::export::export(&self.project, &path, opts);
+                                    }
+                                    close_menu = true;
+                                }
+                                if dropdown_row(ui, &theme, "Exit", None, true).clicked() {
+                                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                                }
                             }
                             TopMenu::View => {
                                 let _ = dropdown_row(ui, &theme, "Zoom with mouse wheel", None, false);
@@ -629,15 +1593,16 @@ impl App {
                             }
                             TopMenu::Layer => {
                                 let ai = self.project.active_animation;
-                                let fi = self.project.active_frame;
+        let mut fi = self.project.active_frame;
                                 if dropdown_row(ui, &theme, "Add layer", None, true).clicked() {
                                     let idx = self.project.animations[ai].frames[fi].layers.len();
                                     let new_id = self.project.next_layer_id();
                                     let name = format!("Layer {}", idx + 1);
                                     let w = self.project.canvas_width;
                                     let h = self.project.canvas_height;
-                                    self.undo_stack.push(Command::AddLayer { index: idx, name: name.clone(), id: new_id });
-                                    for anim in &mut self.project.animations {
+                                     self.undo_stack.push(Command::AddLayer { index: idx, name: name.clone(), id: new_id });
+                                     self.active_modified = true;
+                                     for anim in &mut self.project.animations {
                                         for frame in &mut anim.frames {
                                             frame.layers.push(Layer::new_with_id(name.clone(), w, h, new_id));
                                         }
@@ -652,6 +1617,7 @@ impl App {
                                         let idx = self.project.active_layer.min(layers.len() - 1);
                                         let snapshot = layers[idx].clone();
                                         self.undo_stack.push(Command::DeleteLayer { animation_id: ai, frame_id: fi, index: idx, snapshot });
+                                        self.active_modified = true;
                                         layers.remove(idx);
                                         self.project.active_layer = self.project.active_layer.saturating_sub(1).min(layers.len() - 1);
                                         self.canvas_dirty = true;
@@ -687,7 +1653,10 @@ impl App {
                                     self.delete_active_frame();
                                     close_menu = true;
                                 }
-                                let _ = dropdown_row(ui, &theme, "Onion skin", None, false);
+                                if dropdown_row(ui, &theme, "Onion skin", if self.onion_skinning { Some("✓") } else { None }, true).clicked() {
+                                    self.onion_skinning = !self.onion_skinning;
+                                    close_menu = true;
+                                }
                             }
                             TopMenu::Windows => {
                                 if dropdown_row(ui, &theme, "Color", window_check(self.ui_state.is_visible(Panel::Color)), true).clicked() {
@@ -707,6 +1676,9 @@ impl App {
                                 }
                                 if dropdown_row(ui, &theme, "Timeline", window_check(self.ui_state.is_visible(Panel::Timeline)), true).clicked() {
                                     self.ui_state.toggle_visible(Panel::Timeline);
+                                }
+                                if dropdown_row(ui, &theme, "Tiles", window_check(self.ui_state.is_visible(Panel::Tiles)), true).clicked() {
+                                    self.ui_state.toggle_visible(Panel::Tiles);
                                 }
                                 if dropdown_row(ui, &theme, "Reset layout", None, true).clicked() {
                                     self.ui_state = UiState::default();
@@ -764,6 +1736,9 @@ impl App {
                                 }
                                 if dropdown_row(ui, &theme, "Timeline", window_check(self.ui_state.is_visible(Panel::Timeline)), true).clicked() {
                                     self.ui_state.toggle_visible(Panel::Timeline);
+                                }
+                                if dropdown_row(ui, &theme, "Tiles", window_check(self.ui_state.is_visible(Panel::Tiles)), true).clicked() {
+                                    self.ui_state.toggle_visible(Panel::Tiles);
                                 }
                                 if dropdown_row(ui, &theme, "Reset layout", None, true).clicked() {
                                     self.ui_state = UiState::default();
@@ -1075,9 +2050,15 @@ impl App {
                         ui.spacing_mut().item_spacing = Vec2::ZERO;
 
                         let sidebar_x = ui.next_widget_position().x;
+                        self.sidebar_left_x = sidebar_x;
                         let dragging = self.sidebar_drag;
 
                         for (i, &panel) in sidebar_order.iter().enumerate() {
+                            // Tiles panel is only meaningful when the project has more than one tile.
+                            if panel == Panel::Tiles && !self.project.is_tiled() {
+                                continue;
+                            }
+
                             if i > 0 {
                                 ui.add_space(RIGHT_SECTION_STACK_GAP);
                             }
@@ -1093,7 +2074,7 @@ impl App {
                                 let y = handle_rect.center().y;
                                 let color = if dragging == Some(panel) { Color32::WHITE } else { self.theme.fg_muted };
                                 ui.painter().line_segment(
-                                    [egui::pos2(handle_rect.left(), y), egui::pos2(handle_rect.right(), y)],
+                                    [egui::Pos2::new(handle_rect.left(), y), egui::Pos2::new(handle_rect.right(), y)],
                                     egui::Stroke::new(1.0, color),
                                 );
                             }
@@ -1127,16 +2108,16 @@ impl App {
                                     Panel::Color      => self.draw_color_picker(ui),
                                     Panel::Layers     => self.draw_layers_section(ui),
                                     Panel::Animations => self.draw_animations_section(ui),
-                                    Panel::Preview    => {},
+                                    Panel::Preview    => self.draw_preview_section(ui),
                                     Panel::Timeline   => {},
-                                    Panel::Tiles      => {},
+                                    Panel::Tiles      => self.draw_tiles_section(ui),
                                 }
                             }
 
                             let y_after = ui.next_widget_position().y;
                             if y_after > y_before {
                                 new_icon_rects.push((panel, egui::Rect::from_min_size(
-                                    egui::pos2(sidebar_x, y_before),
+                                    egui::Pos2::new(sidebar_x, y_before),
                                     egui::vec2(sidebar_w, y_after - y_before),
                                 )));
                             }
@@ -1209,7 +2190,7 @@ impl App {
                     egui::Id::new("sidebar_drop_indicator"),
                 ));
                 painter.line_segment(
-                    [egui::pos2(x0, y), egui::pos2(x1, y)],
+                    [egui::Pos2::new(x0, y), egui::Pos2::new(x1, y)],
                     egui::Stroke::new(2.0, Color32::WHITE),
                 );
             }
@@ -1248,7 +2229,7 @@ impl App {
             return;
         }
 
-        let (show, _, _) = section_header_with_add(
+        let (show, _, _, _, _, icon_dbl) = section_header_with_add(
             ui,
             &self.theme,
             &mut self.ui_state,
@@ -1256,7 +2237,16 @@ impl App {
             egui::include_image!("../assets/icons/color_mixer.svg"),
             None,
             false,
+            None,
+            false,
+            None,
+            false,
+            false,
         );
+        if icon_dbl && !self.any_modal_open() {
+            self.ramp_lab.open = true;
+            self.ramp_lab.opened_at = ui.input(|i| i.time);
+        }
         if !show { return; }
 
         let theme = self.theme.clone();
@@ -1356,6 +2346,21 @@ impl App {
                                 FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
                                 text_color,
                             );
+                            // Double-click the OKL tab to open Ramp Lab.
+                            // Use manual detection — double_clicked() is unreliable when the
+                            // first click changes picker mode and breaks widget continuity.
+                            if i == 0 && resp.clicked() {
+                                let now = resp.ctx.input(|inp| inp.time);
+                                if now - self.last_okl_tab_click_time < 0.4 {
+                                    if !self.any_modal_open() {
+                                        self.ramp_lab.open = true;
+                                        self.ramp_lab.opened_at = resp.ctx.input(|i| i.time);
+                                    }
+                                    self.last_okl_tab_click_time = -1.0;
+                                } else {
+                                    self.last_okl_tab_click_time = now;
+                                }
+                            }
                             if resp.clicked() {
                                 let mode = match i {
                                     0 => PickerMode::OkLab,
@@ -1589,6 +2594,7 @@ impl App {
                         self.color_state.display_oklch_c = c;
                         self.color_state.display_oklch_h = h;
                         self.color_state.foreground = oklch_to_rgba(l, c, h, fg[3]);
+                        snap_to_palette_if_exact(&self.project.palette, &mut self.color_state.foreground);
                     }
                 }
                 PickerMode::Hsv => {
@@ -1608,6 +2614,7 @@ impl App {
                         self.color_state.display_hsv_s = s;
                         self.color_state.display_hsv_v = v;
                         self.color_state.foreground = hsv_to_rgba(h, s, v, fg[3]);
+                        snap_to_palette_if_exact(&self.project.palette, &mut self.color_state.foreground);
                     }
                 }
                 PickerMode::Rgb => {
@@ -1627,6 +2634,7 @@ impl App {
                         self.color_state.display_rgb_g = g;
                         self.color_state.display_rgb_b = b;
                         self.color_state.foreground = [r as u8, g as u8, b as u8, fg[3]];
+                        snap_to_palette_if_exact(&self.project.palette, &mut self.color_state.foreground);
                     }
                 }
             }
@@ -1671,9 +2679,9 @@ impl App {
 
         let palette_len = self.project.palette.len();
 
-        // Grid is always cols×cols (square). "+" is pinned to the last slot
-        // (bottom-right). cols grows so that cols² >= palette_len + 1.
-        let cols = ((palette_len + 1) as f32).sqrt().ceil() as usize;
+        // Grid is always cols×cols (square). "+", palette, image, and save icons are pinned
+        // to the last four slots (bottom-right). cols grows so that cols² >= palette_len + 4.
+        let cols = ((palette_len + 4) as f32).sqrt().ceil() as usize;
         let cols = cols.max(4);
         let sw = GRID_SIZE / cols as f32; // square swatch width
         let sh = sw;                      // square swatch height
@@ -1721,10 +2729,144 @@ impl App {
                     self.color_state.foreground = swatch;
                     sync_color_caches(&mut self.color_state);
                 }
+                resp.context_menu(|ui| {
+                    ui.horizontal(|ui| {
+                        if ui.button("Swap").clicked() {
+                            let color_a = self.color_state.foreground;
+                            let color_b = swatch;
+                            if color_a != color_b {
+                                for anim in &mut self.project.animations {
+                                    for frame in &mut anim.frames {
+                                        for layer in &mut frame.layers {
+                                            if !layer.is_group {
+                                                let w = layer.width;
+                                                let h = layer.height;
+                                                for y in 0..h {
+                                                    for x in 0..w {
+                                                        let pixel = layer.get_pixel(x, y);
+                                                        if pixel == color_a {
+                                                            layer.set_pixel(x, y, color_b);
+                                                        } else if pixel == color_b {
+                                                            layer.set_pixel(x, y, color_a);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        frame.dirty = true;
+                                    }
+                                }
+                                self.undo_stack.push(crate::history::Command::SwapColors { color_a, color_b });
+                                self.canvas_dirty = true;
+                                self.active_modified = true;
+                                if self.project.is_tiled() {
+                                    self.mark_all_thumbnails_dirty();
+                                }
+                            }
+                            ui.close_menu();
+                        }
+                        if ui.button("Swap All").clicked() {
+                            // --- Snapshot before ---
+                            let before: Vec<Vec<Vec<Vec<u8>>>> = self.project.animations.iter()
+                                .map(|anim| anim.frames.iter()
+                                    .map(|frame| frame.layers.iter()
+                                        .map(|layer| layer.pixels.clone())
+                                        .collect())
+                                    .collect())
+                                .collect();
+
+                            let palette = &self.project.palette;
+
+                            // OKLab Euclidean ΔE — perceptual distance used by Aseprite.
+                            // sRGB → linear → OKLab, distance = sqrt(ΔL² + Δa² + Δb²).
+                            // L (lightness) is a full equal component: dark blue ≠ light pink, ever.
+                            fn to_oklab(c: [u8; 4]) -> (f64, f64, f64) {
+                                let r = c[0] as f64 / 255.0;
+                                let g = c[1] as f64 / 255.0;
+                                let b = c[2] as f64 / 255.0;
+                                let lin = |v: f64| if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) };
+                                let r = lin(r); let g = lin(g); let b = lin(b);
+                                let l_ = (0.4122214708*r + 0.5363325363*g + 0.0514459929*b).cbrt();
+                                let m_ = (0.2119034982*r + 0.6806995451*g + 0.1073969566*b).cbrt();
+                                let s_ = (0.0883024619*r + 0.2817188376*g + 0.6299787005*b).cbrt();
+                                let l  = 0.2104542553*l_ + 0.7936177850*m_ - 0.0040720468*s_;
+                                let a  = 1.9779984951*l_ - 2.4285922050*m_ + 0.4505937099*s_;
+                                let bv = 0.0259040371*l_ + 0.7827717662*m_ - 0.8086757660*s_;
+                                (l, a, bv)
+                            }
+
+                            fn oklab_dist(x: (f64,f64,f64), y: (f64,f64,f64)) -> f64 {
+                                let dl = x.0 - y.0;
+                                let da = x.1 - y.1;
+                                let db = x.2 - y.2;
+                                (dl*dl + da*da + db*db).sqrt()
+                            }
+
+                            // Pre-compute palette OKLab values once.
+                            let pal_lab: Vec<(f64,f64,f64)> = palette.iter().map(|&c| to_oklab(c)).collect();
+
+                             // Pure nearest-neighbor — no 1-to-1 constraint.
+                            // Each canvas color independently picks its closest palette entry.
+                            // Multiple canvas colors CAN map to the same entry — correct behaviour
+                            // when the palette has fewer distinct shades. No greedy assignment
+                            // that can "steal" a dark slot and force another dark color to go light.
+                            use std::collections::HashMap;
+                            let mut color_map: HashMap<[u8;4], [u8;4]> = HashMap::new();
+
+                            for anim in &mut self.project.animations {
+                                for frame in &mut anim.frames {
+                                    for layer in &mut frame.layers {
+                                        if layer.is_group { continue; }
+                                        let w = layer.width;
+                                        let h = layer.height;
+                                        for y in 0..h {
+                                            for x in 0..w {
+                                                let pixel = layer.get_pixel(x, y);
+                                                if pixel[3] == 0 { continue; }
+                                                let remapped = *color_map.entry(pixel).or_insert_with(|| {
+                                                    let plab = to_oklab(pixel);
+                                                    let mut best_dist = f64::MAX;
+                                                    let mut best_color = pixel;
+                                                    for (pi, &plb) in pal_lab.iter().enumerate() {
+                                                        if palette[pi][3] == 0 { continue; }
+                                                        let d = oklab_dist(plab, plb);
+                                                        if d < best_dist {
+                                                            best_dist = d;
+                                                            best_color = palette[pi];
+                                                        }
+                                                    }
+                                                    best_color
+                                                });
+                                                layer.set_pixel(x, y, remapped);
+                                            }
+                                        }
+                                    }
+                                    frame.dirty = true;
+                                }
+                            }
+
+                            // --- Snapshot after ---
+                            let after: Vec<Vec<Vec<Vec<u8>>>> = self.project.animations.iter()
+                                .map(|anim| anim.frames.iter()
+                                    .map(|frame| frame.layers.iter()
+                                        .map(|layer| layer.pixels.clone())
+                                        .collect())
+                                    .collect())
+                                .collect();
+
+                            self.undo_stack.push(crate::history::Command::SwapAll { before, after });
+                            self.canvas_dirty = true;
+                            self.active_modified = true;
+                            self.mark_all_thumbnails_dirty();
+                            ui.close_menu();
+                        }
+                    });
+                });
+
             }
 
-            // --- Empty slots between last color and "+" ---
-            for i in palette_len..(total_slots - 1) {
+            // --- Empty slots between last color and pinned icons ---
+            for i in palette_len..(total_slots - 4) {
                 let col = i % cols;
                 let row = i / cols;
                 let rect = egui::Rect::from_min_size(
@@ -1751,26 +2893,116 @@ impl App {
                 }
             }
 
-            // --- "+" add-swatch button — always bottom-right ---
+            // --- "+" add-swatch button — first of the four pinned slots ---
             {
-                let plus_slot = total_slots - 1;
+                let plus_slot = total_slots - 4;
                 let col = plus_slot % cols;
                 let row = plus_slot / cols;
                 let rect = egui::Rect::from_min_size(
                     grid_rect.min + Vec2::new(col as f32 * sw, row as f32 * sh),
                     Vec2::new(sw, sh),
                 );
-                painter.rect_filled(rect, 0.0, theme.surface);
+                let resp = ui.interact(rect, ui.id().with("add_swatch"), egui::Sense::click());
+                let plus_bg = if resp.hovered() { theme.surface } else { Color32::TRANSPARENT };
+                painter.rect_filled(rect, 0.0, plus_bg);
+                let plus_fg = if resp.hovered() { theme.fg } else { theme.fg_desc };
                 painter.text(
                     rect.center(),
                     egui::Align2::CENTER_CENTER,
                     "+",
                     FontId::new(24.0, FontFamily::Proportional),
-                    Color32::WHITE,
+                    plus_fg,
                 );
-                let resp = ui.interact(rect, ui.id().with("add_swatch"), egui::Sense::click());
                 if resp.clicked() && palette_len < 256 {
                     self.project.palette.push(self.color_state.foreground);
+                }
+            }
+
+            // --- Palette icon — opens browser ---
+            {
+                let icon_slot = total_slots - 3;
+                let col = icon_slot % cols;
+                let row = icon_slot / cols;
+                let rect = egui::Rect::from_min_size(
+                    grid_rect.min + Vec2::new(col as f32 * sw, row as f32 * sh),
+                    Vec2::new(sw, sh),
+                );
+                let resp = ui.interact(rect, ui.id().with("palette_icon"), egui::Sense::click());
+                let icon_bg = if resp.hovered() { theme.surface } else { Color32::TRANSPARENT };
+                painter.rect_filled(rect, 0.0, icon_bg);
+                let icon_fg = if resp.hovered() { theme.fg } else { theme.fg_desc };
+                let icon_size = Vec2::splat(20.0);
+                let icon_rect = egui::Rect::from_center_size(rect.center(), icon_size);
+                let palette_icon = egui::Image::new(egui::include_image!("../assets/icons/palette.svg"))
+                    .tint(icon_fg)
+                    .fit_to_exact_size(icon_size);
+                ui.put(icon_rect, palette_icon);
+                if resp.clicked() {
+                    self.palette_browser.open = !self.palette_browser.open;
+                    if self.palette_browser.open {
+                        self.palette_browser.opened_at = ui.input(|i| i.time);
+                    }
+                }
+            }
+
+            // --- Image icon — exports current palette as PNG ---
+            {
+                let img_slot = total_slots - 2;
+                let col = img_slot % cols;
+                let row = img_slot / cols;
+                let rect = egui::Rect::from_min_size(
+                    grid_rect.min + Vec2::new(col as f32 * sw, row as f32 * sh),
+                    Vec2::new(sw, sh),
+                );
+                let resp = ui.interact(rect, ui.id().with("palette_export"), egui::Sense::click());
+                let img_bg = if resp.hovered() { theme.surface } else { Color32::TRANSPARENT };
+                painter.rect_filled(rect, 0.0, img_bg);
+                let img_fg = if resp.hovered() { theme.fg } else { theme.fg_desc };
+                let icon_size = Vec2::splat(20.0);
+                let icon_rect = egui::Rect::from_center_size(rect.center(), icon_size);
+                let img_icon = egui::Image::new(egui::include_image!("../assets/icons/image.svg"))
+                    .tint(img_fg)
+                    .fit_to_exact_size(icon_size);
+                ui.put(icon_rect, img_icon);
+                if resp.clicked() {
+                    let colors = self.project.palette.clone();
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("PNG", &["png"])
+                        .set_file_name("palette.png")
+                        .save_file()
+                    {
+                        let _ = crate::io::export::export_palette_png(&path, &colors);
+                    }
+                }
+            }
+
+            // --- Save icon — saves current palette to browser list ---
+            {
+                let save_slot = total_slots - 1;
+                let col = save_slot % cols;
+                let row = save_slot / cols;
+                let rect = egui::Rect::from_min_size(
+                    grid_rect.min + Vec2::new(col as f32 * sw, row as f32 * sh),
+                    Vec2::new(sw, sh),
+                );
+                let resp = ui.interact(rect, ui.id().with("palette_save"), egui::Sense::click());
+                let save_bg = if resp.hovered() { theme.surface } else { Color32::TRANSPARENT };
+                painter.rect_filled(rect, 0.0, save_bg);
+                let icon_size = Vec2::splat(20.0);
+                let icon_rect = egui::Rect::from_center_size(rect.center(), icon_size);
+                let save_icon = egui::Image::new(egui::include_image!("../assets/icons/save.svg"))
+                    .tint(if resp.hovered() { theme.fg } else { theme.fg_desc })
+                    .fit_to_exact_size(icon_size);
+                ui.put(icon_rect, save_icon);
+                if resp.clicked() {
+                    let colors = self.project.palette.clone();
+                    let name = if self.project.name.is_empty() {
+                        "Custom".to_string()
+                    } else {
+                        self.project.name.clone()
+                    };
+                    self.palette_browser.save_dialog_name = name;
+                    self.palette_browser.save_dialog_colors = Some(colors);
                 }
             }
 
@@ -1808,7 +3040,7 @@ impl App {
 
     fn draw_layers_section(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme.clone();
-        let (show, add_clicked, group_clicked) = section_header(ui, &self.theme, &mut self.ui_state, Panel::Layers, egui::include_image!("../assets/icons/layer.svg"), Some(egui::include_image!("../assets/icons/group.svg")));
+        let (show, add_clicked, group_clicked, _, _) = section_header(ui, &self.theme, &mut self.ui_state, Panel::Layers, egui::include_image!("../assets/icons/layer.svg"), Some(egui::include_image!("../assets/icons/group.svg")), false);
         if !show { return; }
 
         let ai = self.project.active_animation;
@@ -1821,6 +3053,7 @@ impl App {
             let w = self.project.canvas_width;
             let h = self.project.canvas_height;
             self.undo_stack.push(Command::AddLayer { index: idx, name: name.clone(), id: new_id });
+            self.active_modified = true;
             // Add a blank copy of this layer to every frame of every animation so they stay in sync.
             for anim in &mut self.project.animations {
                 for frame in &mut anim.frames {
@@ -1838,6 +3071,7 @@ impl App {
             let w = self.project.canvas_width;
             let h = self.project.canvas_height;
             self.undo_stack.push(Command::AddLayer { index: idx, name: name.clone(), id: new_id });
+            self.active_modified = true;
             for anim in &mut self.project.animations {
                 for frame in &mut anim.frames {
                     frame.layers.push(Layer::new_group(name.clone(), w, h, new_id));
@@ -1914,9 +3148,13 @@ impl App {
                         i.pointer.secondary_clicked() &&
                         i.pointer.interact_pos().map(|p| row_rect.contains(p)).unwrap_or(false)
                     }) {
-                        let pos = ui.input(|i| i.pointer.interact_pos().unwrap_or(row_origin));
+                        const BTN: f32 = 36.0;
+                        const PAD: f32 = 4.0;
+                        const MENU_W: f32 = BTN * 3.0 + PAD * 4.0;
+                        const MENU_H: f32 = BTN + PAD * 2.0;
+                        let menu_pos = Pos2::new(self.sidebar_left_x, row_rect.center().y - MENU_H / 2.0);
                         let now = ui.ctx().input(|i| i.time);
-                        self.layer_ctx_menu = Some((idx, pos, now));
+                        self.layer_ctx_menu = Some((idx, menu_pos, now));
                     }
 
                     ui.allocate_ui_with_layout(
@@ -2142,7 +3380,25 @@ impl App {
     fn draw_animations_section(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme.clone();
         let was_collapsed = self.ui_state.is_collapsed(Panel::Animations);
-        let (show, add_clicked, _) = section_header(ui, &self.theme, &mut self.ui_state, Panel::Animations, egui::include_image!("../assets/icons/animation.svg"), None);
+        let grid_icon = if self.project.is_tiled() {
+            Some(egui::include_image!("../assets/icons/grid.svg"))
+        } else {
+            None
+        };
+        let (show, add_clicked, onion_clicked, markers_clicked, grid_clicked, _) = section_header_with_add(
+            ui,
+            &self.theme,
+            &mut self.ui_state,
+            Panel::Animations,
+            egui::include_image!("../assets/icons/animation.svg"),
+            Some(egui::include_image!("../assets/icons/onion.svg")),
+            self.onion_skinning,
+            Some(egui::include_image!("../assets/icons/start_end.svg")),
+            self.show_start_end_markers,
+            grid_icon,
+            self.grid_visible,
+            true,
+        );
         let now_collapsed = self.ui_state.is_collapsed(Panel::Animations);
 
         // When the animation icon is clicked, sync timeline visibility with the section.
@@ -2150,6 +3406,18 @@ impl App {
             self.ui_state.show_timeline = !now_collapsed;
         }
         if !show { return; }
+
+        if onion_clicked {
+            self.onion_skinning = !self.onion_skinning;
+        }
+
+        if markers_clicked {
+            self.show_start_end_markers = !self.show_start_end_markers;
+        }
+
+        if grid_clicked {
+            self.grid_visible = !self.grid_visible;
+        }
 
         if add_clicked {
             let n = self.project.animations.len() + 1;
@@ -2216,6 +3484,12 @@ impl App {
                                     self.canvas_dirty = true;
                                 }
 
+                                if bg_resp.secondary_clicked() && self.project.is_tiled() {
+                                    let now = ui.ctx().input(|inp| inp.time);
+                                    let menu_pos = Pos2::new(self.sidebar_left_x, bg_resp.rect.center().y - 22.0);
+                                    self.anim_tile_menu = Some((i, menu_pos, now));
+                                }
+
                                 ui.add_space(10.0);
 
                                 if is_renaming {
@@ -2248,6 +3522,48 @@ impl App {
                                     }
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.add_space(10.0);
+                                        if self.project.is_tiled() {
+                                            let visible = self.project.animations[i].tile_visible;
+                                            if icon_flat_button(ui, &theme, if visible {
+                                                egui::include_image!("../assets/icons/visibility.svg")
+                                            } else {
+                                                egui::include_image!("../assets/icons/visibility_off.svg")
+                                            }).clicked() {
+                                                self.project.animations[i].tile_visible = !visible;
+                                                let visible = self.project.animations[i].tile_visible;
+                                                if self.project.is_tiled() {
+                                                    if !visible {
+                                                        // Switch to compact clip-only display
+                                                        let n = (self.project.animations[i].tile_end - self.project.animations[i].tile_start + 1) as u32;
+                                                        let (cols, rows) = if n <= 8 {
+                                                            (n, 1)
+                                                        } else {
+                                                            let mut best_cols = 8;
+                                                            let mut best_diff = u32::MAX;
+                                                            for c in 1..=8 {
+                                                                let r = (n + c - 1) / c;
+                                                                let base = n / r;
+                                                                let extra = n % r;
+                                                                let diff = if extra == 0 { 0 } else { r - extra };
+                                                                if diff < best_diff || (diff == best_diff && c > best_cols) {
+                                                                    best_cols = c;
+                                                                    best_diff = diff;
+                                                                }
+                                                            }
+                                                            (best_cols, (n + best_cols - 1) / best_cols)
+                                                        };
+                                                        self.tile_display_cols = cols;
+                                                        self.tile_display_rows = rows;
+                                                        self.tile_display_active = true;
+                                                    } else {
+                                                        self.tile_display_active = false;
+                                                    }
+                                                    self.canvas_dirty = true;
+                                                    self.pending_zoom_fit = true;
+                                                }
+                                            }
+                                            ui.add_space(4.0);
+                                        }
                                         let mut fps = self.project.animations[i].fps as f32;
                                         let bg = if selected { theme.surface } else { theme.panel };
                                         let text_col = theme.fg_desc;
@@ -2282,6 +3598,82 @@ impl App {
                     });
                 }
             });
+        self.draw_anim_tile_menu(ui.ctx());
+    }
+
+
+    fn draw_anim_tile_menu(&mut self, ctx: &egui::Context) {
+        let Some((anim_idx, pos, opened_at)) = self.anim_tile_menu else { return; };
+        if anim_idx >= self.project.animations.len() {
+            self.anim_tile_menu = None;
+            return;
+        }
+        let total_frames = self.project.animations[anim_idx].frames.len();
+        let min_tile = 1usize;
+        let max_tile = total_frames;
+
+        let inner = egui::Area::new(egui::Id::new("anim_tile_menu"))
+            .fixed_pos(pos)
+            .pivot(egui::Align2::RIGHT_TOP)
+            .show(ctx, |ui| {
+                Frame::new()
+                    .fill(self.theme.panel)
+                    .inner_margin(Margin::same(4))
+                    .shadow(egui::Shadow {
+                        offset: [0, 14],
+                        blur: 36,
+                        spread: 0,
+                        color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
+                    })
+                    .show(ui, |ui| {
+                        let anim = &mut self.project.animations[anim_idx];
+                        let mut start = anim.tile_start.max(min_tile.saturating_sub(1));
+                        let mut end = anim.tile_end.max(start).min(max_tile.saturating_sub(1));
+                        const BTN: f32 = 36.0;
+                        const PAD: f32 = 4.0;
+                        let theme = self.theme.clone();
+                        ui.horizontal(|ui| {
+                            ui.style_mut().spacing.item_spacing = Vec2::ZERO;
+                            ui.visuals_mut().override_text_color = Some(theme.fg_desc);
+                            // Start tile DragValue
+                            ui.add_sized(
+                                Vec2::new(64.0, BTN),
+                                egui::DragValue::new(&mut start)
+                                    .range(min_tile.saturating_sub(1) as f64..=max_tile.saturating_sub(1) as f64)
+                                    .prefix("Start "),
+                            );
+                            ui.add_space(PAD);
+                            // End tile DragValue
+                            ui.add_sized(
+                                Vec2::new(64.0, BTN),
+                                egui::DragValue::new(&mut end)
+                                    .range(start as f64..=max_tile.saturating_sub(1) as f64)
+                                    .prefix("End "),
+                            );
+                            ui.visuals_mut().override_text_color = None;
+                        });
+                        anim.tile_start = start;
+                        anim.tile_end = end;
+                    });
+            });
+
+        // Auto-close after 2s hover-away
+        let menu_id = egui::Id::new("anim_tile_menu_timer");
+        let now = ctx.input(|i| i.time);
+        let age = now - opened_at;
+        let is_hovered = ctx.pointer_hover_pos()
+            .map(|p| inner.response.rect.contains(p))
+            .unwrap_or(false);
+        let should_close_timer = ctx.data_mut(|d| {
+            let last: &mut f64 = d.get_temp_mut_or_insert_with(menu_id, || now);
+            if age < 0.15 || is_hovered { *last = now; false } else { now - *last > 2.0 }
+        });
+        ctx.request_repaint();
+
+        let clicked_outside = age > 0.15 && ctx.input(|i| i.pointer.any_click()) && !is_hovered;
+        if should_close_timer || clicked_outside {
+            self.anim_tile_menu = None;
+        }
     }
 
     fn draw_anim_toolbar(&mut self, ctx: &egui::Context) {
@@ -2369,94 +3761,187 @@ impl App {
                 egui::ScrollArea::horizontal().show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 10.0;
-                        let frame_count = self.project.active_anim().frames.len();
-                        let mut frame_rects: Vec<egui::Rect> = Vec::with_capacity(frame_count);
-                        for i in 0..frame_count {
-                            let selected = self.project.active_frame == i;
-                            
-                            // Normal spacing is 84px + 10px item spacing = 94px.
-                            // Shift other frames to the left toward frame 0.
-                            let mut rect = egui::Rect::from_min_size(
-                                ui.next_widget_position(),
-                                Vec2::splat(84.0),
-                            );
-                            if i > 0 {
-                                let shift = i as f32 * 94.0 * self.play_anim_t;
-                                rect = rect.translate(Vec2::new(-shift, 0.0));
-                            }
-                            frame_rects.push(rect);
-                            
-                            let alpha = if i == 0 {
-                                255
-                            } else {
-                                ((1.0 - self.play_anim_t) * 255.0) as u8
-                            };
-                            
-                            let fill_base = if selected { self.theme.accent } else { self.theme.panel };
-                            let fill = Color32::from_rgba_unmultiplied(fill_base.r(), fill_base.g(), fill_base.b(), alpha);
-                            
-                            let response = ui.put(
-                                rect,
-                                egui::Button::new(self.label_muted(""))
-                                    .fill(fill)
-                                    .stroke(egui::Stroke::NONE)
-                            );
-                            
-                            if i == 0 && self.playback.is_playing {
+                        let ai = self.project.active_animation;
+                        let frame_count = self.project.animations[ai].frames.len();
+                        let is_tiled = self.project.is_tiled();
+                        let tile_start = if is_tiled { self.project.animations[ai].tile_start } else { 0 };
+                        let tile_end = if is_tiled { self.project.animations[ai].tile_end } else { 0 };
+                        let (clip_start, clip_end) = if is_tiled {
+                            let s = tile_start.min(frame_count.saturating_sub(1));
+                            let e = tile_end.min(frame_count.saturating_sub(1)).max(s);
+                            (s, e)
+                        } else {
+                            (0, frame_count.saturating_sub(1))
+                        };
+                        let clip_len = clip_end.saturating_sub(clip_start) + 1;
+                        // Collect rects for drop-target calculation
+                        let mut frame_rects: Vec<egui::Rect> = Vec::with_capacity(clip_len);
+                        for idx in clip_start..=clip_end {
+                            // Lazy-generate thumbnail for non-active dirty frames
+                            {
                                 let ai = self.project.active_animation;
-                                let fi = self.project.active_frame;
-                                if ai < self.thumbnails.len() && fi < self.thumbnails[ai].len() {
-                                    if let Some(ref handle) = self.thumbnails[ai][fi].handle {
-                                        ui.painter().image(
-                                            handle.id(),
-                                            rect.shrink(4.0),
-                                            egui::Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-                                            Color32::WHITE,
-                                        );
-                                    }
+                                let needs_gen = idx != self.project.active_frame
+                                    && ai < self.thumbnails.len()
+                                    && idx < self.thumbnails[ai].len()
+                                    && self.thumbnails[ai][idx].dirty;
+                                if needs_gen {
+                                    let (thumb_pixels, thumb_w, thumb_h) = if self.project.is_tiled() {
+                                        let w = self.project.canvas_width;
+                                        let tile_w = self.project.tile_w;
+                                        let tile_h = self.project.tile_h;
+                                        (crate::layers::composite_frame_tile(
+                                            &self.project.animations[ai].frames[idx],
+                                            w, tile_w, tile_h,
+                                        ), tile_w, tile_h)
+                                    } else {
+                                        let w = self.project.canvas_width;
+                                        let h = self.project.canvas_height;
+                                        (composite_frame(
+                                            &self.project.animations[ai].frames[idx],
+                                            w, h,
+                                        ), w, h)
+                                    };
+                                    let img = egui::ColorImage::from_rgba_unmultiplied(
+                                        [thumb_w as usize, thumb_h as usize], &thumb_pixels,
+                                    );
+                                    let handle = ui.ctx().load_texture(
+                                        format!("thumb_{}_{}", ai, idx),
+                                        img,
+                                        egui::TextureOptions::NEAREST,
+                                    );
+                                    self.thumbnails[ai][idx].handle = Some(handle);
+                                    self.thumbnails[ai][idx].dirty = false;
                                 }
                             }
-                            
-                            if response.clicked() && alpha > 0 {
-                                self.project.active_frame = i;
+
+                            let selected = self.project.active_frame == idx;
+                            let (rect, response) = ui.allocate_exact_size(
+                                Vec2::splat(84.0), egui::Sense::click_and_drag(),
+                            );
+                            frame_rects.push(rect);
+
+                            // Thumbnail image (during drag, show ghosted)
+                            let thumb_id: Option<egui::TextureId> = {
+                                let ai = self.project.active_animation;
+                                if ai < self.thumbnails.len() && idx < self.thumbnails[ai].len() {
+                                    self.thumbnails[ai][idx].handle.as_ref().map(|h| h.id())
+                                } else {
+                                    None
+                                }
+                            };
+                            let is_dragging_self = self.frame_drag == Some(idx);
+                            if let Some(tid) = thumb_id {
+                                let tint = if is_dragging_self {
+                                    Color32::from_white_alpha(102)
+                                } else {
+                                    Color32::WHITE
+                                };
+                                ui.painter().image(
+                                    tid, rect,
+                                    egui::Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                                    tint,
+                                );
+                            }
+
+                            // Drag start
+                            if response.drag_started() {
+                                self.frame_drag = Some(idx);
+                            }
+
+                            // Drop target highlight during drag
+                            let is_drop_target = self.frame_drag.map(|d| {
+                                d != idx && ui.input(|i| i.pointer.hover_pos())
+                                    .map(|p| rect.contains(p))
+                                    .unwrap_or(false)
+                            }).unwrap_or(false);
+                            if is_drop_target {
+                                ui.painter().rect_filled(rect, 2.0, self.theme.accent);
+                            }
+
+                            // Outline: accent if selected, surface otherwise
+                            let outline_color = if selected { self.theme.accent } else { self.theme.surface };
+                            ui.painter().rect_stroke(
+                                rect, 2.0,
+                                egui::Stroke::new(1.0, outline_color),
+                                egui::StrokeKind::Middle,
+                            );
+
+                            // Click (only when not dragging)
+                            if response.clicked() && self.frame_drag.is_none() {
+                                self.project.active_frame = idx;
                                 self.canvas_dirty = true;
                             }
-                            if response.secondary_clicked() && alpha > 0 {
-                                self.project.active_frame = i;
+                            if response.secondary_clicked() {
+                                self.project.active_frame = idx;
                                 let menu_outer_w = 144.0;
                                 let menu_outer_h = 44.0;
-                                let x = rect.center().x - menu_outer_w / 2.0;
-                                let y = rect.top() - menu_outer_h - 4.0;
-                                let now = ui.ctx().input(|inp| inp.time);
-                                self.frame_menu = Some((i, Pos2::new(x, y), now));
+                                let x = response.rect.center().x - menu_outer_w / 2.0;
+                                let y = response.rect.top() - menu_outer_h - 4.0;
+                                let now = ui.ctx().input(|i| i.time);
+                                self.frame_menu = Some((idx, Pos2::new(x, y), now));
                                 self.canvas_dirty = true;
                             }
-                            
-                            // Advance spacing manually because we used ui.put
-                            let spacing_offset = (84.0 + 10.0) * (1.0 - self.play_anim_t);
-                            let _ = ui.allocate_exact_size(Vec2::new(spacing_offset, 0.0), egui::Sense::hover());
+
+                            // Drop: swap frames on release
+                            if response.drag_stopped() {
+                                if let Some(drag_idx) = self.frame_drag {
+                                    let pointer = ui.input(|i| i.pointer.interact_pos());
+                                    let over_idx = pointer.and_then(|p| {
+                                        frame_rects.iter().position(|r| r.contains(p))
+                                    });
+                                    if let Some(target) = over_idx {
+                                        let target_abs = clip_start + target;
+                                        if target_abs != drag_idx {
+                                            let anim = &mut self.project.animations[self.project.active_animation];
+                                            anim.frames.swap(drag_idx, target_abs);
+                                            self.project.active_frame = target_abs;
+                                            self.thumbnails = Self::thumbnails_for(&self.project);
+                                            self.canvas_dirty = true;
+                                        }
+                                    }
+                                }
+                                self.frame_drag = None;
+                            }
                         }
-                        
-                        let mut r = egui::Rect::from_min_size(
-                            ui.next_widget_position(),
-                            Vec2::splat(84.0),
-                        );
-                        if frame_count > 0 {
-                            let shift = frame_count as f32 * 94.0 * self.play_anim_t;
-                            r = r.translate(Vec2::new(-shift, 0.0));
+                        // "+" button — hidden in multi-tile mode (frames are tied to tile count)
+                        if !self.project.is_tiled() {
+                        let (r, resp) = ui.allocate_exact_size(Vec2::splat(84.0), egui::Sense::click());
+                        let hovered = resp.hovered();
+                        let symbol_color = if hovered { self.theme.accent } else { self.theme.surface };
+                        ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, "+", FontId::new(22.0, FontFamily::Proportional), symbol_color);
+                        // Dashed outline — marches only when hovered
+                        {
+                            let stroke = egui::Stroke::new(1.0, symbol_color);
+                            let dash = 4.0_f32;
+                            let gap  = 4.0_f32;
+                            let side = 84.0_f32;
+                            let perim = 4.0 * side;
+                            let off = if hovered {
+                                let t = ui.ctx().input(|i| i.time) as f32;
+                                ui.ctx().request_repaint();
+                                (t * 20.0).rem_euclid(perim)
+                            } else {
+                                0.0
+                            };
+                            let (start, waypoints): (Pos2, [Pos2; 4]) = if off < side {
+                                (Pos2::new(r.left() + off, r.top()),
+                                 [r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()])
+                            } else if off < 2.0 * side {
+                                (Pos2::new(r.right(), r.top() + (off - side)),
+                                 [r.right_bottom(), r.left_bottom(), r.left_top(), r.right_top()])
+                            } else if off < 3.0 * side {
+                                (Pos2::new(r.right() - (off - 2.0 * side), r.bottom()),
+                                 [r.left_bottom(), r.left_top(), r.right_top(), r.right_bottom()])
+                            } else {
+                                (Pos2::new(r.left(), r.bottom() - (off - 3.0 * side)),
+                                 [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom()])
+                            };
+                            let path = [start, waypoints[0], waypoints[1], waypoints[2], waypoints[3], start];
+                            let shapes = egui::Shape::dashed_line(&path, stroke, dash, gap);
+                            ui.painter().extend(shapes);
                         }
-                        let alpha = ((1.0 - self.play_anim_t) * 255.0) as u8;
-                        let tint = Color32::from_rgba_unmultiplied(self.theme.fg_desc.r(), self.theme.fg_desc.g(), self.theme.fg_desc.b(), alpha);
-                        let btn_bg = Color32::from_rgba_unmultiplied(self.theme.accent.r(), self.theme.accent.g(), self.theme.accent.b(), alpha);
-                        
-                        let resp = ui.put(r, egui::Button::new("").fill(Color32::TRANSPARENT).stroke(egui::Stroke::NONE));
-                        if alpha > 0 {
-                            if resp.hovered() { ui.painter().rect_filled(r, 0.0, btn_bg); }
-                            ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, "+", FontId::new(22.0, FontFamily::Proportional), tint);
-                            if resp.clicked() { self.add_frame(); }
+                        if resp.clicked() { self.add_frame(); }
                         }
-                        let spacing_offset = (84.0 + 10.0) * (1.0 - self.play_anim_t);
-                        let _ = ui.allocate_exact_size(Vec2::new(spacing_offset, 0.0), egui::Sense::hover());
                     });
                 });
             });
@@ -2500,12 +3985,11 @@ impl App {
 
         const BTN: f32 = 36.0;
         const PAD: f32 = 4.0;
-        const MENU_W: f32 = BTN * 3.0 + PAD * 4.0;
-        const MENU_H: f32 = BTN + PAD * 2.0;
 
         let mut action: Option<u8> = None;
         let inner = egui::Area::new(egui::Id::new("layer_ctx_menu"))
-            .fixed_pos(Pos2::new(pos.x - MENU_W, pos.y - MENU_H))
+            .fixed_pos(pos)
+            .pivot(egui::Align2::RIGHT_TOP)
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 egui::Frame::new()
@@ -2521,7 +4005,7 @@ impl App {
                         ui.style_mut().spacing.item_spacing = Vec2::ZERO;
 
                     ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 10.0;
+                        ui.style_mut().spacing.item_spacing = Vec2::ZERO;
                             // Duplicate
                             let (r, resp) = ui.allocate_exact_size(Vec2::splat(BTN), egui::Sense::click());
                             if resp.hovered() { ui.painter().rect_filled(r, 0.0, theme.accent); }
@@ -2559,15 +4043,15 @@ impl App {
         let is_hovered = ctx.pointer_hover_pos()
             .map(|p| inner.response.rect.contains(p))
             .unwrap_or(false);
+        let age = now - opened_at;
         let should_close_timer = ctx.data_mut(|d| {
             let last: &mut f64 = d.get_temp_mut_or_insert_with(menu_id, || now);
-            if is_hovered { *last = now; false } else { now - *last > 2.0 }
+            if age < 0.15 || is_hovered { *last = now; false } else { now - *last > 2.0 }
         });
         ctx.request_repaint();
 
         // Close on click outside — guarded: ignore clicks within 0.15s of opening
         // (the right-click that opened the menu is still "any_click" on the same frame)
-        let age = now - opened_at;
         let clicked_outside = age > 0.15 && ctx.input(|i| i.pointer.any_click()) && !is_hovered;
 
         if action.is_some() || should_close_timer || clicked_outside {
@@ -2615,6 +4099,332 @@ impl App {
                 }
                 _ => {}
             }
+        }
+    }
+
+    /// Flip the current selection horizontally. Lifts a rect selection to a float first if needed.
+    fn flip_selection_horizontal(&mut self) {
+        if !self.select_state.has_float() {
+            if let Some(rect) = self.select_state.rect {
+                self.lift_selection_to_float(rect);
+            } else {
+                return;
+            }
+        }
+        self.select_state.scale.0 = -self.select_state.scale.0;
+        self.canvas_dirty = true;
+    }
+
+    /// Flip the current selection vertically. Lifts a rect selection to a float first if needed.
+    fn flip_selection_vertical(&mut self) {
+        if !self.select_state.has_float() {
+            if let Some(rect) = self.select_state.rect {
+                self.lift_selection_to_float(rect);
+            } else {
+                return;
+            }
+        }
+        self.select_state.scale.1 = -self.select_state.scale.1;
+        self.canvas_dirty = true;
+    }
+
+    fn draw_canvas_context_menu(&mut self, ctx: &egui::Context) {
+        let Some(mut state) = self.canvas_ctx_menu.take() else { return; };
+        use crate::wang_blob::*;
+
+        let theme = self.theme.clone();
+        let btn_h = 28.0;
+        let pad = 4.0;
+        let label_w = 52.0;
+        let ctrl_w = 40.0;                       // one control slot
+        let controls_w = ctrl_w * 2.0 + pad;     // two controls + gap between them
+        let content_w = label_w + pad + controls_w;
+
+        // 6 rows when Wang/Blob active, 4 otherwise.
+        let num_rows = if self.wang_blob.mode != WangBlobMode::None { 6 } else { 4 };
+        let content_h = btn_h * (num_rows as f32) + pad * ((num_rows - 1) as f32);
+
+        let outcome = show_context_menu(
+            &mut state,
+            ctx,
+            &theme,
+            "canvas_ctx_menu",
+            None,
+            |ui| {
+                let total = ui.allocate_exact_size(Vec2::new(content_w, content_h), egui::Sense::hover()).0;
+                let base = total.min;
+                let controls_x = base.x + label_w + pad;
+
+                // ── Row 0: Pen Size ──
+                let row0_y = base.y;
+                let label_r0 = egui::Rect::from_min_size(egui::Pos2::new(base.x, row0_y), Vec2::new(label_w, btn_h));
+                ui.painter().text(egui::Pos2::new(label_r0.min.x + 4.0, label_r0.center().y), egui::Align2::LEFT_CENTER, "Size", FontId::new(11.0, FontFamily::Proportional), theme.fg_desc);
+
+                let minus_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row0_y), Vec2::new(ctrl_w, btn_h));
+                let minus_resp = ui.interact(minus_rect, egui::Id::new("ctx_pen_minus"), egui::Sense::click());
+                let minus_bg = if minus_resp.hovered() { theme.accent } else { theme.surface };
+                ui.painter().rect_filled(minus_rect, 0.0, minus_bg);
+                let minus_fg = if minus_resp.hovered() { theme.fg } else { theme.fg_muted };
+                ui.painter().text(minus_rect.center(), egui::Align2::CENTER_CENTER, "-", FontId::new(13.0, FontFamily::Proportional), minus_fg);
+                if minus_resp.clicked() && self.pen_size > 1 { self.pen_size -= 1; }
+
+                let size_val_x = controls_x + ctrl_w + pad / 2.0;
+                ui.painter().text(egui::Pos2::new(size_val_x, row0_y + btn_h / 2.0), egui::Align2::CENTER_CENTER, format!("{}", self.pen_size), FontId::new(11.0, FontFamily::Proportional), theme.fg_desc);
+
+                let plus_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x + ctrl_w + pad, row0_y), Vec2::new(ctrl_w, btn_h));
+                let plus_resp = ui.interact(plus_rect, egui::Id::new("ctx_pen_plus"), egui::Sense::click());
+                let plus_bg = if plus_resp.hovered() { theme.accent } else { theme.surface };
+                ui.painter().rect_filled(plus_rect, 0.0, plus_bg);
+                let plus_fg = if plus_resp.hovered() { theme.fg } else { theme.fg_muted };
+                ui.painter().text(plus_rect.center(), egui::Align2::CENTER_CENTER, "+", FontId::new(13.0, FontFamily::Proportional), plus_fg);
+                if plus_resp.clicked() && self.pen_size < 8 { self.pen_size += 1; }
+
+                // ── Row 1: Mirroring ──
+                let row1_y = row0_y + btn_h + pad;
+                let label_r1 = egui::Rect::from_min_size(egui::Pos2::new(base.x, row1_y), Vec2::new(label_w, btn_h));
+                ui.painter().text(egui::Pos2::new(label_r1.min.x + 4.0, label_r1.center().y), egui::Align2::LEFT_CENTER, "Mirroring", FontId::new(11.0, FontFamily::Proportional), theme.fg_desc);
+
+                let x_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row1_y), Vec2::new(ctrl_w, btn_h));
+                let x_resp = ui.interact(x_rect, egui::Id::new("ctx_x"), egui::Sense::click());
+                let x_bg = if x_resp.hovered() { theme.accent } else if self.mirror_x { theme.surface } else { Color32::TRANSPARENT };
+                ui.painter().rect_filled(x_rect, 0.0, x_bg);
+                let x_fg = if x_resp.hovered() || self.mirror_x { theme.fg } else { theme.fg_muted };
+                ui.painter().text(x_rect.center(), egui::Align2::CENTER_CENTER, "X", FontId::new(13.0, FontFamily::Proportional), x_fg);
+                if x_resp.clicked() { self.mirror_x = !self.mirror_x; }
+
+                if self.mirror_x && self.mirror_y {
+                    let div_x = controls_x + ctrl_w + pad / 2.0;
+                    ui.painter().line_segment(
+                        [egui::Pos2::new(div_x, row1_y + 6.0), egui::Pos2::new(div_x, row1_y + btn_h - 6.0)],
+                        egui::Stroke::new(1.0, theme.accent),
+                    );
+                }
+
+                let y_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x + ctrl_w + pad, row1_y), Vec2::new(ctrl_w, btn_h));
+                let y_resp = ui.interact(y_rect, egui::Id::new("ctx_y"), egui::Sense::click());
+                let y_bg = if y_resp.hovered() { theme.accent } else if self.mirror_y { theme.surface } else { Color32::TRANSPARENT };
+                ui.painter().rect_filled(y_rect, 0.0, y_bg);
+                let y_fg = if y_resp.hovered() || self.mirror_y { theme.fg } else { theme.fg_muted };
+                ui.painter().text(y_rect.center(), egui::Align2::CENTER_CENTER, "Y", FontId::new(13.0, FontFamily::Proportional), y_fg);
+                if y_resp.clicked() { self.mirror_y = !self.mirror_y; }
+
+                // ── Row 2: Flip ──
+                let row2_y = row1_y + btn_h + pad;
+                let can_flip = self.select_state.has_float() || self.select_state.rect.is_some();
+                let label_r2 = egui::Rect::from_min_size(egui::Pos2::new(base.x, row2_y), Vec2::new(label_w, btn_h));
+                ui.painter().text(egui::Pos2::new(label_r2.min.x + 4.0, label_r2.center().y), egui::Align2::LEFT_CENTER, "Flip", FontId::new(11.0, FontFamily::Proportional), theme.fg_desc);
+
+                let h_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row2_y), Vec2::new(ctrl_w, btn_h));
+                let h_resp = ui.interact(h_rect, egui::Id::new("ctx_flip_h"), if can_flip { egui::Sense::click() } else { egui::Sense::hover() });
+                let h_bg = if !can_flip { Color32::TRANSPARENT } else if h_resp.hovered() { theme.accent } else { theme.surface };
+                ui.painter().rect_filled(h_rect, 0.0, h_bg);
+                let h_fg = if !can_flip { theme.fg_muted } else if h_resp.hovered() { theme.fg } else { theme.fg_muted };
+                ui.painter().text(h_rect.center(), egui::Align2::CENTER_CENTER, "H", FontId::new(13.0, FontFamily::Proportional), h_fg);
+                if can_flip && h_resp.clicked() { self.flip_selection_horizontal(); }
+
+                let v_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x + ctrl_w + pad, row2_y), Vec2::new(ctrl_w, btn_h));
+                let v_resp = ui.interact(v_rect, egui::Id::new("ctx_flip_v"), if can_flip { egui::Sense::click() } else { egui::Sense::hover() });
+                let v_bg = if !can_flip { Color32::TRANSPARENT } else if v_resp.hovered() { theme.accent } else { theme.surface };
+                ui.painter().rect_filled(v_rect, 0.0, v_bg);
+                let v_fg = if !can_flip { theme.fg_muted } else if v_resp.hovered() { theme.fg } else { theme.fg_muted };
+                ui.painter().text(v_rect.center(), egui::Align2::CENTER_CENTER, "V", FontId::new(13.0, FontFamily::Proportional), v_fg);
+                if can_flip && v_resp.clicked() { self.flip_selection_vertical(); }
+
+                // ── Row 3: Grid ──
+                let row3_y = row2_y + btn_h + pad;
+                let label_r3 = egui::Rect::from_min_size(egui::Pos2::new(base.x, row3_y), Vec2::new(label_w, btn_h));
+                ui.painter().text(egui::Pos2::new(label_r3.min.x + 4.0, label_r3.center().y), egui::Align2::LEFT_CENTER, "Grid", FontId::new(11.0, FontFamily::Proportional), theme.fg_desc);
+
+                let onoff_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row3_y), Vec2::new(ctrl_w, btn_h));
+                let onoff_resp = ui.interact(onoff_rect, egui::Id::new("ctx_grid_onoff"), egui::Sense::click());
+                let onoff_bg = if onoff_resp.hovered() { theme.accent } else if self.grid_visible { theme.surface } else { Color32::TRANSPARENT };
+                ui.painter().rect_filled(onoff_rect, 0.0, onoff_bg);
+                let onoff_fg = if onoff_resp.hovered() || self.grid_visible { theme.fg } else { theme.fg_muted };
+                ui.painter().text(onoff_rect.center(), egui::Align2::CENTER_CENTER, if self.grid_visible { "ON" } else { "OFF" }, FontId::new(11.0, FontFamily::Proportional), onoff_fg);
+                if onoff_resp.clicked() { self.grid_visible = !self.grid_visible; }
+
+                let size_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x + ctrl_w + pad, row3_y), Vec2::new(ctrl_w, btn_h));
+                let size_resp = ui.interact(size_rect, egui::Id::new("ctx_grid"), egui::Sense::click());
+                let size_bg = if size_resp.hovered() { theme.accent } else { theme.surface };
+                ui.painter().rect_filled(size_rect, 0.0, size_bg);
+                let size_fg = if size_resp.hovered() { theme.fg } else { theme.fg_muted };
+                ui.painter().text(size_rect.center(), egui::Align2::CENTER_CENTER, format!("{}px", self.grid_size), FontId::new(11.0, FontFamily::Proportional), size_fg);
+                if size_resp.clicked() {
+                    const SIZES: [u32; 8] = [1, 2, 4, 8, 16, 32, 64, 128];
+                    let idx = SIZES.iter().position(|&s| s == self.grid_size).unwrap_or(0);
+                    self.grid_size = SIZES[(idx + 1) % SIZES.len()];
+                }
+
+                // ── Row 4: Tile Mode (Wang/Blob) — only when not in WangBlob mode ──
+                if self.wang_blob.mode == crate::wang_blob::WangBlobMode::None {
+                    let row4_y = row3_y + btn_h + pad;
+                    let label_r4 = egui::Rect::from_min_size(egui::Pos2::new(base.x, row4_y), Vec2::new(label_w, btn_h));
+                    ui.painter().text(egui::Pos2::new(label_r4.min.x + 4.0, label_r4.center().y), egui::Align2::LEFT_CENTER, "Tile Mode", FontId::new(11.0, FontFamily::Proportional), theme.fg_desc);
+
+                    // Wang button
+                    let wang_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row4_y), Vec2::new(ctrl_w, btn_h));
+                    let wang_resp = ui.interact(wang_rect, egui::Id::new("ctx_wang"), egui::Sense::click());
+                    let wang_bg = if wang_resp.hovered() { theme.accent } else { theme.surface };
+                    ui.painter().rect_filled(wang_rect, 0.0, wang_bg);
+                    let wang_fg = if wang_resp.hovered() { theme.fg } else { theme.fg_muted };
+                    ui.painter().text(wang_rect.center(), egui::Align2::CENTER_CENTER, "Wang", FontId::new(10.0, FontFamily::Proportional), wang_fg);
+                    if wang_resp.clicked() {
+                        let dialog_resp = rfd::MessageDialog::new()
+                            .set_title("Enable Tile Mode")
+                            .set_description(&format!(
+                                "This will expand the canvas to show all tiles.\n\
+                                 This cannot be undone.\n\n\
+                                 {}x{} → 4×4 grid (16 tiles)",
+                                self.project.canvas_width, self.project.canvas_height
+                            ))
+                            .set_buttons(rfd::MessageButtons::YesNoCancel)
+                            .show();
+                        if dialog_resp == rfd::MessageDialogResult::Yes {
+                            self.enable_wang_blob(crate::wang_blob::WangBlobMode::Wang);
+                        }
+                    }
+
+                    // Blob button
+                    let blob_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x + ctrl_w + pad, row4_y), Vec2::new(ctrl_w, btn_h));
+                    let blob_resp = ui.interact(blob_rect, egui::Id::new("ctx_blob"), egui::Sense::click());
+                    let blob_bg = if blob_resp.hovered() { theme.accent } else { theme.surface };
+                    ui.painter().rect_filled(blob_rect, 0.0, blob_bg);
+                    let blob_fg = if blob_resp.hovered() { theme.fg } else { theme.fg_muted };
+                    ui.painter().text(blob_rect.center(), egui::Align2::CENTER_CENTER, "Blob", FontId::new(10.0, FontFamily::Proportional), blob_fg);
+                    if blob_resp.clicked() {
+                        let dialog_resp = rfd::MessageDialog::new()
+                            .set_title("Enable Tile Mode")
+                            .set_description(&format!(
+                                "This will expand the canvas to show all tiles.\n\
+                                 This cannot be undone.\n\n\
+                                 {}x{} → 12×4 grid (48 tiles, 1 gap)",
+                                self.project.canvas_width, self.project.canvas_height
+                            ))
+                            .set_buttons(rfd::MessageButtons::YesNoCancel)
+                            .show();
+                        if dialog_resp == rfd::MessageDialogResult::Yes {
+                            self.enable_wang_blob(crate::wang_blob::WangBlobMode::Blob);
+                        }
+                    }
+                }
+
+                // ── Row 5: Sync Mode (only shown when WangBlob active) ──
+                if self.wang_blob.mode != crate::wang_blob::WangBlobMode::None {
+                    let row5_y = row3_y + btn_h + pad;
+                    let label_r5 = egui::Rect::from_min_size(egui::Pos2::new(base.x, row5_y), Vec2::new(label_w, btn_h));
+                    ui.painter().text(egui::Pos2::new(label_r5.min.x + 4.0, label_r5.center().y), egui::Align2::LEFT_CENTER, "Sync", FontId::new(11.0, FontFamily::Proportional), theme.fg_desc);
+
+                    let bi_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row5_y), Vec2::new(ctrl_w, btn_h));
+                    let bi_resp = ui.interact(bi_rect, egui::Id::new("ctx_sync_bi"), egui::Sense::click());
+                    let bi_bg = if bi_resp.hovered() { theme.accent } else if self.wang_blob.sync_mode == crate::wang_blob::SyncMode::Bidirectional { theme.surface } else { Color32::TRANSPARENT };
+                    ui.painter().rect_filled(bi_rect, 0.0, bi_bg);
+                    let bi_fg = if bi_resp.hovered() || self.wang_blob.sync_mode == crate::wang_blob::SyncMode::Bidirectional { theme.fg } else { theme.fg_muted };
+                    ui.painter().text(bi_rect.center(), egui::Align2::CENTER_CENTER, "Bi", FontId::new(10.0, FontFamily::Proportional), bi_fg);
+                    if bi_resp.clicked() { self.wang_blob.sync_mode = crate::wang_blob::SyncMode::Bidirectional; }
+
+                    let uni_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x + ctrl_w + pad, row5_y), Vec2::new(ctrl_w, btn_h));
+                    let uni_resp = ui.interact(uni_rect, egui::Id::new("ctx_sync_uni"), egui::Sense::click());
+                    let uni_bg = if uni_resp.hovered() { theme.accent } else if self.wang_blob.sync_mode == crate::wang_blob::SyncMode::Unidirectional { theme.surface } else { Color32::TRANSPARENT };
+                    ui.painter().rect_filled(uni_rect, 0.0, uni_bg);
+                    let uni_fg = if uni_resp.hovered() || self.wang_blob.sync_mode == crate::wang_blob::SyncMode::Unidirectional { theme.fg } else { theme.fg_muted };
+                    ui.painter().text(uni_rect.center(), egui::Align2::CENTER_CENTER, "Uni", FontId::new(10.0, FontFamily::Proportional), uni_fg);
+                    if uni_resp.clicked() { self.wang_blob.sync_mode = crate::wang_blob::SyncMode::Unidirectional; }
+                }
+
+                None  // Never close from an internal click
+            },
+        );
+
+        if !outcome.should_close() {
+            self.canvas_ctx_menu = Some(state);
+        }
+    }
+
+    /// Enable Wang/Blob mode: expand canvas, copy existing content to center tile.
+    fn enable_wang_blob(&mut self, mode: crate::wang_blob::WangBlobMode) {
+        let w = self.project.canvas_width;
+        let h = self.project.canvas_height;
+
+        // Composite current canvas pixels.
+        let pixels = self.composite_active_frame();
+
+        // Expand the wang_blob state (this updates canvas dimensions too).
+        self.wang_blob.expand(mode, w.max(h), h, &pixels);
+
+        // Update canvas dimensions.
+        let (new_w, new_h) = self.wang_blob.grid_dims();
+        self.project.canvas_width = new_w;
+        self.project.canvas_height = new_h;
+
+        // Resize layers to match new canvas dimensions.
+        self.project.active_frame_mut().resize_canvas(new_w, new_h);
+
+        // Flatten tile_data to frame layers so tiles are visible on canvas.
+        let frame = self.project.active_frame_mut();
+        if let Some(layer) = frame.layers.first_mut() {
+            self.wang_blob.flatten_to_buffer(&mut layer.pixels, new_w);
+        }
+
+        // Re-upload canvas texture with expanded dimensions.
+        self.canvas_dirty = true;
+
+        // Open tile browser automatically.
+        self.tile_browser.open = true;
+    }
+
+    /// Sync frame layer pixels back into wang_blob tile_data, propagate edges, re-flatten.
+    fn sync_frame_to_wang(&mut self) {
+        let ts = self.wang_blob.tile_size;
+        let cw = self.project.canvas_width;
+        let rows = self.wang_blob.grid_rows();
+        let cols = self.wang_blob.grid_cols();
+        if rows == 0 || cols == 0 { return; }
+
+        let frame = self.project.active_frame_ref();
+        let Some(layer) = frame.layers.first() else { return };
+        let pixels = &layer.pixels;
+
+        // Save tile_data before modification so we can detect which tiles changed
+        let old_tiles: Vec<Vec<[u8; 4]>> = self.wang_blob.tile_data.clone();
+
+        for tr in 0..rows {
+            for tc in 0..cols {
+                if self.wang_blob.is_gap(tr, tc) { continue; }
+                let tidx = self.wang_blob.tile_index(tr, tc);
+                if tidx >= self.wang_blob.tile_data.len() { continue; }
+                let tile = &mut self.wang_blob.tile_data[tidx];
+                for ly in 0..ts {
+                    for lx in 0..ts {
+                        let canvas_y = tr * ts + ly;
+                        let canvas_x = tc * ts + lx;
+                        let idx = (canvas_y * cw + canvas_x) as usize * 4;
+                        if idx + 3 < pixels.len() {
+                            tile[(ly * ts + lx) as usize] = [
+                                pixels[idx],
+                                pixels[idx + 1],
+                                pixels[idx + 2],
+                                pixels[idx + 3],
+                            ];
+                        }
+                    }
+                }
+            }
+        }
+
+        // Find which tiles changed and only propagate from those
+        let mut changed: Vec<usize> = Vec::new();
+        for (tidx, (old, new)) in old_tiles.iter().zip(self.wang_blob.tile_data.iter()).enumerate() {
+            if old != new {
+                changed.push(tidx);
+            }
+        }
+        if !changed.is_empty() {
+            self.wang_blob.propagate_modified(&changed);
+        }
+
+        let frame = self.project.active_frame_mut();
+        if let Some(layer) = frame.layers.first_mut() {
+            self.wang_blob.flatten_to_buffer(&mut layer.pixels, cw);
         }
     }
 
@@ -2707,6 +4517,11 @@ impl App {
 
 
     fn draw_workspace(&mut self, ctx: &egui::Context) {
+        let (disp_w, disp_h) = if self.tile_display_active && self.project.is_tiled() {
+            (self.tile_display_cols * self.project.tile_w, self.tile_display_rows * self.project.tile_h)
+        } else {
+            (self.project.canvas_width, self.project.canvas_height)
+        };
         CentralPanel::default()
             .frame(Frame::new().fill(self.theme.bg))
             .show(ctx, |ui| {
@@ -2715,26 +4530,145 @@ impl App {
                 }
                 let canvas_rect = ui.available_rect_before_wrap();
                 if self.pending_zoom_fit {
-                    self.canvas.zoom_to_fit(canvas_rect, self.project.canvas_width, self.project.canvas_height);
+                    let fit_rect = egui::Rect::from_min_max(
+                        Pos2::new(canvas_rect.min.x, canvas_rect.min.y + TOP_BAR_HEIGHT),
+                        canvas_rect.max,
+                    );
+                    self.canvas.zoom_to_fit(fit_rect, disp_w, disp_h);
                     self.pending_zoom_fit = false;
                 }
                 let painter = ui.painter_at(canvas_rect);
                 self.canvas.draw(
                     &painter,
                     canvas_rect,
-                    self.project.canvas_width,
-                    self.project.canvas_height,
+                    disp_w,
+                    disp_h,
                     &self.theme,
                 );
-                self.canvas.handle_input(ui, canvas_rect);
+                // Ctrl + scroll on Pencil/Eraser → adjust pen size (accumulated, finer control)
+                let is_brush = matches!(self.active_tool, ActiveTool::Pencil | ActiveTool::Eraser);
+                let ctrl_held = ui.input(|i| i.modifiers.ctrl);
+                let scroll_raw = ui.input(|i| i.raw_scroll_delta.y);
+                if is_brush && ctrl_held {
+                    self.pen_size_scroll_accum += scroll_raw;
+                    const THRESH: f32 = 30.0;
+                    while self.pen_size_scroll_accum > THRESH {
+                        self.pen_size_scroll_accum -= THRESH;
+                        if self.pen_size < 8 { self.pen_size += 1; }
+                    }
+                    while self.pen_size_scroll_accum < -THRESH {
+                        self.pen_size_scroll_accum += THRESH;
+                        if self.pen_size > 1 { self.pen_size -= 1; }
+                    }
+                } else if !self.palette_browser.open {
+                    self.pen_size_scroll_accum = 0.0;
+                    self.canvas.handle_input(ui, canvas_rect);
+                }
 
-                let art_rect = self.canvas.art_rect(canvas_rect, self.project.canvas_width, self.project.canvas_height);
+                let art_rect = self.canvas.art_rect(canvas_rect, disp_w, disp_h);
                 painter.rect_stroke(
                     art_rect,
                     0.0,
                     egui::Stroke::new(1.0, self.theme.muted),
                     egui::StrokeKind::Outside,
                 );
+
+                let zoom = self.canvas.zoom;
+                let guide_color = Color32::from_rgba_unmultiplied(
+                    self.theme.accent.r(),
+                    self.theme.accent.g(),
+                    self.theme.accent.b(),
+                    160,
+                );
+                if !self.tile_display_active {
+                    // Mirror guide lines
+                    let w = self.project.canvas_width as f32;
+                    let h = self.project.canvas_height as f32;
+                    if self.mirror_x {
+                        let x = art_rect.min.x + (w / 2.0) * zoom;
+                        painter.line_segment(
+                            [Pos2::new(x, art_rect.min.y), Pos2::new(x, art_rect.max.y)],
+                            egui::Stroke::new(1.0, guide_color),
+                        );
+                    }
+                    if self.mirror_y {
+                        let y = art_rect.min.y + (h / 2.0) * zoom;
+                        painter.line_segment(
+                            [Pos2::new(art_rect.min.x, y), Pos2::new(art_rect.max.x, y)],
+                            egui::Stroke::new(1.0, guide_color),
+                        );
+                    }
+                }
+
+                // Grid overlay
+                if self.grid_visible && self.grid_size >= 1 {
+                    for x in (self.grid_size..disp_w).step_by(self.grid_size as usize) {
+                        let sx = art_rect.min.x + x as f32 * zoom;
+                        painter.line_segment(
+                            [Pos2::new(sx, art_rect.min.y), Pos2::new(sx, art_rect.max.y)],
+                            egui::Stroke::new(1.0, guide_color),
+                        );
+                    }
+                    for y in (self.grid_size..disp_h).step_by(self.grid_size as usize) {
+                        let sy = art_rect.min.y + y as f32 * zoom;
+                        painter.line_segment(
+                            [Pos2::new(art_rect.min.x, sy), Pos2::new(art_rect.max.x, sy)],
+                            egui::Stroke::new(1.0, guide_color),
+                        );
+                    }
+                }
+
+
+                // ── Wang/Blob tile grid lines (when in tile mode) ───────────────
+                use crate::wang_blob::*;
+                if self.wang_blob.mode != WangBlobMode::None {
+                    let (cols, rows) = self.wang_blob.grid_dims();
+                    let ts = self.wang_blob.tile_size;
+                    // Draw vertical grid lines.
+                    for c in 1..WANG_COLS.max(BLOB_COLS) {
+                        let sx = art_rect.min.x + (c as f32 * ts as f32) * zoom;
+                        painter.line_segment(
+                            [Pos2::new(sx, art_rect.min.y), Pos2::new(sx, art_rect.max.y)],
+                            egui::Stroke::new(0.5, Color32::from_rgba_unmultiplied(
+                                self.theme.accent.r(), self.theme.accent.g(), self.theme.accent.b(), 80,
+                            )),
+                        );
+                    }
+                    // Draw horizontal grid lines.
+                    for r in 1..WANG_ROWS.max(BLOB_ROWS) {
+                        let sy = art_rect.min.y + (r as f32 * ts as f32) * zoom;
+                        painter.line_segment(
+                            [Pos2::new(art_rect.min.x, sy), Pos2::new(art_rect.max.x, sy)],
+                            egui::Stroke::new(0.5, Color32::from_rgba_unmultiplied(
+                                self.theme.accent.r(), self.theme.accent.g(), self.theme.accent.b(), 80,
+                            )),
+                        );
+                    }
+
+                    // Highlight selected tile (if any).
+                    if let Some((sr, sc)) = self.tile_browser.selected {
+                        let (grid_cols, _grid_rows) = match self.wang_blob.mode {
+                            WangBlobMode::Wang => (WANG_COLS, WANG_ROWS),
+                            _ => (BLOB_COLS, BLOB_ROWS),
+                        };
+                        if !self.wang_blob.is_gap(sr, sc) {
+                            let tl_x = art_rect.min.x + (sc as f32 * ts as f32) * zoom;
+                            let tl_y = art_rect.min.y + (sr as f32 * ts as f32) * zoom;
+                            let br_x = tl_x + (ts as f32 * zoom);
+                            let br_y = tl_y + (ts as f32 * zoom);
+                            let sel_rect = egui::Rect::from_min_max(
+                                Pos2::new(tl_x, tl_y),
+                                Pos2::new(br_x, br_y),
+                            );
+                            painter.rect_stroke(
+                                sel_rect.shrink(2.0),
+                                0.0,
+                                egui::Stroke::new(2.0, self.theme.accent),
+                                egui::StrokeKind::Outside,
+                            );
+                        }
+                    }
+                }
 
                 // Selection rect overlay (during initial marquee drag)
                 if matches!(self.active_tool, ActiveTool::RectSelect) {
@@ -2796,13 +4730,356 @@ impl App {
                     }
                 }
 
+                // Multi-tile start/end indicators on canvas tiles
+                if self.show_start_end_markers && !self.tile_display_active && self.project.is_tiled() {
+                    let ai = self.project.active_animation;
+                    if let Some(anim) = self.project.animations.get(ai) {
+                        if anim.tile_start != anim.tile_end {
+                            let tw = self.project.tile_w as f32;
+                            let th = self.project.tile_h as f32;
+                            let zoom = self.canvas.zoom;
+                            let ox = art_rect.min.x;
+                            let oy = art_rect.min.y;
+                            let color = self.theme.accent;
+                            let sz = (1.0 * zoom).max(2.0);
+
+                            let painter = ui.painter();
+
+                            // Start tile markers (Top-Left and Bottom-Left)
+                            let idx = anim.tile_start;
+                            let tx = (idx as u32 % self.project.tiles_w) as f32;
+                            let ty = (idx as u32 / self.project.tiles_w) as f32;
+                            let x_start = ox + tx * tw * zoom;
+                            let y_start = oy + ty * th * zoom;
+                            let y_bot = y_start + th * zoom - sz;
+
+                            // Top-Left Corner (Arrow/bracket)
+                            painter.rect_filled(egui::Rect::from_min_size(Pos2::new(x_start, y_start), Vec2::splat(sz)), 0.0, color);
+                            painter.rect_filled(egui::Rect::from_min_size(Pos2::new(x_start + sz, y_start), Vec2::splat(sz)), 0.0, color);
+                            painter.rect_filled(egui::Rect::from_min_size(Pos2::new(x_start, y_start + sz), Vec2::splat(sz)), 0.0, color);
+
+                            // Bottom-Left Corner (Arrow/bracket)
+                            painter.rect_filled(egui::Rect::from_min_size(Pos2::new(x_start, y_bot), Vec2::splat(sz)), 0.0, color);
+                            painter.rect_filled(egui::Rect::from_min_size(Pos2::new(x_start + sz, y_bot), Vec2::splat(sz)), 0.0, color);
+                            painter.rect_filled(egui::Rect::from_min_size(Pos2::new(x_start, y_bot - sz), Vec2::splat(sz)), 0.0, color);
+
+                            // End tile markers (Top-Right and Bottom-Right)
+                            let idx = anim.tile_end;
+                            let tx = (idx as u32 % self.project.tiles_w) as f32;
+                            let ty = (idx as u32 / self.project.tiles_w) as f32;
+                            let x_end = ox + (tx + 1.0) * tw * zoom;
+                            let y_start = oy + ty * th * zoom;
+                            let y_bot = y_start + th * zoom - sz;
+                            let x_right = x_end - sz;
+
+                            // Top-Right Corner (Arrow/bracket)
+                            painter.rect_filled(egui::Rect::from_min_size(Pos2::new(x_right, y_start), Vec2::splat(sz)), 0.0, color);
+                            painter.rect_filled(egui::Rect::from_min_size(Pos2::new(x_right - sz, y_start), Vec2::splat(sz)), 0.0, color);
+                            painter.rect_filled(egui::Rect::from_min_size(Pos2::new(x_right, y_start + sz), Vec2::splat(sz)), 0.0, color);
+
+                            // Bottom-Right Corner (Arrow/bracket)
+                            painter.rect_filled(egui::Rect::from_min_size(Pos2::new(x_right, y_bot), Vec2::splat(sz)), 0.0, color);
+                            painter.rect_filled(egui::Rect::from_min_size(Pos2::new(x_right - sz, y_bot), Vec2::splat(sz)), 0.0, color);
+                            painter.rect_filled(egui::Rect::from_min_size(Pos2::new(x_right, y_bot - sz), Vec2::splat(sz)), 0.0, color);
+
+                        }
+                    }
+                }
+
                 let response = ui.allocate_rect(canvas_rect, egui::Sense::click_and_drag());
-                if self.active_tool == ActiveTool::Zoom {
+                if self.tile_display_active && self.project.is_tiled() {
+                    // No interaction in compact clip-only display mode
+                } else if self.active_tool == ActiveTool::Zoom {
                     self.handle_zoom_tool_input(&response, canvas_rect);
                 } else {
                     self.handle_canvas_input(response, canvas_rect);
                 }
             });
+    }
+
+    fn paste_from_clipboard(&mut self) {
+        let mut clipboard = match arboard::Clipboard::new() {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+
+        // Try 1: Try reading as image directly
+        let mut img_opt = match clipboard.get_image() {
+            Ok(img) => {
+                let w = img.width as u32;
+                let h = img.height as u32;
+                let mut pixels = Vec::with_capacity((w * h) as usize);
+                for chunk in img.bytes.chunks_exact(4) {
+                    pixels.push([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                }
+                Some((w, h, pixels))
+            }
+            Err(_) => None,
+        };
+
+        // Try 2: Fallback to reading as text (e.g. file path copied in Finder or text path)
+        if img_opt.is_none() {
+            if let Ok(text) = clipboard.get_text() {
+                let trimmed = text.trim();
+                let path_str = if trimmed.starts_with("file://") {
+                    trimmed.strip_prefix("file://").unwrap_or(trimmed)
+                } else {
+                    trimmed
+                };
+                let path = std::path::Path::new(path_str);
+                if path.exists() && path.is_file() {
+                    if let Ok(img) = image::open(path) {
+                        let rgba = img.to_rgba8();
+                        let w = rgba.width();
+                        let h = rgba.height();
+                        let mut pixels = Vec::with_capacity((w * h) as usize);
+                        for chunk in rgba.into_raw().chunks_exact(4) {
+                            pixels.push([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                        }
+                        img_opt = Some((w, h, pixels));
+                    }
+                }
+            }
+        }
+
+        // Try 3: macOS Specific fallback to convert Cocoa TIFF pasteboard data to PNG
+        #[cfg(target_os = "macos")]
+        if img_opt.is_none() {
+            let swift_cmd = r#"
+import Cocoa
+let pb = NSPasteboard.general
+if let d = pb.data(forType: .tiff),
+   let img = NSImage(data: d) {
+    var r = CGRect(x: 0, y: 0, width: img.size.width, height: img.size.height)
+    if let cg = img.cgImage(forProposedRect: &r, context: nil, hints: nil) {
+        let bmp = NSBitmapImageRep(cgImage: cg)
+        if let png = bmp.representation(using: .png, properties: [:]) {
+            try? png.write(to: URL(fileURLWithPath: "/Users/sasadukic/Documents/Storage/Code/Squarez-v2/squarez_paste.png"))
+            print("SUCCESS")
+            exit(0)
+        }
+    }
+}
+print("FAIL")
+"#;
+            if let Ok(out) = std::process::Command::new("/usr/bin/swift").args(&["-e", swift_cmd]).output() {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                if stdout.contains("SUCCESS") {
+                    let path = std::path::Path::new("/Users/sasadukic/Documents/Storage/Code/Squarez-v2/squarez_paste.png");
+                    if path.exists() {
+                        if let Ok(img) = image::open(path) {
+                            let rgba = img.to_rgba8();
+                            let w = rgba.width();
+                            let h = rgba.height();
+                            let mut pixels = Vec::with_capacity((w * h) as usize);
+                            for chunk in rgba.into_raw().chunks_exact(4) {
+                                pixels.push([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                            }
+                            img_opt = Some((w, h, pixels));
+                        }
+                        let _ = std::fs::remove_file(path);
+                    }
+                }
+            }
+        }
+
+        let (w, h, pixels) = match img_opt {
+            Some(data) => data,
+            None => {
+                eprintln!("No image or valid image path found in clipboard.");
+                return;
+            }
+        };
+
+        if self.select_state.has_float() {
+            self.commit_float_to_layer();
+        }
+
+        self.active_tool = ActiveTool::RectSelect;
+
+        let canvas_w = self.project.canvas_width;
+        let canvas_h = self.project.canvas_height;
+        let x = if w < canvas_w { (canvas_w - w) / 2 } else { 0 };
+        let y = if h < canvas_h { (canvas_h - h) / 2 } else { 0 };
+
+        let buf = crate::tools::FloatBuffer { w, h, pixels };
+        self.select_state.begin_float(buf, (x, y, w, h));
+        self.canvas_dirty = true;
+    }
+
+    fn add_tile(&mut self) {
+        let ai = self.project.active_animation;
+        let idx = self.project.animations[ai].frames.len();
+
+        if self.project.is_tiled() {
+            let tiles_w = self.project.tiles_w;
+            let tile_h = self.project.tile_h;
+            let new_count = idx + 1;
+            let new_tiles_h = (new_count as f32 / tiles_w as f32).ceil() as u32;
+
+            if new_tiles_h > self.project.tiles_h {
+                self.project.tiles_h = new_tiles_h;
+                let new_canvas_h = tile_h * new_tiles_h;
+                let new_canvas_w = self.project.canvas_width;
+
+                for anim in &mut self.project.animations {
+                    for frame in &mut anim.frames {
+                        frame.resize_canvas(new_canvas_w, new_canvas_h);
+                    }
+                }
+            }
+        }
+        self.add_frame();
+    }
+
+    fn draw_tiles_section(&mut self, ui: &mut egui::Ui) {
+        let theme = self.theme.clone();
+        if self.ui_state.is_collapsed(Panel::Tiles) {
+            Frame::new().fill(theme.panel).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
+                let (rect, _) = ui.allocate_exact_size(
+                    Vec2::new(ui.available_width(), 26.0),
+                    egui::Sense::hover(),
+                );
+                let icon_size = Vec2::splat(16.0);
+                let icon_rect = egui::Rect::from_center_size(
+                    Pos2::new(rect.left() + 8.0, rect.center().y),
+                    icon_size,
+                );
+                let icon_resp = ui.interact(
+                    icon_rect,
+                    ui.id().with("tiles_icon"),
+                    egui::Sense::click(),
+                );
+                let icon_tint = if icon_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                ui.put(
+                    icon_rect,
+                    Image::new(egui::include_image!("../assets/icons/tiles.png"))
+                        .tint(icon_tint)
+                        .fit_to_exact_size(icon_size),
+                );
+                if icon_resp.clicked() {
+                    self.ui_state.toggle_collapsed(Panel::Tiles);
+                }
+            });
+            return;
+        }
+
+        let (show, add_clicked, _, _, _) = section_header(
+            ui,
+            &self.theme,
+            &mut self.ui_state,
+            Panel::Tiles,
+            egui::include_image!("../assets/icons/tiles.png"),
+            None,
+            false,
+        );
+
+        if !show { return; }
+
+        if add_clicked {
+            self.add_tile();
+        }
+
+        let ai = self.project.active_animation;
+        let tiles_count = self.project.animations[ai].frames.len();
+        if tiles_count == 0 { return; }
+
+        let cols = if tiles_count <= 4 { tiles_count.max(1) } else { 4 };
+        let rows = (tiles_count + cols - 1) / cols;
+
+        let grid_width = 176.0;
+        let size = grid_width / cols as f32;
+        let row_height = size;
+
+        let visible_rows = rows.min(16);
+        let max_height = visible_rows as f32 * row_height;
+
+        Frame::new().fill(theme.panel).inner_margin(Margin::same(0)).show(ui, |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt("tiles_scroll")
+                .max_height(max_height)
+                .auto_shrink([false, true])
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .show(ui, |ui| {
+                    let (grid_rect, _) = ui.allocate_exact_size(
+                        Vec2::new(grid_width, rows as f32 * row_height),
+                        egui::Sense::hover(),
+                    );
+                    let painter = ui.painter_at(grid_rect);
+
+                    for i in 0..tiles_count {
+                        let col = i % cols;
+                        let row = i / cols;
+                        let rect = egui::Rect::from_min_size(
+                            grid_rect.min + Vec2::new(col as f32 * size, row as f32 * row_height),
+                            Vec2::new(size, size),
+                        );
+
+                        let needs_gen = ai < self.thumbnails.len()
+                            && i < self.thumbnails[ai].len()
+                            && self.thumbnails[ai][i].dirty;
+                        if needs_gen {
+                            let (thumb_pixels, thumb_w, thumb_h) = if self.project.is_tiled() {
+                                let w = self.project.canvas_width;
+                                let tile_w = self.project.tile_w;
+                                let tile_h = self.project.tile_h;
+                                (crate::layers::composite_frame_tile(
+                                    &self.project.animations[ai].frames[i],
+                                    w, tile_w, tile_h,
+                                ), tile_w, tile_h)
+                            } else {
+                                let w = self.project.canvas_width;
+                                let h = self.project.canvas_height;
+                                (composite_frame(
+                                    &self.project.animations[ai].frames[i],
+                                    w, h,
+                                ), w, h)
+                            };
+                            let img = egui::ColorImage::from_rgba_unmultiplied(
+                                [thumb_w as usize, thumb_h as usize], &thumb_pixels,
+                            );
+                            let handle = ui.ctx().load_texture(
+                                format!("thumb_{}_{}", ai, i),
+                                img,
+                                egui::TextureOptions::NEAREST,
+                            );
+                            self.thumbnails[ai][i].handle = Some(handle);
+                            self.thumbnails[ai][i].dirty = false;
+                        }
+
+                        let is_active = self.project.active_frame == i;
+
+                        let checker_dark = theme.checker_dark;
+                        let checker_light = theme.checker_light;
+                        let cell = (size / 4.0).max(1.0);
+                        for r_row in 0..4 {
+                            for r_col in 0..4 {
+                                let color = if (r_row + r_col) % 2 == 0 { checker_dark } else { checker_light };
+                                let cell_rect = egui::Rect::from_min_size(
+                                    rect.min + Vec2::new(r_col as f32 * cell, r_row as f32 * cell),
+                                    Vec2::splat(cell),
+                                );
+                                painter.rect_filled(cell_rect, 0.0, color);
+                            }
+                        }
+
+                        if let Some(h) = self.thumbnails[ai].get(i).and_then(|t| t.handle.as_ref()) {
+                            painter.image(h.id(), rect, egui::Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                        }
+
+                        let border_color = if is_active { theme.accent } else { theme.surface };
+                        let border_width = if is_active { 2.0 } else { 1.0 };
+                        painter.rect_stroke(rect, 0.0, egui::Stroke::new(border_width, border_color), egui::StrokeKind::Inside);
+
+                        let resp = ui.interact(rect, ui.id().with(("tile_item", i)), egui::Sense::click());
+                        let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+                        if resp.clicked() {
+                            self.project.active_frame = i;
+                            self.canvas_dirty = true;
+                        }
+                    }
+                });
+        });
     }
 
     fn draw_preview_section(&mut self, ui: &mut egui::Ui) {
@@ -2815,7 +5092,7 @@ impl App {
             let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), egui::Sense::hover());
             let icon_size = Vec2::splat(16.0);
             let icon_rect = egui::Rect::from_center_size(
-                egui::pos2(rect.left() + 8.0, rect.center().y), icon_size,
+                egui::Pos2::new(rect.left() + 8.0, rect.center().y), icon_size,
             );
             let icon_resp = ui.interact(icon_rect, egui::Id::new("hdr_icon_preview"), egui::Sense::click());
             let tint = if icon_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
@@ -2829,11 +5106,23 @@ impl App {
 
         if collapsed { return; }
 
-        let pixels = self.composite_active_frame();
+        let (pixels, pw_size, ph_size) = if self.project.is_tiled() {
+            let tile_w = self.project.tile_w;
+            let tile_h = self.project.tile_h;
+            let cw = self.project.canvas_width;
+            (crate::layers::composite_frame_tile(
+                self.project.active_frame_ref(),
+                cw,
+                tile_w,
+                tile_h,
+            ), tile_w, tile_h)
+        } else {
+            (self.composite_active_frame(), self.project.canvas_width, self.project.canvas_height)
+        };
         let tex = ui.ctx().load_texture(
             "preview_sidebar",
             egui::ColorImage::from_rgba_unmultiplied(
-                [self.project.canvas_width as usize, self.project.canvas_height as usize],
+                [pw_size as usize, ph_size as usize],
                 &pixels,
             ),
             egui::TextureOptions::NEAREST,
@@ -2841,8 +5130,8 @@ impl App {
         let theme = self.theme.clone();
         Frame::new().fill(theme.panel).inner_margin(Margin::symmetric(10, 8)).show(ui, |ui| {
             let avail = ui.available_width();
-            let cw = self.project.canvas_width as f32;
-            let ch = self.project.canvas_height as f32;
+            let cw = pw_size as f32;
+            let ch = ph_size as f32;
             let aspect = cw / ch;
             let (pw, ph) = if aspect >= 1.0 {
                 (avail, avail / aspect)
@@ -2853,7 +5142,7 @@ impl App {
             ui.painter().image(
                 tex.id(),
                 rect,
-                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                egui::Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
                 egui::Color32::WHITE,
             );
         });
@@ -2870,7 +5159,13 @@ impl App {
             let since_last = now - self.last_zoom_click_time;
             if since_last < 0.4 {
                 // Double-click → zoom to fit
-                self.canvas.zoom_to_fit(canvas_rect, w, h);
+                self.canvas.zoom_to_fit(
+                    egui::Rect::from_min_max(
+                        Pos2::new(canvas_rect.min.x, canvas_rect.min.y + TOP_BAR_HEIGHT),
+                        canvas_rect.max,
+                    ),
+                    w, h,
+                );
                 self.last_zoom_click_time = -1.0; // reset so triple-click doesn't keep fitting
             } else {
                 // Single click → zoom in 1.5× at cursor
@@ -2897,11 +5192,104 @@ impl App {
     /// If so, remove the middle (corner) pixel from the layer, stroke_edits, stroke_painted,
     /// and stroke_pixel_sequence. Repeats until no more L-shapes at the tail.
     fn check_and_remove_l_shape(&mut self, ai: usize, fi: usize, li: usize) {
-        while self.stroke_pixel_sequence.len() >= 3 {
-            let n = self.stroke_pixel_sequence.len();
-            let a = self.stroke_pixel_sequence[n - 3];
-            let b = self.stroke_pixel_sequence[n - 2];
-            let c = self.stroke_pixel_sequence[n - 1];
+        Self::check_and_remove_l_shape_in_seq(&mut self.stroke_pixel_sequence, &mut self.stroke_edits, &mut self.stroke_painted, &mut self.project.animations[ai].frames[fi].layers[li], &mut self.canvas_dirty);
+    }
+
+    fn check_and_remove_l_shape_all_streams(&mut self, ai: usize, fi: usize, li: usize) {
+        if self.project.is_tiled() {
+            self.check_and_remove_l_shape_tiled(ai, li);
+            return;
+        }
+        self.check_and_remove_l_shape(ai, fi, li);
+        if self.mirror_x {
+            Self::check_and_remove_l_shape_in_seq(&mut self.mirror_x_sequence, &mut self.stroke_edits, &mut self.stroke_painted, &mut self.project.animations[ai].frames[fi].layers[li], &mut self.canvas_dirty);
+        }
+        if self.mirror_y {
+            Self::check_and_remove_l_shape_in_seq(&mut self.mirror_y_sequence, &mut self.stroke_edits, &mut self.stroke_painted, &mut self.project.animations[ai].frames[fi].layers[li], &mut self.canvas_dirty);
+        }
+        if self.mirror_x && self.mirror_y {
+            Self::check_and_remove_l_shape_in_seq(&mut self.mirror_xy_sequence, &mut self.stroke_edits, &mut self.stroke_painted, &mut self.project.animations[ai].frames[fi].layers[li], &mut self.canvas_dirty);
+        }
+    }
+
+    fn check_and_remove_l_shape_tiled(&mut self, ai: usize, li: usize) {
+        let tile_w = self.project.tile_w;
+        let tile_h = self.project.tile_h;
+        let tiles_w = self.project.tiles_w;
+        let tiles_h = self.project.tiles_h;
+
+        let mut check_seq = |seq: &mut Vec<(u32, u32)>, stroke_edits: &mut Vec<crate::tools::PixelEdit>, stroke_painted: &mut std::collections::HashSet<(u32, u32)>, project: &mut crate::project::Project, canvas_dirty: &mut bool| {
+            while seq.len() >= 3 {
+                let n = seq.len();
+                let a = seq[n - 3];
+                let b = seq[n - 2];
+                let c = seq[n - 1];
+
+                let dx = (a.0 as i32 - c.0 as i32).abs();
+                let dy = (a.1 as i32 - c.1 as i32).abs();
+                if dx != 1 || dy != 1 {
+                    break;
+                }
+
+                let min_x = a.0.min(c.0);
+                let max_x = a.0.max(c.0);
+                let min_y = a.1.min(c.1);
+                let max_y = a.1.max(c.1);
+                if b.0 < min_x || b.0 > max_x || b.1 < min_y || b.1 > max_y || b == a || b == c {
+                    break;
+                }
+
+                // L-shape found: remove b (the corner pixel)
+                if let Some(idx) = stroke_edits.iter().position(|(x, y, _, _)| *x == b.0 && *y == b.1) {
+                    let (_, _, old_color, _) = stroke_edits.remove(idx);
+                    
+                    let tx = b.0 / tile_w;
+                    let ty = b.1 / tile_h;
+                    let ox = b.0 % tile_w;
+                    let oy = b.1 % tile_h;
+                    if tx < tiles_w && ty < tiles_h {
+                        let target_fi = (ty * tiles_w + tx) as usize;
+                        if target_fi < project.animations[ai].frames.len() {
+                            project.animations[ai].frames[target_fi].layers[li].set_pixel(ox, oy, old_color);
+                            project.animations[ai].frames[target_fi].dirty = true;
+                        }
+                    }
+                    *canvas_dirty = true;
+                }
+                stroke_painted.remove(&b);
+                seq.remove(n - 2);
+            }
+        };
+
+        let stroke_edits = &mut self.stroke_edits;
+        let stroke_painted = &mut self.stroke_painted;
+        let canvas_dirty = &mut self.canvas_dirty;
+        let project = &mut self.project;
+
+        check_seq(&mut self.stroke_pixel_sequence, stroke_edits, stroke_painted, project, canvas_dirty);
+        if self.mirror_x {
+            check_seq(&mut self.mirror_x_sequence, stroke_edits, stroke_painted, project, canvas_dirty);
+        }
+        if self.mirror_y {
+            check_seq(&mut self.mirror_y_sequence, stroke_edits, stroke_painted, project, canvas_dirty);
+        }
+        if self.mirror_x && self.mirror_y {
+            check_seq(&mut self.mirror_xy_sequence, stroke_edits, stroke_painted, project, canvas_dirty);
+        }
+    }
+
+    fn check_and_remove_l_shape_in_seq(
+        seq: &mut Vec<(u32, u32)>,
+        stroke_edits: &mut Vec<crate::tools::PixelEdit>,
+        stroke_painted: &mut std::collections::HashSet<(u32, u32)>,
+        layer: &mut crate::project::Layer,
+        canvas_dirty: &mut bool,
+    ) {
+        while seq.len() >= 3 {
+            let n = seq.len();
+            let a = seq[n - 3];
+            let b = seq[n - 2];
+            let c = seq[n - 1];
 
             // a and c must be diagonal neighbors (dx=1, dy=1)
             let dx = (a.0 as i32 - c.0 as i32).abs();
@@ -2920,13 +5308,13 @@ impl App {
             }
 
             // L-shape found: remove b (the corner pixel)
-            if let Some(idx) = self.stroke_edits.iter().position(|(x, y, _, _)| *x == b.0 && *y == b.1) {
-                let (_, _, old_color, _) = self.stroke_edits.remove(idx);
-                self.project.animations[ai].frames[fi].layers[li].set_pixel(b.0, b.1, old_color);
-                self.canvas_dirty = true;
+            if let Some(idx) = stroke_edits.iter().position(|(x, y, _, _)| *x == b.0 && *y == b.1) {
+                let (_, _, old_color, _) = stroke_edits.remove(idx);
+                layer.set_pixel(b.0, b.1, old_color);
+                *canvas_dirty = true;
             }
-            self.stroke_painted.remove(&b);
-            self.stroke_pixel_sequence.remove(n - 2);
+            stroke_painted.remove(&b);
+            seq.remove(n - 2);
         }
     }
 
@@ -2934,8 +5322,170 @@ impl App {
         let w = self.project.canvas_width;
         let h = self.project.canvas_height;
         let ai = self.project.active_animation;
-        let fi = self.project.active_frame;
+        let mut fi = self.project.active_frame;
         let li = self.project.active_layer;
+
+        // ── Right-click context menu (not Zoom tool, not during drag) ──────────
+        if !matches!(self.active_tool, ActiveTool::Zoom) && self.drag_start.is_none() {
+            let right_clicked = response.ctx.input(|i| {
+                i.pointer.secondary_clicked()
+                    && i.pointer.hover_pos().map(|p| canvas_rect.contains(p)).unwrap_or(false)
+            });
+            if right_clicked && !self.palette_browser.open && !self.any_modal_open() {
+                let pos = response.ctx.input(|i| i.pointer.hover_pos().unwrap_or(canvas_rect.center()));
+                self.canvas_ctx_menu = Some(ContextMenuState::new(pos, response.ctx.input(|i| i.time)));
+                return;
+            }
+        }
+
+        // ── Multi-tile: click on a tile to switch active frame ────────────────
+        if self.project.is_tiled() && response.clicked() && !self.palette_browser.open {
+            if let Some(pos) = response.interact_pointer_pos() {
+                if let Some((cx, cy)) = self.canvas.screen_to_canvas(pos, canvas_rect, w, h) {
+                    let tx = cx / self.project.tile_w;
+                    let ty = cy / self.project.tile_h;
+                    if tx < self.project.tiles_w && ty < self.project.tiles_h {
+                        let fi = (ty * self.project.tiles_w + tx) as usize;
+                        if fi < self.project.animations[ai].frames.len() {
+                            self.project.active_frame = fi;
+                            self.canvas_dirty = true;
+                        }
+                    }
+                }
+            }
+        }
+        // Keep local fi in sync — the click handler above may have changed active_frame
+        fi = self.project.active_frame;
+
+        // ── Isometric box: Phase 2 (height adjustment) ────────────────────────
+        if let Some(phase) = self.iso_box_phase.clone() {
+            let color = self.color_state.foreground;
+            // Determine height from current mouse Y relative to the bounding box bottom
+            let mouse_pos = response.ctx.input(|i| i.pointer.interact_pos())
+                .or_else(|| response.hover_pos());
+            let height = if let Some(pos) = mouse_pos {
+                let (_, my) = self.canvas.screen_to_canvas_i32(pos, canvas_rect, w, h);
+                my - phase.y1 as i32
+            } else {
+                0
+            };
+            let preview = iso_box_preview(phase.x0, phase.y0, phase.x1, phase.y1, height, color, w, h);
+            if self.shape_preview != preview.iter().map(|&(x,y,c)|(x,y,c)).collect::<Vec<_>>() {
+                self.shape_preview = preview;
+                self.canvas_dirty = true;
+            }
+            response.ctx.request_repaint();
+            // Commit on primary press (button-down, snappier)
+            if response.ctx.input(|i| i.pointer.primary_pressed()) {
+                let ref_layer = if self.project.is_tiled() {
+                    self.stitch_temp_layer(ai, li)
+                } else {
+                    self.project.animations[ai].frames[fi].layers[li].clone()
+                };
+                let edits = iso_box_pixels(
+                    &ref_layer,
+                    phase.x0, phase.y0, phase.x1, phase.y1, height, color,
+                );
+                if !edits.is_empty() {
+                    if self.project.is_tiled() {
+                        let tile_w = self.project.tile_w;
+                        let tile_h = self.project.tile_h;
+                        let tiles_w = self.project.tiles_w;
+                        let tiles_h = self.project.tiles_h;
+                        for &(x, y, _old, new) in &edits {
+                            let tx = x / tile_w;
+                            let ty = y / tile_h;
+                            let ox = x % tile_w;
+                            let oy = y % tile_h;
+                            if tx < tiles_w && ty < tiles_h {
+                                let t_fi = (ty * tiles_w + tx) as usize;
+                                if t_fi < self.project.animations[ai].frames.len() {
+                                    self.project.animations[ai].frames[t_fi].layers[li].set_pixel(ox, oy, new);
+                                    self.project.animations[ai].frames[t_fi].dirty = true;
+                                    if ai < self.thumbnails.len() && t_fi < self.thumbnails[ai].len() {
+                                        self.thumbnails[ai][t_fi].dirty = true;
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        for &(x, y, _old, new) in &edits {
+                            self.project.animations[ai].frames[fi].layers[li].set_pixel(x, y, new);
+                        }
+                    }
+                    self.undo_stack.push(Command::PaintPixels { animation_id: ai, frame_id: fi, layer_id: li, edits });
+                    self.active_modified = true;
+                    self.canvas_dirty = true;
+                }
+            self.iso_box_phase = None;
+            self.shape_preview.clear();
+            }
+            return;
+        }
+
+        // ── Isometric cylinder: Phase 2 (height adjustment) ──────────────────
+        if let Some(phase) = self.iso_cylinder_phase.clone() {
+            let color = self.color_state.foreground;
+            let mouse_pos = response.ctx.input(|i| i.pointer.interact_pos())
+                .or_else(|| response.hover_pos());
+            let height = if let Some(pos) = mouse_pos {
+                let (_, my) = self.canvas.screen_to_canvas_i32(pos, canvas_rect, w, h);
+                my - phase.y1 as i32 // positive = down (larger Y), negative = up (smaller Y)
+            } else {
+                0
+            };
+            let preview = iso_cylinder_preview(phase.x0, phase.y0, phase.x1, phase.y1, height, color, w, h);
+            if self.shape_preview != preview.iter().map(|&(x,y,c)|(x,y,c)).collect::<Vec<_>>() {
+                self.shape_preview = preview;
+                self.canvas_dirty = true;
+            }
+            response.ctx.request_repaint();
+            if response.ctx.input(|i| i.pointer.primary_pressed()) {
+                let ref_layer = if self.project.is_tiled() {
+                    self.stitch_temp_layer(ai, li)
+                } else {
+                    self.project.animations[ai].frames[fi].layers[li].clone()
+                };
+                let edits = iso_cylinder_pixels(
+                    &ref_layer,
+                    phase.x0, phase.y0, phase.x1, phase.y1, height, color,
+                );
+                if !edits.is_empty() {
+                    if self.project.is_tiled() {
+                        let tile_w = self.project.tile_w;
+                        let tile_h = self.project.tile_h;
+                        let tiles_w = self.project.tiles_w;
+                        let tiles_h = self.project.tiles_h;
+                        for &(x, y, _old, new) in &edits {
+                            let tx = x / tile_w;
+                            let ty = y / tile_h;
+                            let ox = x % tile_w;
+                            let oy = y % tile_h;
+                            if tx < tiles_w && ty < tiles_h {
+                                let t_fi = (ty * tiles_w + tx) as usize;
+                                if t_fi < self.project.animations[ai].frames.len() {
+                                    self.project.animations[ai].frames[t_fi].layers[li].set_pixel(ox, oy, new);
+                                    self.project.animations[ai].frames[t_fi].dirty = true;
+                                    if ai < self.thumbnails.len() && t_fi < self.thumbnails[ai].len() {
+                                        self.thumbnails[ai][t_fi].dirty = true;
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        for &(x, y, _old, new) in &edits {
+                            self.project.animations[ai].frames[fi].layers[li].set_pixel(x, y, new);
+                        }
+                    }
+                    self.undo_stack.push(Command::PaintPixels { animation_id: ai, frame_id: fi, layer_id: li, edits });
+                    self.active_modified = true;
+                    self.canvas_dirty = true;
+                }
+                self.iso_cylinder_phase = None;
+                self.shape_preview.clear();
+            }
+            return;
+        }
 
         let is_shape_tool = matches!(self.active_tool,
             ActiveTool::Rectangle { .. } | ActiveTool::Ellipse { .. } | ActiveTool::Line);
@@ -2963,12 +5513,45 @@ impl App {
             response.interact_pointer_pos()
         };
 
-        // --- drag_stopped must run even when pos is None (release outside window) ---
-        // Also trigger commit when primary button is released globally but drag_stopped
-        // didn't fire because the cursor left the central panel.
-        let should_commit = response.drag_stopped()
-            || ((is_shape_tool || is_select_tool) && self.drag_start.is_some() && !primary_down);
-        if should_commit {
+         // --- drag_stopped must run even when pos is None (release outside window) ---
+         // Also trigger commit when primary button is released globally but drag_stopped
+         // didn't fire because the cursor left the central panel.
+         // Also handles quick clicks where egui fires clicked() but not drag_stopped() —
+         // last_pencil_pos stays set across clicks and causes Bresenham to connect them.
+         let should_commit = response.drag_stopped()
+             || ((is_shape_tool || is_select_tool) && self.drag_start.is_some() && !primary_down)
+             || (self.last_pencil_pos.is_some() && !primary_down);
+         if should_commit {
+            // Intercept isometric box drag → enter height phase instead of committing rect
+            if self.iso_box_dragging {
+                if let (Some((x0, y0)), Some(pos)) = (self.drag_start, pos_opt) {
+                    let (epx, epy) = self.canvas.screen_to_canvas_i32(pos, canvas_rect, w, h);
+                    let x1 = epx.clamp(0, w as i32 - 1) as u32;
+                    let y1 = epy.clamp(0, h as i32 - 1) as u32;
+                    let (bx0, bx1) = (x0.min(x1), x0.max(x1));
+                    let (by0, by1) = (y0.min(y1), y0.max(y1));
+                    self.iso_box_phase = Some(IsoBoxHeightPhase { x0: bx0, y0: by0, x1: bx1, y1: by1 });
+                }
+                self.iso_box_dragging = false;
+                self.drag_start = None;
+                self.shape_preview.clear();
+                return;
+            }
+            // Intercept isometric cylinder drag → enter height phase instead of committing
+            if self.iso_cylinder_dragging {
+                if let (Some((x0, y0)), Some(pos)) = (self.drag_start, pos_opt) {
+                    let (epx, epy) = self.canvas.screen_to_canvas_i32(pos, canvas_rect, w, h);
+                    let x1 = epx.clamp(0, w as i32 - 1) as u32;
+                    let y1 = epy.clamp(0, h as i32 - 1) as u32;
+                    let (bx0, bx1) = (x0.min(x1), x0.max(x1));
+                    let (by0, by1) = (y0.min(y1), y0.max(y1));
+                    self.iso_cylinder_phase = Some(IsoCylinderPhase { x0: bx0, y0: by0, x1: bx1, y1: by1 });
+                }
+                self.iso_cylinder_dragging = false;
+                self.drag_start = None;
+                self.shape_preview.clear();
+                return;
+            }
             let color = self.color_state.foreground;
             self.shape_preview.clear();
             if !self.project.animations[ai].frames[fi].layers[li].locked
@@ -2983,27 +5566,72 @@ impl App {
                     } else {
                         (epx, epy)
                     };
+                    let ref_layer = if self.project.is_tiled() {
+                        self.stitch_temp_layer(ai, li)
+                    } else {
+                        self.project.animations[ai].frames[fi].layers[li].clone()
+                    };
                     let shape_edits: Vec<_> = match &active_tool {
                         ActiveTool::Rectangle { filled } => {
-                            apply_rect(&self.project.animations[ai].frames[fi].layers[li], x0 as i32, y0 as i32, eff_epx, eff_epy, color, *filled)
+                            apply_rect(&ref_layer, x0 as i32, y0 as i32, eff_epx, eff_epy, color, *filled || shift_commit)
                         }
                         ActiveTool::Ellipse { filled } => {
                             let cx = (x0 as i32 + eff_epx) / 2;
                             let cy = (y0 as i32 + eff_epy) / 2;
                             let rx = (eff_epx - x0 as i32).abs() / 2;
                             let ry = (eff_epy - y0 as i32).abs() / 2;
-                            apply_ellipse(&self.project.animations[ai].frames[fi].layers[li], cx, cy, rx, ry, color, *filled)
+                            apply_ellipse(&ref_layer, cx, cy, rx, ry, color, *filled || shift_commit)
                         }
                         ActiveTool::Line => {
-                            apply_line(&self.project.animations[ai].frames[fi].layers[li], x0 as i32, y0 as i32, eff_epx, eff_epy, color)
+                            apply_line(&ref_layer, x0 as i32, y0 as i32, eff_epx, eff_epy, color)
                         }
                         _ => vec![],
                     };
-                    if !shape_edits.is_empty() {
-                        for &(x, y, _old, new) in &shape_edits {
-                            self.project.animations[ai].frames[fi].layers[li].set_pixel(x, y, new);
+                    // Expand shape edits with mirror symmetry
+                    let mut all_edits = shape_edits.clone();
+                    for &(x, y, _, new) in &shape_edits {
+                        for &(mx, my) in &self.mirror_positions(x, y, w, h) {
+                            if mx != x || my != y {
+                                let old = ref_layer.get_pixel(mx, my);
+                                all_edits.push((mx, my, old, new));
+                            }
                         }
-                        self.undo_stack.push(Command::PaintPixels { animation_id: ai, frame_id: fi, layer_id: li, edits: shape_edits });
+                    }
+                    // Deduplicate by position, keeping first occurrence
+                    let mut seen = std::collections::HashSet::new();
+                    let mut deduped = Vec::new();
+                    for e in all_edits {
+                        if seen.insert((e.0, e.1)) { deduped.push(e); }
+                    }
+                    if !deduped.is_empty() {
+                        if self.project.is_tiled() {
+                            let tile_w = self.project.tile_w;
+                            let tile_h = self.project.tile_h;
+                            let tiles_w = self.project.tiles_w;
+                            let tiles_h = self.project.tiles_h;
+                            for &(x, y, _old, new) in &deduped {
+                                let tx = x / tile_w;
+                                let ty = y / tile_h;
+                                let ox = x % tile_w;
+                                let oy = y % tile_h;
+                                if tx < tiles_w && ty < tiles_h {
+                                    let t_fi = (ty * tiles_w + tx) as usize;
+                                    if t_fi < self.project.animations[ai].frames.len() {
+                                        self.project.animations[ai].frames[t_fi].layers[li].set_pixel(ox, oy, new);
+                                        self.project.animations[ai].frames[t_fi].dirty = true;
+                                        if ai < self.thumbnails.len() && t_fi < self.thumbnails[ai].len() {
+                                            self.thumbnails[ai][t_fi].dirty = true;
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            for &(x, y, _old, new) in &deduped {
+                                self.project.animations[ai].frames[fi].layers[li].set_pixel(x, y, new);
+                            }
+                        }
+                        self.undo_stack.push(Command::PaintPixels { animation_id: ai, frame_id: fi, layer_id: li, edits: deduped });
+                        self.active_modified = true;
                         self.canvas_dirty = true;
                     }
                 }
@@ -3012,10 +5640,79 @@ impl App {
             if !self.stroke_edits.is_empty() {
                 let edits = std::mem::take(&mut self.stroke_edits);
                 self.undo_stack.push(Command::PaintPixels { animation_id: ai, frame_id: fi, layer_id: li, edits });
+                self.active_modified = true;
+                // Shift held → flood-fill the enclosed region formed by the stroke
+                let shift_held = response.ctx.input(|i| i.modifiers.shift);
+                if shift_held && matches!(self.active_tool, ActiveTool::Pencil) {
+                    let color = self.color_state.foreground;
+                    let mut extra_edits = Vec::new();
+                    if let (Some(&start), Some(&end)) = (self.stroke_pixel_sequence.first(), self.stroke_pixel_sequence.last()) {
+                        let w = self.project.animations[ai].frames[fi].layers[li].width;
+                        let h = self.project.animations[ai].frames[fi].layers[li].height;
+                        let line_pts = bresenham_positions(end.0 as i32, end.1 as i32, start.0 as i32, start.1 as i32);
+                        for (lx, ly) in line_pts {
+                            if lx < w && ly < h {
+                                let old = self.project.animations[ai].frames[fi].layers[li].get_pixel(lx, ly);
+                                if old != color {
+                                    extra_edits.push((lx, ly, old, color));
+                                }
+                                for &(mx, my) in &self.mirror_positions(lx, ly, w, h) {
+                                    if mx != lx || my != ly {
+                                        let old_m = self.project.animations[ai].frames[fi].layers[li].get_pixel(mx, my);
+                                        if old_m != color {
+                                            extra_edits.push((mx, my, old_m, color));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Deduplicate extra_edits by position
+                    let mut seen = std::collections::HashSet::new();
+                    let mut deduped_extra = Vec::new();
+                    for e in extra_edits {
+                        if seen.insert((e.0, e.1)) {
+                            deduped_extra.push(e);
+                        }
+                    }
+
+                    // Apply extra_edits to the layer first so fill_enclosed_region sees them
+                    for &(x, y, _old, new) in &deduped_extra {
+                        self.project.animations[ai].frames[fi].layers[li].set_pixel(x, y, new);
+                    }
+
+                    let mut stroke_pts: Vec<(u32, u32)> = self.stroke_painted.iter().cloned().collect();
+                    for &(x, y, _, _) in &deduped_extra {
+                        stroke_pts.push((x, y));
+                    }
+
+                    let layer = &self.project.animations[ai].frames[fi].layers[li];
+                    let fill_edits = fill_enclosed_region(layer, &stroke_pts, color);
+
+                    // Combine extra_edits and fill_edits
+                    let mut combined_edits = deduped_extra;
+                    combined_edits.extend(fill_edits);
+
+                    if !combined_edits.is_empty() {
+                        for &(x, y, _old, new) in &combined_edits {
+                            self.project.animations[ai].frames[fi].layers[li].set_pixel(x, y, new);
+                        }
+                        self.project.animations[ai].frames[fi].dirty = true;
+                        if ai < self.thumbnails.len() && fi < self.thumbnails[ai].len() {
+                            self.thumbnails[ai][fi].dirty = true;
+                        }
+                        self.undo_stack.push(Command::PaintPixels { animation_id: ai, frame_id: fi, layer_id: li, edits: combined_edits });
+                        self.canvas_dirty = true;
+                    }
+                }
             }
             self.last_pencil_pos = None;
             self.stroke_painted.clear();
             self.stroke_pixel_sequence.clear();
+            self.mirror_x_sequence.clear();
+            self.mirror_y_sequence.clear();
+            self.mirror_xy_sequence.clear();
             // RectSelect: lift selected pixels into a floating buffer.
             if is_select_tool {
                 if let Some(rect) = self.select_state.rect {
@@ -3047,9 +5744,31 @@ impl App {
                 let color = self.color_state.foreground;
                 let new_preview: Vec<(u32, u32, Rgba)> = match hover_canvas {
                     Some((hx, hy)) => match &self.active_tool {
-                        ActiveTool::Pencil                         => vec![(hx, hy, color)],
-                        ActiveTool::Eraser                         => vec![(hx, hy, [0, 0, 0, 0])],
-                        _ /* Rectangle, Ellipse, Line */            => vec![(hx, hy, color)],
+                        ActiveTool::Pencil => {
+                            let mut seen = std::collections::HashSet::new();
+                            let mut pts = Vec::new();
+                            for (mx, my) in self.mirror_positions(hx, hy, w, h) {
+                                for (sx, sy) in self.pen_square(mx, my, w, h) {
+                                    if seen.insert((sx, sy)) {
+                                        pts.push((sx, sy, color));
+                                    }
+                                }
+                            }
+                            pts
+                        }
+                        ActiveTool::Eraser => {
+                            let mut seen = std::collections::HashSet::new();
+                            let mut pts = Vec::new();
+                            for (mx, my) in self.mirror_positions(hx, hy, w, h) {
+                                for (sx, sy) in self.pen_square(mx, my, w, h) {
+                                    if seen.insert((sx, sy)) {
+                                        pts.push((sx, sy, [0, 0, 0, 0]));
+                                    }
+                                }
+                            }
+                            pts
+                        }
+                        _ /* Rectangle, Ellipse, Line */ => vec![(hx, hy, color)],
                     },
                     None => vec![],
                 };
@@ -3105,14 +5824,35 @@ impl App {
                 (px, py)
             };
             self.drag_start = Some(start);
+            // Ctrl held during Rectangle drag start → isometric box mode
+            if matches!(self.active_tool, ActiveTool::Rectangle { .. }) && response.ctx.input(|i| i.modifiers.ctrl) {
+                self.iso_box_dragging = true;
+            }
+            // Ctrl held during Ellipse drag start → isometric cylinder mode
+            if matches!(self.active_tool, ActiveTool::Ellipse { .. }) && response.ctx.input(|i| i.modifiers.ctrl) {
+                self.iso_cylinder_dragging = true;
+            }
             self.stroke_edits.clear();
             self.shape_preview.clear();
             self.last_pencil_pos = None;
             self.stroke_painted.clear();
             self.stroke_pixel_sequence.clear();
+            self.mirror_x_sequence.clear();
+            self.mirror_y_sequence.clear();
+            self.mirror_xy_sequence.clear();
             if is_select_tool {
                 self.select_state.rect = None; // clear previous selection on new drag
             }
+        }
+
+        // Double-click with selection tool → select all
+        if is_select_tool && response.double_clicked() {
+            let w = self.project.canvas_width;
+            let h = self.project.canvas_height;
+            self.select_state.rect = Some((0, 0, w, h));
+            self.lift_selection_to_float((0, 0, w, h));
+            self.drag_start = None;
+            self.canvas_dirty = true;
         }
 
         let color = self.color_state.foreground;
@@ -3124,17 +5864,52 @@ impl App {
                     vec![(px, py)]
                 };
                 for pos in positions {
-                    if self.stroke_painted.contains(&pos) {
-                        continue;
+                    let streamed = self.mirror_positions_with_streams(pos.0, pos.1, w, h);
+                    // Track center positions for L-shape removal
+                    for &((mx, my), stream) in &streamed {
+                        match stream {
+                            MirrorStream::Original => self.stroke_pixel_sequence.push((mx, my)),
+                            MirrorStream::X => self.mirror_x_sequence.push((mx, my)),
+                            MirrorStream::Y => self.mirror_y_sequence.push((mx, my)),
+                            MirrorStream::XY => self.mirror_xy_sequence.push((mx, my)),
+                        }
                     }
-                    self.stroke_pixel_sequence.push(pos);
-                    let edits = apply_pencil(&self.project.animations[ai].frames[fi].layers[li], pos.0, pos.1, color);
-                    for &(x, y, old, new) in &edits {
-                        self.project.animations[ai].frames[fi].layers[li].set_pixel(x, y, new);
-                        self.stroke_edits.push((x, y, old, new));
+                    for &((mx, my), _) in &streamed {
+                        for (sx, sy) in self.pen_square(mx, my, w, h) {
+                            if self.stroke_painted.contains(&(sx, sy)) { continue; }
+                            let (target_fi, ox, oy) = if self.project.is_tiled() {
+                                let tile_w = self.project.tile_w;
+                                let tile_h = self.project.tile_h;
+                                let tiles_w = self.project.tiles_w;
+                                let tiles_h = self.project.tiles_h;
+                                let tx = sx / tile_w;
+                                let ty = sy / tile_h;
+                                if tx < tiles_w && ty < tiles_h {
+                                    let t_fi = (ty * tiles_w + tx) as usize;
+                                    if t_fi < self.project.animations[ai].frames.len() {
+                                        (t_fi, sx % tile_w, sy % tile_h)
+                                    } else {
+                                        (fi, sx, sy)
+                                    }
+                                } else {
+                                    (fi, sx, sy)
+                                }
+                            } else {
+                                (fi, sx, sy)
+                            };
+                            let edits = apply_pencil(&self.project.animations[ai].frames[target_fi].layers[li], ox, oy, color);
+                            for &(_x, _y, old, new) in &edits {
+                                self.project.animations[ai].frames[target_fi].layers[li].set_pixel(ox, oy, new);
+                                self.stroke_edits.push((sx, sy, old, new));
+                                self.project.animations[ai].frames[target_fi].dirty = true;
+                                if ai < self.thumbnails.len() && target_fi < self.thumbnails[ai].len() {
+                                    self.thumbnails[ai][target_fi].dirty = true;
+                                }
+                            }
+                            self.stroke_painted.insert((sx, sy));
+                        }
                     }
-                    self.stroke_painted.insert(pos);
-                    self.check_and_remove_l_shape(ai, fi, li);
+                    self.check_and_remove_l_shape_all_streams(ai, fi, li);
                 }
                 self.last_pencil_pos = Some((px, py));
                 self.canvas_dirty = true;
@@ -3146,36 +5921,122 @@ impl App {
                     vec![(px, py)]
                 };
                 for pos in positions {
-                    if self.stroke_painted.contains(&pos) {
-                        continue;
+                    let streamed = self.mirror_positions_with_streams(pos.0, pos.1, w, h);
+                    for &((mx, my), stream) in &streamed {
+                        match stream {
+                            MirrorStream::Original => self.stroke_pixel_sequence.push((mx, my)),
+                            MirrorStream::X => self.mirror_x_sequence.push((mx, my)),
+                            MirrorStream::Y => self.mirror_y_sequence.push((mx, my)),
+                            MirrorStream::XY => self.mirror_xy_sequence.push((mx, my)),
+                        }
                     }
-                    self.stroke_pixel_sequence.push(pos);
-                    let edits = apply_eraser(&self.project.animations[ai].frames[fi].layers[li], pos.0, pos.1);
-                    for &(x, y, old, new) in &edits {
-                        self.project.animations[ai].frames[fi].layers[li].set_pixel(x, y, new);
-                        self.stroke_edits.push((x, y, old, new));
+                    for &((mx, my), _) in &streamed {
+                        for (sx, sy) in self.pen_square(mx, my, w, h) {
+                            if self.stroke_painted.contains(&(sx, sy)) { continue; }
+                            let (target_fi, ox, oy) = if self.project.is_tiled() {
+                                let tile_w = self.project.tile_w;
+                                let tile_h = self.project.tile_h;
+                                let tiles_w = self.project.tiles_w;
+                                let tiles_h = self.project.tiles_h;
+                                let tx = sx / tile_w;
+                                let ty = sy / tile_h;
+                                if tx < tiles_w && ty < tiles_h {
+                                    let t_fi = (ty * tiles_w + tx) as usize;
+                                    if t_fi < self.project.animations[ai].frames.len() {
+                                        (t_fi, sx % tile_w, sy % tile_h)
+                                    } else {
+                                        (fi, sx, sy)
+                                    }
+                                } else {
+                                    (fi, sx, sy)
+                                }
+                            } else {
+                                (fi, sx, sy)
+                            };
+                            let edits = apply_eraser(&self.project.animations[ai].frames[target_fi].layers[li], ox, oy);
+                            for &(_x, _y, old, new) in &edits {
+                                self.project.animations[ai].frames[target_fi].layers[li].set_pixel(ox, oy, new);
+                                self.stroke_edits.push((sx, sy, old, new));
+                                self.project.animations[ai].frames[target_fi].dirty = true;
+                                if ai < self.thumbnails.len() && target_fi < self.thumbnails[ai].len() {
+                                    self.thumbnails[ai][target_fi].dirty = true;
+                                }
+                            }
+                            self.stroke_painted.insert((sx, sy));
+                        }
                     }
-                    self.stroke_painted.insert(pos);
-                    self.check_and_remove_l_shape(ai, fi, li);
+                    self.check_and_remove_l_shape_all_streams(ai, fi, li);
                 }
                 self.last_pencil_pos = Some((px, py));
                 self.canvas_dirty = true;
             }
             ActiveTool::Fill => {
-                let layer = &self.project.animations[ai].frames[fi].layers[li];
-                let target = layer.get_pixel(px, py);
-                let edits = apply_fill(layer, px, py, target, color);
-                for &(x, y, _old, new) in &edits {
-                    self.project.animations[ai].frames[fi].layers[li].set_pixel(x, y, new);
-                }
+                let (edits, target_fi) = if self.project.is_tiled() {
+                    let temp_layer = self.stitch_temp_layer(ai, li);
+                    let target = temp_layer.get_pixel(px, py);
+                    let edits = apply_fill(&temp_layer, px, py, target, color);
+                    (edits, fi)
+                } else {
+                    let layer = &self.project.animations[ai].frames[fi].layers[li];
+                    let target = layer.get_pixel(px, py);
+                    let edits = apply_fill(layer, px, py, target, color);
+                    (edits, fi)
+                };
                 if !edits.is_empty() {
-                    self.undo_stack.push(Command::PaintPixels { animation_id: ai, frame_id: fi, layer_id: li, edits });
+                    if self.project.is_tiled() {
+                        let tile_w = self.project.tile_w;
+                        let tile_h = self.project.tile_h;
+                        let tiles_w = self.project.tiles_w;
+                        let tiles_h = self.project.tiles_h;
+                        for &(x, y, _old, new) in &edits {
+                            let tx = x / tile_w;
+                            let ty = y / tile_h;
+                            let ox = x % tile_w;
+                            let oy = y % tile_h;
+                            if tx < tiles_w && ty < tiles_h {
+                                let t_fi = (ty * tiles_w + tx) as usize;
+                                if t_fi < self.project.animations[ai].frames.len() {
+                                    self.project.animations[ai].frames[t_fi].layers[li].set_pixel(ox, oy, new);
+                                    self.project.animations[ai].frames[t_fi].dirty = true;
+                                    if ai < self.thumbnails.len() && t_fi < self.thumbnails[ai].len() {
+                                        self.thumbnails[ai][t_fi].dirty = true;
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        for &(x, y, _old, new) in &edits {
+                            self.project.animations[ai].frames[fi].layers[li].set_pixel(x, y, new);
+                        }
+                    }
+                    self.undo_stack.push(Command::PaintPixels { animation_id: ai, frame_id: target_fi, layer_id: li, edits });
+                    self.active_modified = true;
                     self.canvas_dirty = true;
                 }
             }
             ActiveTool::Eyedropper => {
-                let layer = &self.project.animations[ai].frames[fi].layers[li];
-                let picked = apply_eyedropper(layer, px, py);
+                let (target_fi, ox, oy) = if self.project.is_tiled() {
+                    let tile_w = self.project.tile_w;
+                    let tile_h = self.project.tile_h;
+                    let tiles_w = self.project.tiles_w;
+                    let tiles_h = self.project.tiles_h;
+                    let tx = px / tile_w;
+                    let ty = py / tile_h;
+                    if tx < tiles_w && ty < tiles_h {
+                        let t_fi = (ty * tiles_w + tx) as usize;
+                        if t_fi < self.project.animations[ai].frames.len() {
+                            (t_fi, px % tile_w, py % tile_h)
+                        } else {
+                            (fi, px, py)
+                        }
+                    } else {
+                        (fi, px, py)
+                    }
+                } else {
+                    (fi, px, py)
+                };
+                let layer = &self.project.animations[ai].frames[target_fi].layers[li];
+                let picked = apply_eyedropper(layer, ox, oy);
                 self.color_state.foreground = picked;
                 sync_color_caches(&mut self.color_state);
             }
@@ -3185,36 +6046,61 @@ impl App {
             _ => {}
         }
 
+        // Sync frame layer edits back to wang_blob tile_data, then propagate and reflatten.
+        if self.wang_blob.mode != crate::wang_blob::WangBlobMode::None && self.canvas_dirty {
+            self.sync_frame_to_wang();
+        }
+
         // Shape tools: recompute preview every frame while button is held and drag is active.
         // Use primary_down (global button state) instead of response.dragged() so the
         // preview keeps updating even when the cursor moves outside the central panel.
         if is_shape_tool && self.drag_start.is_some() && primary_down {
             response.ctx.request_repaint();
             if let Some((x0, y0)) = self.drag_start {
-                let active_tool = self.active_tool.clone();
-                let (eff_px, eff_py) = if shift_held {
-                    shape_shift_constrain(&active_tool, x0 as i32, y0 as i32, shape_px, shape_py)
+                // Isometric box Phase 1 preview: show top-face diamond only
+                if self.iso_box_dragging {
+                    let x1 = shape_px.clamp(0, w as i32 - 1) as u32;
+                    let y1 = shape_py.clamp(0, h as i32 - 1) as u32;
+                    let preview = iso_box_preview(x0, y0, x1, y1, 0_i32, color, w, h);
+                    self.shape_preview = preview;
+                    self.canvas_dirty = true;
+                } else if self.iso_cylinder_dragging {
+                    let x1 = shape_px.clamp(0, w as i32 - 1) as u32;
+                    let y1 = shape_py.clamp(0, h as i32 - 1) as u32;
+                    let preview = iso_cylinder_preview(x0, y0, x1, y1, 0_i32, color, w, h);
+                    self.shape_preview = preview;
+                    self.canvas_dirty = true;
                 } else {
-                    (shape_px, shape_py)
-                };
-                let preview_edits: Vec<_> = match &active_tool {
-                    ActiveTool::Rectangle { filled } => {
-                        apply_rect(&self.project.animations[ai].frames[fi].layers[li], x0 as i32, y0 as i32, eff_px, eff_py, color, *filled)
-                    }
-                    ActiveTool::Ellipse { filled } => {
-                        let cx = (x0 as i32 + eff_px) / 2;
-                        let cy = (y0 as i32 + eff_py) / 2;
-                        let rx = (eff_px - x0 as i32).abs() / 2;
-                        let ry = (eff_py - y0 as i32).abs() / 2;
-                        apply_ellipse(&self.project.animations[ai].frames[fi].layers[li], cx, cy, rx, ry, color, *filled)
-                    }
-                    ActiveTool::Line => {
-                        apply_line(&self.project.animations[ai].frames[fi].layers[li], x0 as i32, y0 as i32, eff_px, eff_py, color)
-                    }
-                    _ => vec![],
-                };
-                self.shape_preview = preview_edits.into_iter().map(|(x, y, _old, new)| (x, y, new)).collect();
-                self.canvas_dirty = true;
+                    let active_tool = self.active_tool.clone();
+                    let (eff_px, eff_py) = if shift_held {
+                        shape_shift_constrain(&active_tool, x0 as i32, y0 as i32, shape_px, shape_py)
+                    } else {
+                        (shape_px, shape_py)
+                    };
+                    let ref_layer = if self.project.is_tiled() {
+                        self.stitch_temp_layer(ai, li)
+                    } else {
+                        self.project.animations[ai].frames[fi].layers[li].clone()
+                    };
+                    let preview_edits: Vec<_> = match &active_tool {
+                        ActiveTool::Rectangle { filled } => {
+                            apply_rect(&ref_layer, x0 as i32, y0 as i32, eff_px, eff_py, color, *filled || shift_held)
+                        }
+                        ActiveTool::Ellipse { filled } => {
+                            let cx = (x0 as i32 + eff_px) / 2;
+                            let cy = (y0 as i32 + eff_py) / 2;
+                            let rx = (eff_px - x0 as i32).abs() / 2;
+                            let ry = (eff_py - y0 as i32).abs() / 2;
+                            apply_ellipse(&ref_layer, cx, cy, rx, ry, color, *filled || shift_held)
+                        }
+                        ActiveTool::Line => {
+                            apply_line(&ref_layer, x0 as i32, y0 as i32, eff_px, eff_py, color)
+                        }
+                        _ => vec![],
+                    };
+                    self.shape_preview = preview_edits.into_iter().map(|(x, y, _old, new)| (x, y, new)).collect();
+                    self.canvas_dirty = true;
+                }
             }
         }
 
@@ -3242,14 +6128,18 @@ impl App {
         if self.project.animations[ai].frames[fi].layers[li].locked { return; }
         if self.project.animations[ai].frames[fi].layers[li].is_group { return; }
 
-        let layer = &self.project.animations[ai].frames[fi].layers[li];
+        let ref_layer = if self.project.is_tiled() {
+            self.stitch_temp_layer(ai, li)
+        } else {
+            self.project.animations[ai].frames[fi].layers[li].clone()
+        };
         let mut pixels: Vec<Rgba> = Vec::with_capacity((rw * rh) as usize);
         let mut edits: Vec<crate::tools::PixelEdit> = Vec::new();
         for y in 0..rh {
             for x in 0..rw {
                 let cx = rx + x;
                 let cy = ry + y;
-                let old = layer.get_pixel(cx, cy);
+                let old = ref_layer.get_pixel(cx, cy);
                 pixels.push(old);
                 if old[3] != 0 {
                     edits.push((cx, cy, old, [0, 0, 0, 0]));
@@ -3257,11 +6147,35 @@ impl App {
             }
         }
         // Apply the clear
-        for &(x, y, _o, n) in &edits {
-            self.project.animations[ai].frames[fi].layers[li].set_pixel(x, y, n);
+        if self.project.is_tiled() {
+            let tile_w = self.project.tile_w;
+            let tile_h = self.project.tile_h;
+            let tiles_w = self.project.tiles_w;
+            let tiles_h = self.project.tiles_h;
+            for &(x, y, _o, n) in &edits {
+                let tx = x / tile_w;
+                let ty = y / tile_h;
+                let ox = x % tile_w;
+                let oy = y % tile_h;
+                if tx < tiles_w && ty < tiles_h {
+                    let t_fi = (ty * tiles_w + tx) as usize;
+                    if t_fi < self.project.animations[ai].frames.len() {
+                        self.project.animations[ai].frames[t_fi].layers[li].set_pixel(ox, oy, n);
+                        self.project.animations[ai].frames[t_fi].dirty = true;
+                        if ai < self.thumbnails.len() && t_fi < self.thumbnails[ai].len() {
+                            self.thumbnails[ai][t_fi].dirty = true;
+                        }
+                    }
+                }
+            }
+        } else {
+            for &(x, y, _o, n) in &edits {
+                self.project.animations[ai].frames[fi].layers[li].set_pixel(x, y, n);
+            }
         }
         if !edits.is_empty() {
             self.undo_stack.push(Command::PaintPixels { animation_id: ai, frame_id: fi, layer_id: li, edits });
+            self.active_modified = true;
         }
         self.select_state.begin_float(FloatBuffer { w: rw, h: rh, pixels }, rect);
         self.canvas_dirty = true;
@@ -3295,23 +6209,51 @@ impl App {
         let x1 = ((ax + aw).ceil() as i32).min(w);
         let y1 = ((ay + ah).ceil() as i32).min(h);
 
-        let layer = &self.project.animations[ai].frames[fi].layers[li];
+        let ref_layer = if self.project.is_tiled() {
+            self.stitch_temp_layer(ai, li)
+        } else {
+            self.project.animations[ai].frames[fi].layers[li].clone()
+        };
         let mut edits: Vec<crate::tools::PixelEdit> = Vec::new();
         for cy in y0..y1 {
             for cx in x0..x1 {
                 if let Some(new) = sample_transformed(&self.select_state, cx, cy) {
-                    let old = layer.get_pixel(cx as u32, cy as u32);
+                    let old = ref_layer.get_pixel(cx as u32, cy as u32);
                     if old != new {
                         edits.push((cx as u32, cy as u32, old, new));
                     }
                 }
             }
         }
-        for &(x, y, _o, n) in &edits {
-            self.project.animations[ai].frames[fi].layers[li].set_pixel(x, y, n);
+        if self.project.is_tiled() {
+            let tile_w = self.project.tile_w;
+            let tile_h = self.project.tile_h;
+            let tiles_w = self.project.tiles_w;
+            let tiles_h = self.project.tiles_h;
+            for &(x, y, _o, n) in &edits {
+                let tx = x / tile_w;
+                let ty = y / tile_h;
+                let ox = x % tile_w;
+                let oy = y % tile_h;
+                if tx < tiles_w && ty < tiles_h {
+                    let t_fi = (ty * tiles_w + tx) as usize;
+                    if t_fi < self.project.animations[ai].frames.len() {
+                        self.project.animations[ai].frames[t_fi].layers[li].set_pixel(ox, oy, n);
+                        self.project.animations[ai].frames[t_fi].dirty = true;
+                        if ai < self.thumbnails.len() && t_fi < self.thumbnails[ai].len() {
+                            self.thumbnails[ai][t_fi].dirty = true;
+                        }
+                    }
+                }
+            }
+        } else {
+            for &(x, y, _o, n) in &edits {
+                self.project.animations[ai].frames[fi].layers[li].set_pixel(x, y, n);
+            }
         }
         if !edits.is_empty() {
             self.undo_stack.push(Command::PaintPixels { animation_id: ai, frame_id: fi, layer_id: li, edits });
+            self.active_modified = true;
         }
         self.select_state.clear();
         self.canvas_dirty = true;
@@ -3468,7 +6410,7 @@ impl App {
                 let dy = cy_px - anchor.mouse_y;
                 match self.select_state.interaction {
                     SelectInteraction::Moving => {
-                        self.select_state.offset = (anchor.offset.0 + dx, anchor.offset.1 + dy);
+                        self.select_state.offset = (anchor.offset.0 + dx.round(), anchor.offset.1 + dy.round());
                     }
                     SelectInteraction::Resizing(handle) => {
                         if let Some((w0, h0)) = self.select_state.float_size() {
@@ -3544,6 +6486,7 @@ impl App {
         let w = self.project.canvas_width;
         let h = self.project.canvas_height;
         self.undo_stack.push(Command::AddFrame { animation_id: self.project.active_animation, index: idx });
+        self.active_modified = true;
         let new_frame_id = self.project.next_layer_id();
         self.project.active_anim_mut().frames.push(ProjectFrame::new(w, h, new_frame_id));
         self.project.active_frame = idx;
@@ -3557,6 +6500,7 @@ impl App {
         let idx = self.project.active_frame + 1;
         let frame = self.project.active_frame_ref().clone();
         self.undo_stack.push(Command::DuplicateFrame { animation_id: self.project.active_animation, index: idx, snapshot: frame.clone() });
+        self.active_modified = true;
         self.project.active_anim_mut().frames.insert(idx, frame);
         self.project.active_frame = idx;
         if self.thumbnails.len() > self.project.active_animation {
@@ -3573,6 +6517,7 @@ impl App {
         let idx = self.project.active_frame;
         let snapshot = self.project.animations[ai].frames[idx].clone();
         self.undo_stack.push(Command::DeleteFrame { animation_id: ai, index: idx, snapshot });
+        self.active_modified = true;
         self.project.animations[ai].frames.remove(idx);
         self.project.active_frame = self.project.active_frame.saturating_sub(1).min(self.project.animations[ai].frames.len() - 1);
         self.canvas_dirty = true;
@@ -3582,53 +6527,485 @@ impl App {
         if !self.show_new_dialog {
             return;
         }
-        egui::Window::new("New Project")
-            .collapsible(false)
-            .resizable(false)
-            .frame(Frame::window(&ctx.style()))
+
+        let theme = self.theme.clone();
+
+        egui::Area::new("new_project_popup".into())
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .order(egui::Order::Foreground)
             .show(ctx, |ui| {
-                egui::Grid::new("new_project_grid").num_columns(2).show(ui, |ui| {
-                    ui.label(self.label_desc("Name"));
-                    ui.text_edit_singleline(&mut self.new_name);
-                    ui.end_row();
-                    ui.label(self.label_desc("Width"));
-                    ui.add(egui::DragValue::new(&mut self.new_width).range(1..=2048).suffix("px"));
-                    ui.end_row();
-                    ui.label(self.label_desc("Height"));
-                    ui.add(egui::DragValue::new(&mut self.new_height).range(1..=2048).suffix("px"));
-                    ui.end_row();
-                });
-                ui.horizontal(|ui| {
-                    if ui.button(self.label("Create")).clicked() {
-                        self.project = Project::new(self.new_width, self.new_height, self.new_name.clone());
-                        self.canvas_dirty = true;
-                        self.show_new_dialog = false;
-                    }
-                    if ui.button(self.label_muted("Cancel")).clicked() {
-                        self.show_new_dialog = false;
-                    }
-                });
+                Frame::new()
+                    .fill(theme.panel)
+                    .stroke(egui::Stroke::NONE)
+                    .corner_radius(egui::CornerRadius::same(6))
+                    .shadow(egui::Shadow {
+                        offset: [0, 14],
+                        blur: 36,
+                        spread: 0,
+                        color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
+                    })
+                    .inner_margin(Margin { left: 8, right: 8, top: 0, bottom: 8 })
+                    .show(ui, |ui| {
+                        ui.set_width(200.0);
+                        let row_w = 200.0;
+
+                        // ── Header Title (Editable Project Name) ──
+                        ui.add_space(8.0); // 8px space from the top of the menu window to the text
+                        let title_text_h = 18.0;
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(row_w, title_text_h),
+                            egui::Layout::top_down(egui::Align::Center),
+                            |ui| {
+                                let (rect, _) = ui.allocate_exact_size(Vec2::new(row_w, title_text_h), egui::Sense::hover());
+                                let text_w = (row_w - 12.0) * 0.9;
+                                let te_h = FONT_SIZE_SM + 6.0;
+                                let text_rect = egui::Rect::from_center_size(
+                                    egui::Pos2::new(rect.center().x, rect.center().y),
+                                    Vec2::new(text_w, te_h),
+                                );
+
+                                // TextEdit styled like a header title: bold, no frame, centered
+                                let name_resp = ui.put(text_rect, egui::TextEdit::singleline(&mut self.new_name)
+                                    .frame(false)
+                                    .font(FontId::new(FONT_SIZE_SM, FontFamily::Name("bold".into())))
+                                    .text_color(theme.fg)
+                                    .horizontal_align(egui::Align::Center)
+                                    .vertical_align(egui::Align::Center)
+                                    .id_source("new_name")
+                                );
+
+                                if name_resp.has_focus() {
+                                    if !self.new_name_focused {
+                                        self.new_name_focused = true;
+                                        let text_len = self.new_name.len();
+                                        if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), name_resp.id) {
+                                            let min = egui::text::CCursor::new(0);
+                                            let max = egui::text::CCursor::new(text_len);
+                                            state.cursor.set_char_range(Some(egui::text::CCursorRange::two(min, max)));
+                                            state.store(ui.ctx(), name_resp.id);
+                                        }
+                                    }
+                                } else {
+                                    self.new_name_focused = false;
+                                }
+
+                                // Horizontal divider line 8px from each side
+                                let line_y = rect.bottom() + 4.0;
+                                let p1 = egui::Pos2::new(rect.left(), line_y);
+                                let p2 = egui::Pos2::new(rect.right(), line_y);
+                                ui.painter().line_segment([p1, p2], egui::Stroke::new(1.0, theme.border));
+                            },
+                        );
+
+                        ui.add_space(12.0);
+
+                        // ── Width / Height with lock ──
+                        let row_h = 22.0;
+                        let gap = 4.0;
+                        let total_h = row_h * 2.0 + gap;
+
+                        let old_w = self.new_width;
+                        let old_h = self.new_height;
+
+                        let label_w = 100.0;
+                        let lock_w = 26.0;
+                        let input_w = 52.0;
+                        let col_offset = (row_w - (label_w + input_w + lock_w)) / 2.0;
+
+                        let wh_outer = ui.allocate_ui_with_layout(
+                            Vec2::new(row_w, total_h),
+                            egui::Layout::left_to_right(egui::Align::TOP),
+                            |ui| {
+                            ui.spacing_mut().item_spacing = Vec2::ZERO;
+                            ui.add_space(col_offset);
+                            // Column 1: Tile Size label (vertically centered)
+                            ui.allocate_ui_with_layout(
+                                Vec2::new(label_w, total_h),
+                                egui::Layout::top_down(egui::Align::Center),
+                                |ui| {
+                                ui.visuals_mut().override_text_color = Some(theme.fg_desc);
+                                let (r, _) = ui.allocate_exact_size(Vec2::new(label_w, total_h), egui::Sense::hover());
+                                ui.put(r, egui::Label::new(self.label_desc("Tile Size")).selectable(false));
+                            });
+
+                            // Column 2: values
+                                ui.allocate_ui_with_layout(
+                                Vec2::new(input_w, total_h),
+                                egui::Layout::top_down(egui::Align::LEFT),
+                                |ui| {
+                                ui.visuals_mut().override_text_color = Some(theme.fg_desc);
+                                let (r, _) = ui.allocate_exact_size(Vec2::new(input_w, row_h), egui::Sense::hover());
+                                let resp1 = ui.put(r, egui::TextEdit::singleline(&mut self.new_width_str)
+                                    .frame(false)
+                                    .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
+                                    .text_color(theme.fg)
+                                    .horizontal_align(egui::Align::Center)
+                                    .vertical_align(egui::Align::Center)
+                                    .id_source("new_width"));
+                                if resp1.has_focus() {
+                                    if !self.new_width_focused {
+                                        self.new_width_focused = true;
+                                        let text_len = self.new_width_str.len();
+                                        if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp1.id) {
+                                            let min = egui::text::CCursor::new(0);
+                                            let max = egui::text::CCursor::new(text_len);
+                                            state.cursor.set_char_range(Some(egui::text::CCursorRange::two(min, max)));
+                                            state.store(ui.ctx(), resp1.id);
+                                        }
+                                    }
+                                } else {
+                                    self.new_width_focused = false;
+                                }
+                                if resp1.changed() {
+                                    if let Ok(val) = self.new_width_str.trim().parse::<u32>() {
+                                        self.new_width = val.clamp(1, 2048);
+                                    }
+                                } else if !resp1.has_focus() {
+                                    self.new_width_str = self.new_width.to_string();
+                                }
+
+                                ui.add_space(gap);
+                                let (r, _) = ui.allocate_exact_size(Vec2::new(input_w, row_h), egui::Sense::hover());
+                                let resp2 = ui.put(r, egui::TextEdit::singleline(&mut self.new_height_str)
+                                    .frame(false)
+                                    .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
+                                    .text_color(theme.fg)
+                                    .horizontal_align(egui::Align::Center)
+                                    .vertical_align(egui::Align::Center)
+                                    .id_source("new_height"));
+                                if resp2.has_focus() {
+                                    if !self.new_height_focused {
+                                        self.new_height_focused = true;
+                                        let text_len = self.new_height_str.len();
+                                        if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp2.id) {
+                                            let min = egui::text::CCursor::new(0);
+                                            let max = egui::text::CCursor::new(text_len);
+                                            state.cursor.set_char_range(Some(egui::text::CCursorRange::two(min, max)));
+                                            state.store(ui.ctx(), resp2.id);
+                                        }
+                                    }
+                                } else {
+                                    self.new_height_focused = false;
+                                }
+                                if resp2.changed() {
+                                    if let Ok(val) = self.new_height_str.trim().parse::<u32>() {
+                                        self.new_height = val.clamp(1, 2048);
+                                    }
+                                } else if !resp2.has_focus() {
+                                    self.new_height_str = self.new_height.to_string();
+                                }
+                            });
+
+                            // Column 3: lock interaction
+                            ui.allocate_ui_with_layout(
+                                Vec2::new(lock_w, total_h),
+                                egui::Layout::top_down(egui::Align::TOP),
+                                |ui| {
+                                let alloc_rect = ui.max_rect();
+                                let center = egui::Pos2::new(alloc_rect.center().x, alloc_rect.center().y + 1.0);
+                                let bg_rect = egui::Rect::from_center_size(center, Vec2::splat(20.0));
+                                let response = ui.interact(bg_rect, "lock_btn".into(), egui::Sense::click());
+                                if response.clicked() {
+                                    self.new_aspect_locked = !self.new_aspect_locked;
+                                }
+                            });
+                        });
+
+                        // Draw lines, fill, and lock icon after child UI so painter draws on top
+                        let r = wh_outer.response.rect;
+                        let col_offset = (row_w - (label_w + input_w + lock_w)) / 2.0;
+                        let input_right = r.left() + col_offset + label_w + input_w;
+                        let lock_cx = r.left() + col_offset + label_w + input_w + lock_w / 2.0;
+                        let w_cy = r.top() + row_h / 2.0;
+                        let h_cy = r.top() + row_h + gap + row_h / 2.0;
+                        let stroke = egui::Stroke::new(1.0, theme.fg_desc);
+                        if self.new_aspect_locked {
+                            ui.painter().line_segment([egui::Pos2::new(input_right, w_cy), egui::Pos2::new(lock_cx, w_cy)], stroke);
+                            ui.painter().line_segment([egui::Pos2::new(input_right, h_cy), egui::Pos2::new(lock_cx, h_cy)], stroke);
+                            ui.painter().line_segment([egui::Pos2::new(lock_cx, w_cy), egui::Pos2::new(lock_cx, h_cy)], stroke);
+                        }
+                        let bg_rect = egui::Rect::from_center_size(egui::Pos2::new(lock_cx, w_cy + (h_cy - w_cy) / 2.0 + 1.0), Vec2::splat(20.0));
+                        ui.painter().rect_filled(bg_rect, 4.0, theme.panel);
+                        let lock_tint = if self.new_aspect_locked { theme.fg_desc } else { theme.accent };
+                        let lock_icon = if self.new_aspect_locked {
+                            egui::include_image!("../assets/icons/lock.svg")
+                        } else {
+                            egui::include_image!("../assets/icons/lock_open.svg")
+                        };
+                        let icon_rect = egui::Rect::from_center_size(bg_rect.center(), Vec2::splat(16.0));
+                        ui.put(icon_rect, Image::new(lock_icon).tint(lock_tint).fit_to_exact_size(Vec2::splat(16.0)));
+
+                        // Aspect ratio lock
+                        if self.new_aspect_locked {
+                            let ratio = old_w as f32 / old_h as f32;
+                            if self.new_width != old_w {
+                                self.new_height = (self.new_width as f32 / ratio).round().max(1.0).min(2048.0) as u32;
+                                self.new_height_str = self.new_height.to_string();
+                            } else if self.new_height != old_h {
+                                self.new_width = (self.new_height as f32 * ratio).round().max(1.0).min(2048.0) as u32;
+                                self.new_width_str = self.new_width.to_string();
+                            }
+                        }
+
+                        // Input outlines (tile size section)
+                        let input_stroke = egui::Stroke::new(1.0, theme.accent);
+                        let input_x = r.left() + col_offset + label_w;
+                        let in1 = egui::Rect::from_min_size(egui::Pos2::new(input_x, r.top()), Vec2::new(input_w, row_h));
+                        let in2 = egui::Rect::from_min_size(egui::Pos2::new(input_x, r.top() + row_h + gap), Vec2::new(input_w, row_h));
+                        ui.painter().rect_stroke(in1, 2.0, input_stroke, egui::StrokeKind::Inside);
+                        ui.painter().rect_stroke(in2, 2.0, input_stroke, egui::StrokeKind::Inside);
+
+                        ui.add_space(20.0);
+
+                        // ── Number of tiles ──
+                        let old_tw = self.new_tiles_w;
+                        let old_th = self.new_tiles_h;
+                        let tiles_outer = ui.allocate_ui_with_layout(
+                            Vec2::new(row_w, total_h),
+                            egui::Layout::left_to_right(egui::Align::TOP),
+                            |ui| {
+                            ui.spacing_mut().item_spacing = Vec2::ZERO;
+                            ui.add_space(col_offset);
+                            // Column 1: labels
+                            ui.allocate_ui_with_layout(
+                                Vec2::new(label_w, total_h),
+                                egui::Layout::top_down(egui::Align::Center),
+                                |ui| {
+                                ui.visuals_mut().override_text_color = Some(theme.fg_desc);
+                                let (r, _) = ui.allocate_exact_size(Vec2::new(label_w, total_h), egui::Sense::hover());
+                                ui.put(r, egui::Label::new(self.label_desc("Number of tiles")).selectable(false));
+                            });
+                            // Column 2: values
+                            ui.allocate_ui_with_layout(
+                                Vec2::new(input_w, total_h),
+                                egui::Layout::top_down(egui::Align::LEFT),
+                                |ui| {
+                                ui.visuals_mut().override_text_color = Some(theme.fg_desc);
+                                let (r, _) = ui.allocate_exact_size(Vec2::new(input_w, row_h), egui::Sense::hover());
+                                // Use vertical_align to center text within the row height
+                                let resp1 = ui.put(r, egui::TextEdit::singleline(&mut self.new_tiles_w_str)
+                                    .frame(false)
+                                    .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
+                                    .text_color(theme.fg)
+                                    .horizontal_align(egui::Align::Center)
+                                    .vertical_align(egui::Align::Center)
+                                    .id_source("new_tiles_w"));
+                                if resp1.has_focus() {
+                                    if !self.new_tiles_w_focused {
+                                        self.new_tiles_w_focused = true;
+                                        let text_len = self.new_tiles_w_str.len();
+                                        if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp1.id) {
+                                            let min = egui::text::CCursor::new(0);
+                                            let max = egui::text::CCursor::new(text_len);
+                                            state.cursor.set_char_range(Some(egui::text::CCursorRange::two(min, max)));
+                                            state.store(ui.ctx(), resp1.id);
+                                        }
+                                    }
+                                } else {
+                                    self.new_tiles_w_focused = false;
+                                }
+                                if resp1.changed() {
+                                    if let Ok(val) = self.new_tiles_w_str.trim().parse::<u32>() {
+                                        self.new_tiles_w = val.clamp(1, 64);
+                                    }
+                                } else if !resp1.has_focus() {
+                                    self.new_tiles_w_str = self.new_tiles_w.to_string();
+                                }
+
+                                ui.add_space(gap);
+                                let (r, _) = ui.allocate_exact_size(Vec2::new(input_w, row_h), egui::Sense::hover());
+                                let resp2 = ui.put(r, egui::TextEdit::singleline(&mut self.new_tiles_h_str)
+                                    .frame(false)
+                                    .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
+                                    .text_color(theme.fg)
+                                    .horizontal_align(egui::Align::Center)
+                                    .vertical_align(egui::Align::Center)
+                                    .id_source("new_tiles_h"));
+                                if resp2.has_focus() {
+                                    if !self.new_tiles_h_focused {
+                                        self.new_tiles_h_focused = true;
+                                        let text_len = self.new_tiles_h_str.len();
+                                        if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp2.id) {
+                                            let min = egui::text::CCursor::new(0);
+                                            let max = egui::text::CCursor::new(text_len);
+                                            state.cursor.set_char_range(Some(egui::text::CCursorRange::two(min, max)));
+                                            state.store(ui.ctx(), resp2.id);
+                                        }
+                                    }
+                                } else {
+                                    self.new_tiles_h_focused = false;
+                                }
+                                if resp2.changed() {
+                                    if let Ok(val) = self.new_tiles_h_str.trim().parse::<u32>() {
+                                        self.new_tiles_h = val.clamp(1, 64);
+                                    }
+                                } else if !resp2.has_focus() {
+                                    self.new_tiles_h_str = self.new_tiles_h.to_string();
+                                }
+                            });
+                            // Column 3: lock interaction
+                            ui.allocate_ui_with_layout(
+                                Vec2::new(lock_w, total_h),
+                                egui::Layout::top_down(egui::Align::TOP),
+                                |ui| {
+                                let alloc_rect = ui.max_rect();
+                                let center = egui::Pos2::new(alloc_rect.center().x, alloc_rect.center().y + 1.0);
+                                let bg_rect = egui::Rect::from_center_size(center, Vec2::splat(20.0));
+                                let response = ui.interact(bg_rect, "tiles_lock_btn".into(), egui::Sense::click());
+                                if response.clicked() {
+                                    self.new_tiles_aspect_locked = !self.new_tiles_aspect_locked;
+                                }
+                            });
+                        });
+
+                        // Draw tiles lines, fill, and lock icon
+                        let tr = tiles_outer.response.rect;
+                        let t_input_right = tr.left() + col_offset + label_w + input_w;
+                        let t_lock_cx = tr.left() + col_offset + label_w + input_w + lock_w / 2.0;
+                        let tw_cy = tr.top() + row_h / 2.0;
+                        let th_cy = tr.top() + row_h + gap + row_h / 2.0;
+                        if self.new_tiles_aspect_locked {
+                            ui.painter().line_segment([egui::Pos2::new(t_input_right, tw_cy), egui::Pos2::new(t_lock_cx, tw_cy)], stroke);
+                            ui.painter().line_segment([egui::Pos2::new(t_input_right, th_cy), egui::Pos2::new(t_lock_cx, th_cy)], stroke);
+                            ui.painter().line_segment([egui::Pos2::new(t_lock_cx, tw_cy), egui::Pos2::new(t_lock_cx, th_cy)], stroke);
+                        }
+                        let t_bg_rect = egui::Rect::from_center_size(egui::Pos2::new(t_lock_cx, tw_cy + (th_cy - tw_cy) / 2.0 + 1.0), Vec2::splat(20.0));
+                        ui.painter().rect_filled(t_bg_rect, 4.0, theme.panel);
+                        let t_lock_tint = if self.new_tiles_aspect_locked { theme.fg_desc } else { theme.accent };
+                        let t_lock_icon = if self.new_tiles_aspect_locked {
+                            egui::include_image!("../assets/icons/lock.svg")
+                        } else {
+                            egui::include_image!("../assets/icons/lock_open.svg")
+                        };
+                        let t_icon_rect = egui::Rect::from_center_size(t_bg_rect.center(), Vec2::splat(16.0));
+                        ui.put(t_icon_rect, Image::new(t_lock_icon).tint(t_lock_tint).fit_to_exact_size(Vec2::splat(16.0)));
+
+                        // Tiles aspect ratio lock
+                        if self.new_tiles_aspect_locked {
+                            let ratio = old_tw as f32 / old_th as f32;
+                            if self.new_tiles_w != old_tw {
+                                self.new_tiles_h = (self.new_tiles_w as f32 / ratio).round().max(1.0).min(64.0) as u32;
+                                self.new_tiles_h_str = self.new_tiles_h.to_string();
+                            } else if self.new_tiles_h != old_th {
+                                self.new_tiles_w = (self.new_tiles_h as f32 * ratio).round().max(1.0).min(64.0) as u32;
+                                self.new_tiles_w_str = self.new_tiles_w.to_string();
+                            }
+                        }
+
+                        // Input outlines (tile number section)
+                        let t_input_x = tr.left() + col_offset + label_w;
+                        let tin1 = egui::Rect::from_min_size(egui::Pos2::new(t_input_x, tr.top()), Vec2::new(input_w, row_h));
+                        let tin2 = egui::Rect::from_min_size(egui::Pos2::new(t_input_x, tr.top() + row_h + gap), Vec2::new(input_w, row_h));
+                        ui.painter().rect_stroke(tin1, 2.0, input_stroke, egui::StrokeKind::Inside);
+                        ui.painter().rect_stroke(tin2, 2.0, input_stroke, egui::StrokeKind::Inside);
+
+                        // ── Total size ──
+                        let cw = self.new_width.max(1) * self.new_tiles_w.max(1);
+                        let ch = self.new_height.max(1) * self.new_tiles_h.max(1);
+                        ui.add_space(28.0);
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(row_w, 18.0),
+                            egui::Layout::top_down(egui::Align::Center),
+                            |ui| {
+                            ui.colored_label(theme.accent, format!(
+                                "Total: {} × {} px", cw, ch
+                            ));
+                        });
+
+                        // ── Buttons ──
+                        ui.add_space(12.0);
+                        let btn_h = 19.0;
+                        let btn_spacing = 4.0;
+                        let create_label = "Create";
+                        let create_w = create_label.chars().count() as f32 * 6.0 + 16.0;
+                        let cancel_label = "Cancel";
+                        let cancel_w = cancel_label.chars().count() as f32 * 6.0 + 16.0;
+                        let total_btn_w = create_w + btn_spacing + cancel_w;
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(row_w, btn_h),
+                            egui::Layout::top_down(egui::Align::Center),
+                            |ui| {
+                            ui.allocate_ui_with_layout(
+                                Vec2::new(total_btn_w, btn_h),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                ui.spacing_mut().item_spacing = Vec2::new(btn_spacing, 0.0);
+
+                                // Create
+                                let (create_rect, create_resp) = ui.allocate_exact_size(
+                                    Vec2::new(create_w, btn_h), egui::Sense::click(),
+                                );
+                                let create_bg = if create_resp.hovered() { theme.surface } else { Color32::TRANSPARENT };
+                                if create_bg != Color32::TRANSPARENT {
+                                    ui.painter().rect_filled(create_rect, 0.0, create_bg);
+                                }
+                                let create_col = if create_resp.hovered() { theme.fg } else { theme.fg_desc };
+                                ui.painter().text(
+                                    create_rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    create_label,
+                                    FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
+                                    create_col,
+                                );
+                                if create_resp.clicked() {
+                                    let tile_w = self.new_width;
+                                    let tile_h = self.new_height;
+                                    let tiles_w = self.new_tiles_w;
+                                    let tiles_h = self.new_tiles_h;
+                                    let cw = tile_w * tiles_w;
+                                    let ch = tile_h * tiles_h;
+                                    let new_proj = Project::new_tiled(cw, ch, self.new_name.clone(), tiles_w, tiles_h, tile_w, tile_h);
+                                    self.grid_size = tile_w;
+                                    self.grid_visible = true;
+                                    if self.replace_project_pending {
+                                        self.replace_project_pending = false;
+                                        self.project = new_proj;
+                                        self.current_path = None;
+                                        self.undo_stack = UndoStack::new();
+                                        self.thumbnails = Self::thumbnails_for(&self.project);
+                                        self.active_modified = false;
+                                        self.clear_transient_state();
+                                        self.canvas_dirty = true;
+                                        self.pending_zoom_fit = true;
+                                    } else {
+                                        self.open_in_new_tab(new_proj, None);
+                                    }
+                                    self.show_new_dialog = false;
+                                }
+
+                                // Cancel
+                                let (cancel_rect, cancel_resp) = ui.allocate_exact_size(
+                                    Vec2::new(cancel_w, btn_h), egui::Sense::click(),
+                                );
+                                let cancel_bg = if cancel_resp.hovered() { theme.surface } else { Color32::TRANSPARENT };
+                                if cancel_bg != Color32::TRANSPARENT {
+                                    ui.painter().rect_filled(cancel_rect, 0.0, cancel_bg);
+                                }
+                                let cancel_col = if cancel_resp.hovered() { theme.fg } else { theme.fg_desc };
+                                ui.painter().text(
+                                    cancel_rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    cancel_label,
+                                    FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
+                                    cancel_col,
+                                );
+                                if cancel_resp.clicked() {
+                                    self.replace_project_pending = false;
+                                    self.show_new_dialog = false;
+                                }
+                            });
+                            });
+                    });
             });
+
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.replace_project_pending = false;
+            self.show_new_dialog = false;
+        }
     }
 
-    /// Static icon in the top-left brand area.
+    /// Static logo in the top-left brand area. Clickable to toggle shortcuts reference.
     fn draw_logo(&mut self, ui: &mut egui::Ui, theme: &Theme) {
-        // Lazy-load the icon texture once.
-        if self.logo_sprite.is_none() {
-            let bytes = include_bytes!("../assets/icon.png");
-            if let Ok(img) = image::load_from_memory(bytes) {
-                let rgba = img.to_rgba8();
-                let (w, h) = (rgba.width() as usize, rgba.height() as usize);
-                let color_image = egui::ColorImage::from_rgba_unmultiplied([w, h], rgba.as_raw());
-                self.logo_sprite = Some(ui.ctx().load_texture(
-                    "logo_icon",
-                    color_image,
-                    egui::TextureOptions::LINEAR,
-                ));
-            }
-        }
-
         ui.allocate_ui_with_layout(
             Vec2::new(BRAND_WIDTH, TOP_BAR_HEIGHT),
             egui::Layout::left_to_right(egui::Align::Center),
@@ -3636,22 +7013,874 @@ impl App {
                 ui.spacing_mut().item_spacing = Vec2::ZERO;
                 ui.add_space(10.0);
 
-                // Icon: 20×20 static.
-                let (icon_rect, _) = ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::hover());
-                if let Some(tex) = &self.logo_sprite {
-                    let uv = egui::Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0));
-                    ui.painter().image(tex.id(), icon_rect, uv, Color32::WHITE);
-                }
+                let (rect, response) = ui.allocate_exact_size(
+                    Vec2::new(BRAND_WIDTH - 20.0, 20.0),
+                    egui::Sense::click(),
+                );
 
-                ui.add_space(7.0);
+                // Draw logo icon
+                let icon_rect = egui::Rect::from_min_size(rect.min, Vec2::splat(20.0));
+                ui.put(icon_rect, Image::new(egui::include_image!("../assets/logo.png")).fit_to_exact_size(Vec2::splat(20.0)));
 
-                // Text
+                // Draw logo text
                 let text = RichText::new("SQUAREZ")
-                    .color(theme.fg)
+                    .color(if response.hovered() { theme.fg } else { theme.fg_desc })
                     .font(FontId::new(MENU_FONT_SIZE, FontFamily::Name("bold".into())));
-                ui.add(egui::Label::new(text).sense(egui::Sense::hover()));
+                let text_rect = egui::Rect::from_min_size(rect.min + Vec2::new(27.0, 0.0), Vec2::new(rect.width() - 27.0, 20.0));
+                ui.put(text_rect, egui::Label::new(text));
+
+                let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+                if response.clicked() {
+                    self.show_shortcuts_window = !self.show_shortcuts_window;
+                }
             },
         );
+    }
+
+    fn draw_shortcuts_dialog(&mut self, ctx: &egui::Context) {
+        if !self.show_shortcuts_window {
+            return;
+        }
+
+        let theme = self.theme.clone();
+
+        egui::Area::new("shortcuts_popup".into())
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                Frame::new()
+                    .fill(theme.panel)
+                    .stroke(egui::Stroke::NONE)
+                    .corner_radius(egui::CornerRadius::same(6))
+                    .shadow(egui::Shadow {
+                        offset: [0, 14],
+                        blur: 36,
+                        spread: 0,
+                        color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
+                    })
+                    .inner_margin(Margin::symmetric(12, 12))
+                    .show(ui, |ui| {
+                        ui.set_width(340.0);
+
+                        // Header row
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(340.0, 24.0),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                let header_text = RichText::new("KEYBOARD SHORTCUTS REFERENCE")
+                                    .color(theme.fg)
+                                    .font(FontId::new(FONT_SIZE_SM, FontFamily::Name("bold".into())));
+                                ui.label(header_text);
+
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let close_text = RichText::new("×")
+                                        .color(theme.fg_desc)
+                                        .font(FontId::new(16.0, FontFamily::Proportional));
+                                    let close_btn = ui.add(egui::Label::new(close_text).sense(egui::Sense::click()))
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                    if close_btn.clicked() {
+                                        self.show_shortcuts_window = false;
+                                    }
+                                });
+                            }
+                        );
+
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.add_space(6.0);
+
+                        // Scroll area for categorized shortcuts
+                        egui::ScrollArea::vertical()
+                            .max_height(300.0)
+                            .show(ui, |ui| {
+                                ui.spacing_mut().item_spacing = Vec2::new(0.0, 8.0);
+
+                                let categories = [
+                                    ("FILE OPERATIONS", vec![
+                                        ("⌘N", "New project dialog"),
+                                        ("⌘O", "Open project file (.sqr)"),
+                                        ("⌘S", "Save project"),
+                                        ("⇧⌘S", "Save project as..."),
+                                        ("⌘E", "Toggle PNG export popup"),
+                                    ]),
+                                    ("EDIT & HISTORY", vec![
+                                        ("⌘Z", "Undo last paint action"),
+                                        ("⇧⌘Z / Ctrl+Y", "Redo last undone action"),
+                                        ("⌘V", "Paste pixel art from clipboard"),
+                                        ("Delete / Backspace", "Delete active floating selection"),
+                                        ("Escape", "Cancel active shape / commit selection float"),
+                                    ]),
+                                    ("CANVAS NAVIGATION", vec![
+                                        ("Space + Left Drag", "Pan the viewport canvas"),
+                                        ("Middle-click Drag", "Pan the viewport canvas"),
+                                        ("Mouse Scroll", "Zoom in / out at cursor position"),
+                                    ]),
+                                    ("DRAWING MODIFIERS", vec![
+                                        ("Shift + Pencil", "Auto-close open paths & flood-fill shape"),
+                                        ("Shift + Rect / Ellipse", "Draw shape filled with color"),
+                                        ("Ctrl + Rectangle drag", "Start Isometric Box mode"),
+                                        ("Ctrl + Ellipse drag", "Start Isometric Cylinder mode"),
+                                        ("Alt", "Cycle active tool to next in its group"),
+                                    ]),
+                                    ("SELECTION & ANIMATION", vec![
+                                        ("Double-click", "Select entire active layer (Select tool)"),
+                                        ("Arrow keys", "Nudge active floating selection by 1 pixel"),
+                                        ("Shift + Arrow keys", "Nudge active floating selection by 10 pixels"),
+                                        ("A / D", "Navigate to previous / next frame"),
+                                        ("Space", "Toggle animation playback play/pause"),
+                                    ]),
+                                ];
+
+                                for (cat_title, list) in categories {
+                                    ui.add_space(4.0);
+                                    let title_text = RichText::new(cat_title)
+                                        .color(theme.accent)
+                                        .font(FontId::new(FONT_SIZE_SM - 1.0, FontFamily::Name("bold".into())));
+                                    ui.label(title_text);
+                                    ui.add_space(2.0);
+
+                                    for (key, desc) in list {
+                                        ui.allocate_ui_with_layout(
+                                            Vec2::new(320.0, 20.0),
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| {
+                                                // Key badge
+                                                Frame::new()
+                                                    .fill(theme.bg)
+                                                    .corner_radius(egui::CornerRadius::same(3))
+                                                    .inner_margin(Margin::symmetric(6, 2))
+                                                    .show(ui, |ui| {
+                                                        let key_text = RichText::new(key)
+                                                            .color(theme.fg)
+                                                            .font(FontId::new(FONT_SIZE_SM - 2.0, FontFamily::Monospace));
+                                                        ui.label(key_text);
+                                                    });
+
+                                                ui.add_space(6.0);
+
+                                                // Description
+                                                let desc_text = RichText::new(desc)
+                                                    .color(theme.fg_desc)
+                                                    .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional));
+                                                ui.label(desc_text);
+                                            }
+                                        );
+                                    }
+                                    ui.add_space(4.0);
+                                    ui.separator();
+                                }
+                            });
+                    });
+            });
+
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.show_shortcuts_window = false;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Save-confirm dialog (shown when closing a modified tab)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    fn draw_save_confirm_dialog(&mut self, ctx: &egui::Context) {
+        let pending = match self.close_tab_pending {
+            Some(i) => i,
+            None    => return,
+        };
+
+        let tab_name = self.tab_display_name(pending).trim_start_matches('*').to_string();
+        let theme    = self.theme.clone();
+
+        let mut action: Option<u8> = None; // 0 = save, 1 = discard, 2 = cancel
+
+        egui::Area::new("save_changes_popup".into())
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                Frame::new()
+                    .fill(theme.panel)
+                    .stroke(egui::Stroke::NONE)
+                    .corner_radius(egui::CornerRadius::same(6))
+                    .shadow(egui::Shadow {
+                        offset: [0, 14],
+                        blur: 36,
+                        spread: 0,
+                        color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
+                    })
+                    .inner_margin(Margin::symmetric(8, 8))
+                    .show(ui, |ui| {
+                        ui.set_width(200.0);
+                        let row_w = 200.0;
+
+                        // ── Message ──
+                        let text_h = 18.0;
+                        let total_h = text_h + 6.0;
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(row_w, total_h),
+                            egui::Layout::top_down(egui::Align::Center),
+                            |ui| {
+                                let (rect, _) = ui.allocate_exact_size(Vec2::new(row_w, total_h), egui::Sense::hover());
+                                ui.painter().rect_filled(rect, 3.0, theme.bg);
+                                let text_w = (row_w - 12.0) * 0.9;
+                                let te_h = FONT_SIZE_SM + 6.0;
+                                let text_rect = egui::Rect::from_center_size(
+                                    egui::Pos2::new(rect.center().x, rect.center().y + 1.0),
+                                    Vec2::new(text_w, te_h),
+                                );
+                                ui.painter().text(
+                                    text_rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    format!("Save changes to \"{}\"?", tab_name),
+                                    FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
+                                    theme.fg,
+                                );
+                            },
+                        );
+
+                        ui.add_space(8.0);
+
+                        // ── Buttons ──
+                        let btn_h = 19.0;
+                        let btn_spacing = 4.0;
+                        let labels: &[&str] = &["Save", "Discard", "Cancel"];
+                        // calculate width dynamically to fit three buttons nicely
+                        let total_btn_w = 200.0; // we want buttons to be laid out nicely inside the 200px width
+                        let single_btn_w = (total_btn_w - btn_spacing * (labels.len() - 1) as f32) / labels.len() as f32;
+
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(row_w, btn_h),
+                            egui::Layout::top_down(egui::Align::Center),
+                            |ui| {
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(row_w, btn_h),
+                                    egui::Layout::left_to_right(egui::Align::Center),
+                                    |ui| {
+                                        ui.spacing_mut().item_spacing = Vec2::new(btn_spacing, 0.0);
+                                        for (idx, &label) in labels.iter().enumerate() {
+                                            let (rect, resp) = ui.allocate_exact_size(
+                                                Vec2::new(single_btn_w, btn_h), egui::Sense::click(),
+                                            );
+                                            let bg = if resp.hovered() { theme.surface } else { Color32::TRANSPARENT };
+                                            if bg != Color32::TRANSPARENT {
+                                                ui.painter().rect_filled(rect, 0.0, bg);
+                                            }
+                                            let col = if resp.hovered() { theme.fg } else { theme.fg_desc };
+                                            ui.painter().text(
+                                                rect.center(),
+                                                egui::Align2::CENTER_CENTER,
+                                                label,
+                                                FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
+                                                col,
+                                            );
+                                            if resp.clicked() {
+                                                action = Some(idx as u8);
+                                            }
+                                        }
+                                    },
+                                );
+                            },
+                        );
+                    });
+            });
+
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            action = Some(2);
+        }
+
+        match action {
+            Some(0) => {
+                // Save: if save succeeds (or user picks a path), close tab
+                let saved = if pending == self.active_tab_idx {
+                    self.save_active_tab()
+                } else {
+                    // Switch to that tab, save, switch back
+                    let prev = self.active_tab_idx;
+                    self.switch_to_tab(pending);
+                    let ok = self.save_active_tab();
+                    self.switch_to_tab(prev);
+                    ok
+                };
+                if saved {
+                    self.close_tab_pending = None;
+                    self.close_tab(pending);
+                }
+                // If save was cancelled (None path chosen), keep dialog open
+            }
+            Some(1) => {
+                // Discard: just close without saving
+                self.close_tab_pending = None;
+                self.close_tab(pending);
+            }
+            Some(2) => {
+                // Cancel: dismiss dialog, keep tab alive
+                self.close_tab_pending = None;
+            }
+            _ => {}
+        }
+    }
+
+    fn draw_tab_resize_menu(&mut self, ctx: &egui::Context) {
+        let Some((tab_idx, _pos, _opened_at)) = self.tab_resize_menu else { return; };
+
+        let theme = self.theme.clone();
+        let mut close_menu = false;
+        let mut apply_resize = false;
+
+        egui::Area::new("tab_resize_popup".into())
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                Frame::new()
+                    .fill(theme.panel)
+                    .stroke(egui::Stroke::NONE)
+                    .corner_radius(egui::CornerRadius::same(6))
+                    .shadow(egui::Shadow {
+                        offset: [0, 14],
+                        blur: 36,
+                        spread: 0,
+                        color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
+                    })
+                    .inner_margin(Margin { left: 8, right: 8, top: 0, bottom: 8 })
+                    .show(ui, |ui| {
+                        ui.set_width(200.0);
+                        let row_w = 200.0;
+
+                        // ── Header Title ──
+                        ui.add_space(8.0); // 8px space from the top of the menu window to the text
+                        let title_text_h = 18.0;
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(row_w, title_text_h),
+                            egui::Layout::top_down(egui::Align::Center),
+                            |ui| {
+                                let (rect, _) = ui.allocate_exact_size(Vec2::new(row_w, title_text_h), egui::Sense::hover());
+                                let text_w = (row_w - 12.0) * 0.9;
+                                let te_h = FONT_SIZE_SM + 6.0;
+                                let text_rect = egui::Rect::from_center_size(
+                                    egui::Pos2::new(rect.center().x, rect.center().y),
+                                    Vec2::new(text_w, te_h),
+                                );
+                                ui.put(
+                                    text_rect,
+                                    egui::Label::new(
+                                        RichText::new("RESIZE CANVAS")
+                                            .font(FontId::new(FONT_SIZE_SM, FontFamily::Name("bold".into())))
+                                            .color(theme.fg)
+                                    ).selectable(false)
+                                );
+
+                                // Horizontal divider line 8px from each side
+                                let line_y = rect.bottom() + 4.0;
+                                let p1 = egui::Pos2::new(rect.left(), line_y);
+                                let p2 = egui::Pos2::new(rect.right(), line_y);
+                                ui.painter().line_segment([p1, p2], egui::Stroke::new(1.0, theme.border));
+                            },
+                        );
+
+                        ui.add_space(12.0);
+
+                        // ── Width / Height with lock ──
+                        let row_h = 22.0;
+                        let gap = 4.0;
+                        let inputs_total_h = row_h * 2.0 + gap;
+
+                        let old_w = self.new_width;
+                        let old_h = self.new_height;
+
+                        let label_w = 100.0;
+                        let lock_w = 26.0;
+                        let input_w = 52.0;
+                        let col_offset = (row_w - (label_w + input_w + lock_w)) / 2.0;
+
+                        let wh_outer = ui.allocate_ui_with_layout(
+                            Vec2::new(row_w, inputs_total_h),
+                            egui::Layout::left_to_right(egui::Align::TOP),
+                            |ui| {
+                                ui.spacing_mut().item_spacing = Vec2::ZERO;
+                                ui.add_space(col_offset);
+                                // Column 1: Tile Size label
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(label_w, inputs_total_h),
+                                    egui::Layout::top_down(egui::Align::Center),
+                                    |ui| {
+                                        ui.visuals_mut().override_text_color = Some(theme.fg_desc);
+                                        let (r, _) = ui.allocate_exact_size(Vec2::new(label_w, inputs_total_h), egui::Sense::hover());
+                                        ui.put(r, egui::Label::new(self.label_desc("Tile Size")).selectable(false));
+                                    },
+                                );
+
+                                // Column 2: values
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(input_w, inputs_total_h),
+                                    egui::Layout::top_down(egui::Align::LEFT),
+                                    |ui| {
+                                        ui.visuals_mut().override_text_color = Some(theme.fg_desc);
+                                        let (r, _) = ui.allocate_exact_size(Vec2::new(input_w, row_h), egui::Sense::hover());
+                                        let resp1 = ui.put(r, egui::TextEdit::singleline(&mut self.new_width_str)
+                                            .frame(false)
+                                            .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
+                                            .text_color(theme.fg)
+                                            .horizontal_align(egui::Align::Center)
+                                            .vertical_align(egui::Align::Center)
+                                            .id_source("resize_width"));
+                                        if resp1.has_focus() {
+                                            if !self.new_width_focused {
+                                                self.new_width_focused = true;
+                                                let text_len = self.new_width_str.len();
+                                                if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp1.id) {
+                                                    let min = egui::text::CCursor::new(0);
+                                                    let max = egui::text::CCursor::new(text_len);
+                                                    state.cursor.set_char_range(Some(egui::text::CCursorRange::two(min, max)));
+                                                    state.store(ui.ctx(), resp1.id);
+                                                }
+                                            }
+                                        } else {
+                                            self.new_width_focused = false;
+                                        }
+                                        if resp1.changed() {
+                                            if let Ok(val) = self.new_width_str.trim().parse::<u32>() {
+                                                self.new_width = val.clamp(1, 2048);
+                                            }
+                                        } else if !resp1.has_focus() {
+                                            self.new_width_str = self.new_width.to_string();
+                                        }
+
+                                        ui.add_space(gap);
+                                        let (r, _) = ui.allocate_exact_size(Vec2::new(input_w, row_h), egui::Sense::hover());
+                                        let resp2 = ui.put(r, egui::TextEdit::singleline(&mut self.new_height_str)
+                                            .frame(false)
+                                            .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
+                                            .text_color(theme.fg)
+                                            .horizontal_align(egui::Align::Center)
+                                            .vertical_align(egui::Align::Center)
+                                            .id_source("resize_height"));
+                                        if resp2.has_focus() {
+                                            if !self.new_height_focused {
+                                                self.new_height_focused = true;
+                                                let text_len = self.new_height_str.len();
+                                                if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp2.id) {
+                                                    let min = egui::text::CCursor::new(0);
+                                                    let max = egui::text::CCursor::new(text_len);
+                                                    state.cursor.set_char_range(Some(egui::text::CCursorRange::two(min, max)));
+                                                    state.store(ui.ctx(), resp2.id);
+                                                }
+                                            }
+                                        } else {
+                                            self.new_height_focused = false;
+                                        }
+                                        if resp2.changed() {
+                                            if let Ok(val) = self.new_height_str.trim().parse::<u32>() {
+                                                self.new_height = val.clamp(1, 2048);
+                                            }
+                                        } else if !resp2.has_focus() {
+                                            self.new_height_str = self.new_height.to_string();
+                                        }
+                                    },
+                                );
+
+                                // Column 3: lock interaction
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(lock_w, inputs_total_h),
+                                    egui::Layout::top_down(egui::Align::TOP),
+                                    |ui| {
+                                        let alloc_rect = ui.max_rect();
+                                        let center = egui::Pos2::new(alloc_rect.center().x, alloc_rect.center().y + 1.0);
+                                        let bg_rect = egui::Rect::from_center_size(center, Vec2::splat(20.0));
+                                        let response = ui.interact(bg_rect, "resize_lock_btn".into(), egui::Sense::click());
+                                        if response.clicked() {
+                                            self.new_aspect_locked = !self.new_aspect_locked;
+                                        }
+                                    },
+                                );
+                            },
+                        );
+
+                        // Draw lines, fill, and lock icon after child UI so painter draws on top
+                        let r = wh_outer.response.rect;
+                        let col_offset = (row_w - (label_w + input_w + lock_w)) / 2.0;
+                        let input_right = r.left() + col_offset + label_w + input_w;
+                        let lock_cx = r.left() + col_offset + label_w + input_w + lock_w / 2.0;
+                        let w_cy = r.top() + row_h / 2.0;
+                        let h_cy = r.top() + row_h + gap + row_h / 2.0;
+                        let stroke = egui::Stroke::new(1.0, theme.fg_desc);
+                        if self.new_aspect_locked {
+                            ui.painter().line_segment([egui::Pos2::new(input_right, w_cy), egui::Pos2::new(lock_cx, w_cy)], stroke);
+                            ui.painter().line_segment([egui::Pos2::new(input_right, h_cy), egui::Pos2::new(lock_cx, h_cy)], stroke);
+                            ui.painter().line_segment([egui::Pos2::new(lock_cx, w_cy), egui::Pos2::new(lock_cx, h_cy)], stroke);
+                        }
+                        let bg_rect = egui::Rect::from_center_size(egui::Pos2::new(lock_cx, w_cy + (h_cy - w_cy) / 2.0 + 1.0), Vec2::splat(20.0));
+                        ui.painter().rect_filled(bg_rect, 4.0, theme.panel);
+                        let lock_tint = if self.new_aspect_locked { theme.fg_desc } else { theme.accent };
+                        let lock_icon = if self.new_aspect_locked {
+                            egui::include_image!("../assets/icons/lock.svg")
+                        } else {
+                            egui::include_image!("../assets/icons/lock_open.svg")
+                        };
+                        let icon_rect = egui::Rect::from_center_size(bg_rect.center(), Vec2::splat(16.0));
+                        ui.put(icon_rect, Image::new(lock_icon).tint(lock_tint).fit_to_exact_size(Vec2::splat(16.0)));
+
+                        // Aspect ratio lock
+                        if self.new_aspect_locked {
+                            let ratio = old_w as f32 / old_h as f32;
+                            if self.new_width != old_w {
+                                self.new_height = (self.new_width as f32 / ratio).round().max(1.0).min(2048.0) as u32;
+                                self.new_height_str = self.new_height.to_string();
+                            } else if self.new_height != old_h {
+                                self.new_width = (self.new_height as f32 * ratio).round().max(1.0).min(2048.0) as u32;
+                                self.new_width_str = self.new_width.to_string();
+                            }
+                        }
+
+                        // Input outlines (tile size section)
+                        let input_stroke = egui::Stroke::new(1.0, theme.accent);
+                        let input_x = r.left() + col_offset + label_w;
+                        let in1 = egui::Rect::from_min_size(egui::Pos2::new(input_x, r.top()), Vec2::new(input_w, row_h));
+                        let in2 = egui::Rect::from_min_size(egui::Pos2::new(input_x, r.top() + row_h + gap), Vec2::new(input_w, row_h));
+                        ui.painter().rect_stroke(in1, 2.0, input_stroke, egui::StrokeKind::Inside);
+                        ui.painter().rect_stroke(in2, 2.0, input_stroke, egui::StrokeKind::Inside);
+
+                        ui.add_space(20.0);
+
+                        // ── Number of tiles ──
+                        let old_tw = self.new_tiles_w;
+                        let old_th = self.new_tiles_h;
+                        let tiles_outer = ui.allocate_ui_with_layout(
+                            Vec2::new(row_w, inputs_total_h),
+                            egui::Layout::left_to_right(egui::Align::TOP),
+                            |ui| {
+                                ui.spacing_mut().item_spacing = Vec2::ZERO;
+                                ui.add_space(col_offset);
+                                // Column 1: labels
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(label_w, inputs_total_h),
+                                    egui::Layout::top_down(egui::Align::Center),
+                                    |ui| {
+                                        ui.visuals_mut().override_text_color = Some(theme.fg_desc);
+                                        let (r, _) = ui.allocate_exact_size(Vec2::new(label_w, inputs_total_h), egui::Sense::hover());
+                                        ui.put(r, egui::Label::new(self.label_desc("Number of tiles")).selectable(false));
+                                    },
+                                );
+                                // Column 2: values
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(input_w, inputs_total_h),
+                                    egui::Layout::top_down(egui::Align::LEFT),
+                                    |ui| {
+                                        ui.visuals_mut().override_text_color = Some(theme.fg_desc);
+                                        let (r, _) = ui.allocate_exact_size(Vec2::new(input_w, row_h), egui::Sense::hover());
+                                        let resp1 = ui.put(r, egui::TextEdit::singleline(&mut self.new_tiles_w_str)
+                                            .frame(false)
+                                            .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
+                                            .text_color(theme.fg)
+                                            .horizontal_align(egui::Align::Center)
+                                            .vertical_align(egui::Align::Center)
+                                            .id_source("resize_tiles_w"));
+                                        if resp1.has_focus() {
+                                            if !self.new_tiles_w_focused {
+                                                self.new_tiles_w_focused = true;
+                                                let text_len = self.new_tiles_w_str.len();
+                                                if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp1.id) {
+                                                    let min = egui::text::CCursor::new(0);
+                                                    let max = egui::text::CCursor::new(text_len);
+                                                    state.cursor.set_char_range(Some(egui::text::CCursorRange::two(min, max)));
+                                                    state.store(ui.ctx(), resp1.id);
+                                                }
+                                            }
+                                        } else {
+                                            self.new_tiles_w_focused = false;
+                                        }
+                                        if resp1.changed() {
+                                            if let Ok(val) = self.new_tiles_w_str.trim().parse::<u32>() {
+                                                self.new_tiles_w = val.clamp(1, 64);
+                                            }
+                                        } else if !resp1.has_focus() {
+                                            self.new_tiles_w_str = self.new_tiles_w.to_string();
+                                        }
+
+                                        ui.add_space(gap);
+                                        let (r, _) = ui.allocate_exact_size(Vec2::new(input_w, row_h), egui::Sense::hover());
+                                        let resp2 = ui.put(r, egui::TextEdit::singleline(&mut self.new_tiles_h_str)
+                                            .frame(false)
+                                            .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
+                                            .text_color(theme.fg)
+                                            .horizontal_align(egui::Align::Center)
+                                            .vertical_align(egui::Align::Center)
+                                            .id_source("resize_tiles_h"));
+                                        if resp2.has_focus() {
+                                            if !self.new_tiles_h_focused {
+                                                self.new_tiles_h_focused = true;
+                                                let text_len = self.new_tiles_h_str.len();
+                                                if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp2.id) {
+                                                    let min = egui::text::CCursor::new(0);
+                                                    let max = egui::text::CCursor::new(text_len);
+                                                    state.cursor.set_char_range(Some(egui::text::CCursorRange::two(min, max)));
+                                                    state.store(ui.ctx(), resp2.id);
+                                                }
+                                            }
+                                        } else {
+                                            self.new_tiles_h_focused = false;
+                                        }
+                                        if resp2.changed() {
+                                            if let Ok(val) = self.new_tiles_h_str.trim().parse::<u32>() {
+                                                self.new_tiles_h = val.clamp(1, 64);
+                                            }
+                                        } else if !resp2.has_focus() {
+                                            self.new_tiles_h_str = self.new_tiles_h.to_string();
+                                        }
+                                    },
+                                );
+                                // Column 3: lock interaction
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(lock_w, inputs_total_h),
+                                    egui::Layout::top_down(egui::Align::TOP),
+                                    |ui| {
+                                        let alloc_rect = ui.max_rect();
+                                        let center = egui::Pos2::new(alloc_rect.center().x, alloc_rect.center().y + 1.0);
+                                        let bg_rect = egui::Rect::from_center_size(center, Vec2::splat(20.0));
+                                        let response = ui.interact(bg_rect, "resize_tiles_lock_btn".into(), egui::Sense::click());
+                                        if response.clicked() {
+                                            self.new_tiles_aspect_locked = !self.new_tiles_aspect_locked;
+                                        }
+                                    },
+                                );
+                            },
+                        );
+
+                        // Draw tiles lines, fill, and lock icon
+                        let tr = tiles_outer.response.rect;
+                        let t_input_right = tr.left() + col_offset + label_w + input_w;
+                        let t_lock_cx = tr.left() + col_offset + label_w + input_w + lock_w / 2.0;
+                        let tw_cy = tr.top() + row_h / 2.0;
+                        let th_cy = tr.top() + row_h + gap + row_h / 2.0;
+                        if self.new_tiles_aspect_locked {
+                            ui.painter().line_segment([egui::Pos2::new(t_input_right, tw_cy), egui::Pos2::new(t_lock_cx, tw_cy)], stroke);
+                            ui.painter().line_segment([egui::Pos2::new(t_input_right, th_cy), egui::Pos2::new(t_lock_cx, th_cy)], stroke);
+                            ui.painter().line_segment([egui::Pos2::new(t_lock_cx, tw_cy), egui::Pos2::new(t_lock_cx, th_cy)], stroke);
+                        }
+                        let t_bg_rect = egui::Rect::from_center_size(egui::Pos2::new(t_lock_cx, tw_cy + (th_cy - tw_cy) / 2.0 + 1.0), Vec2::splat(20.0));
+                        ui.painter().rect_filled(t_bg_rect, 4.0, theme.panel);
+                        let t_lock_tint = if self.new_tiles_aspect_locked { theme.fg_desc } else { theme.accent };
+                        let t_lock_icon = if self.new_tiles_aspect_locked {
+                            egui::include_image!("../assets/icons/lock.svg")
+                        } else {
+                            egui::include_image!("../assets/icons/lock_open.svg")
+                        };
+                        let t_icon_rect = egui::Rect::from_center_size(t_bg_rect.center(), Vec2::splat(16.0));
+                        ui.put(t_icon_rect, Image::new(t_lock_icon).tint(t_lock_tint).fit_to_exact_size(Vec2::splat(16.0)));
+
+                        // Tiles aspect ratio lock
+                        if self.new_tiles_aspect_locked {
+                            let ratio = old_tw as f32 / old_th as f32;
+                            if self.new_tiles_w != old_tw {
+                                self.new_tiles_h = (self.new_tiles_w as f32 / ratio).round().max(1.0).min(64.0) as u32;
+                                self.new_tiles_h_str = self.new_tiles_h.to_string();
+                            } else if self.new_tiles_h != old_th {
+                                self.new_tiles_w = (self.new_tiles_h as f32 * ratio).round().max(1.0).min(64.0) as u32;
+                                self.new_tiles_w_str = self.new_tiles_w.to_string();
+                            }
+                        }
+
+                        // Input outlines (tile number section)
+                        let t_input_x = tr.left() + col_offset + label_w;
+                        let tin1 = egui::Rect::from_min_size(egui::Pos2::new(t_input_x, tr.top()), Vec2::new(input_w, row_h));
+                        let tin2 = egui::Rect::from_min_size(egui::Pos2::new(t_input_x, tr.top() + row_h + gap), Vec2::new(input_w, row_h));
+                        ui.painter().rect_stroke(tin1, 2.0, input_stroke, egui::StrokeKind::Inside);
+                        ui.painter().rect_stroke(tin2, 2.0, input_stroke, egui::StrokeKind::Inside);
+
+                        // ── Total size ──
+                        let cw = self.new_width.max(1) * self.new_tiles_w.max(1);
+                        let ch = self.new_height.max(1) * self.new_tiles_h.max(1);
+                        ui.add_space(28.0);
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(row_w, 18.0),
+                            egui::Layout::top_down(egui::Align::Center),
+                            |ui| {
+                                ui.colored_label(theme.accent, format!(
+                                    "Total: {} × {} px", cw, ch
+                                ));
+                            },
+                        );
+
+                        // ── Buttons ──
+                        ui.add_space(12.0);
+                        let btn_h = 19.0;
+                        let btn_spacing = 4.0;
+                        let create_label = "Apply";
+                        let create_w = create_label.chars().count() as f32 * 6.0 + 16.0;
+                        let cancel_label = "Cancel";
+                        let cancel_w = cancel_label.chars().count() as f32 * 6.0 + 16.0;
+                        let total_btn_w = create_w + btn_spacing + cancel_w;
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(row_w, btn_h),
+                            egui::Layout::top_down(egui::Align::Center),
+                            |ui| {
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(total_btn_w, btn_h),
+                                    egui::Layout::left_to_right(egui::Align::Center),
+                                    |ui| {
+                                        ui.spacing_mut().item_spacing = Vec2::new(btn_spacing, 0.0);
+
+                                        // Apply
+                                        let (create_rect, create_resp) = ui.allocate_exact_size(
+                                            Vec2::new(create_w, btn_h), egui::Sense::click(),
+                                        );
+                                        let create_bg = if create_resp.hovered() { theme.surface } else { Color32::TRANSPARENT };
+                                        if create_bg != Color32::TRANSPARENT {
+                                            ui.painter().rect_filled(create_rect, 0.0, create_bg);
+                                        }
+                                        let create_col = if create_resp.hovered() { theme.fg } else { theme.fg_desc };
+                                        ui.painter().text(
+                                            create_rect.center(),
+                                            egui::Align2::CENTER_CENTER,
+                                            create_label,
+                                            FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
+                                            create_col,
+                                        );
+                                        if create_resp.clicked() {
+                                            apply_resize = true;
+                                        }
+
+                                        // Cancel
+                                        let (cancel_rect, cancel_resp) = ui.allocate_exact_size(
+                                            Vec2::new(cancel_w, btn_h), egui::Sense::click(),
+                                        );
+                                        let cancel_bg = if cancel_resp.hovered() { theme.surface } else { Color32::TRANSPARENT };
+                                        if cancel_bg != Color32::TRANSPARENT {
+                                            ui.painter().rect_filled(cancel_rect, 0.0, cancel_bg);
+                                        }
+                                        let cancel_col = if cancel_resp.hovered() { theme.fg } else { theme.fg_desc };
+                                        ui.painter().text(
+                                            cancel_rect.center(),
+                                            egui::Align2::CENTER_CENTER,
+                                            cancel_label,
+                                            FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
+                                            cancel_col,
+                                        );
+                                        if cancel_resp.clicked() {
+                                            close_menu = true;
+                                        }
+                                    },
+                                );
+                            },
+                        );
+                    });
+            });
+
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) || close_menu {
+            self.tab_resize_menu = None;
+        }
+
+        if apply_resize {
+            let tile_w = self.new_width;
+            let tile_h = self.new_height;
+            let tiles_w = self.new_tiles_w;
+            let tiles_h = self.new_tiles_h;
+            let cw = tile_w * tiles_w;
+            let ch = tile_h * tiles_h;
+
+            let tab_name = if tab_idx == self.active_tab_idx {
+                self.project.name.clone()
+            } else {
+                let slot = self.other_tabs_slot(tab_idx);
+                self.other_tabs[slot].project.name.clone()
+            };
+
+            let new_proj = Project::new_tiled(cw, ch, tab_name, tiles_w, tiles_h, tile_w, tile_h);
+            
+            if tab_idx == self.active_tab_idx {
+                self.project = new_proj;
+                self.current_path = None;
+                self.undo_stack = UndoStack::new();
+                self.thumbnails = Self::thumbnails_for(&self.project);
+                self.active_modified = true;
+                self.clear_transient_state();
+                self.canvas_dirty = true;
+                self.pending_zoom_fit = true;
+            } else {
+                let slot = self.other_tabs_slot(tab_idx);
+                self.other_tabs[slot].project = new_proj;
+                self.other_tabs[slot].current_path = None;
+                self.other_tabs[slot].undo_stack = UndoStack::new();
+                self.other_tabs[slot].thumbnails = Self::thumbnails_for(&self.other_tabs[slot].project);
+                self.other_tabs[slot].modified = true;
+            }
+
+            self.grid_size = tile_w;
+            self.grid_visible = true;
+            self.tab_resize_menu = None;
+        }
+    }
+
+    fn draw_ramp_lab(&mut self, ctx: &egui::Context) {
+        if !self.ramp_lab.open { return; }
+
+        let theme = self.theme.clone();
+        let mut needs_regen = false;
+
+        // Window width: 3-column swatches are perfect squares (20×20px).
+        // col_w = num_steps*20+10, avail_w = col_w*3 + gap*2, + grid frame margins 16 + gaps 8
+        let ramp_lab_w = (self.ramp_lab.num_steps as f32 * 20.0 + 10.0) * 3.0 + 24.0;
+
+        // Shared corner radius — 2% of one card column width, same value used everywhere.
+        let cr_num_cols = self.ramp_lab.num_ramps.min(3).max(1);
+        // Match rl_grid's avail_w exactly: ramp_lab_w minus grid frame inner margins (8+8=16)
+        let cr_avail_w = ramp_lab_w - 16.0;
+        let cr_col_w = ((cr_avail_w - 8.0 * (cr_num_cols - 1) as f32) / cr_num_cols as f32).floor();
+        let shared_corner_r = (cr_col_w * 0.02).max(1.0).round() as u8;
+
+        let win_resp = egui::Window::new("##ramp_lab_win")
+            .id(egui::Id::new("ramp_lab_win"))
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .resizable(false)
+            .collapsible(false)
+            .title_bar(false)
+            .min_width(ramp_lab_w)
+            .max_width(ramp_lab_w)
+            .frame(
+                Frame::new()
+                    .fill(theme.panel)
+                    .stroke(egui::Stroke::NONE)
+                    .corner_radius(egui::CornerRadius::ZERO)
+                    .shadow(egui::Shadow {
+                        offset: [0, 14],
+                        blur: 36,
+                        spread: 0,
+                        color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
+                    })
+                    .inner_margin(Margin::ZERO),
+            )
+            .show(ctx, |ui| {
+                ui.set_width(ramp_lab_w);
+                ui.spacing_mut().item_spacing.y = 0.0;
+
+                if self.ramp_lab.override_ramp_idx.is_some() {
+                    rl_override_bar(ui, &theme, &mut self.ramp_lab, &mut needs_regen);
+                }
+                rl_grid(ui, &theme, &mut self.ramp_lab, shared_corner_r);
+                rl_curves(ui, &theme, &mut self.ramp_lab, &mut needs_regen, shared_corner_r);
+                rl_export(ui, &theme, &self.ramp_lab, &mut self.project);
+            });
+
+        // Close on click outside — same rule as layer / frame tooltips:
+        // guard 0.15s so the double-click that opened it doesn't immediately close it.
+        // Use rect-contains check: hovered() returns false when a child widget claims
+        // the pointer (e.g. a button click), so we check the pointer position directly.
+        let now = ctx.input(|i| i.time);
+        let age = now - self.ramp_lab.opened_at;
+        let win_rect = win_resp
+            .as_ref()
+            .map(|r| r.response.rect)
+            .unwrap_or(egui::Rect::NOTHING);
+        let pointer_in_window = ctx
+            .input(|i| i.pointer.latest_pos())
+            .map(|p| win_rect.contains(p))
+            .unwrap_or(false);
+        let clicked_outside = age > 0.15
+            && ctx.input(|i| i.pointer.any_click())
+            && !pointer_in_window;
+
+        if clicked_outside {
+            self.ramp_lab.open = false;
+        }
+        if needs_regen { self.ramp_lab.regenerate_all(); }
     }
 }
 
@@ -3676,24 +7905,72 @@ impl eframe::App for App {
 
         let fps = self.project.active_anim().fps;
         let total = self.project.active_anim().frames.len();
-        if self.playback.tick(fps, &mut self.project.active_frame, total, 0, total) {
+        let (clip_start, clip_len) = if self.project.is_tiled() {
+            let anim = self.project.active_anim();
+            let s = anim.tile_start.min(total.saturating_sub(1));
+            let e = anim.tile_end.min(total.saturating_sub(1)).max(s);
+            (s, e.saturating_sub(s) + 1)
+        } else {
+            (0, total)
+        };
+        if self.playback.tick(fps, &mut self.project.active_frame, total, clip_start, clip_len) {
             self.canvas_dirty = true;
         }
 
         // Alt → cycle to next tool in the active tool's group (detect on rising edge)
         let alt_now = ctx.input(|i| i.modifiers.alt);
-        if alt_now && !self.alt_was_down {
+        let primary_now = ctx.input(|i| i.pointer.primary_down());
+        if alt_now && !self.alt_was_down && !primary_now && self.iso_box_phase.is_none() && self.iso_cylinder_phase.is_none() {
             self.cycle_tool_in_group();
         }
         self.alt_was_down = alt_now;
 
-        // Escape commits a floating selection back to the layer.
-        if self.select_state.has_float() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.commit_float_to_layer();
+        // Escape cancels an in-progress iso box / iso sphere or commits a floating selection.
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            if self.iso_box_phase.is_some() {
+                self.iso_box_phase = None;
+                self.shape_preview.clear();
+                self.canvas_dirty = true;
+            } else if self.iso_cylinder_phase.is_some() {
+                self.iso_cylinder_phase = None;
+                self.shape_preview.clear();
+                self.canvas_dirty = true;
+            } else if self.select_state.has_float() {
+                self.commit_float_to_layer();
+            }
+        }
+        if (ctx.input(|i| i.key_pressed(egui::Key::Delete)) || ctx.input(|i| i.key_pressed(egui::Key::Backspace)))
+            && !ctx.wants_keyboard_input()
+            && self.select_state.has_float()
+        {
+            self.select_state.clear();
+            self.canvas_dirty = true;
+            if self.project.is_tiled() {
+                self.mark_all_thumbnails_dirty();
+            }
         }
         // If the user switches away from the RectSelect tool, commit any float.
         if self.select_state.has_float() && !matches!(self.active_tool, ActiveTool::RectSelect) {
             self.commit_float_to_layer();
+        }
+        // If the user switches away from the Rectangle tool, cancel any in-progress iso box.
+        if self.iso_box_phase.is_some() && !matches!(self.active_tool, ActiveTool::Rectangle { .. }) {
+            self.iso_box_phase = None;
+            self.shape_preview.clear();
+            self.canvas_dirty = true;
+        }
+        // If the user switches away from the Ellipse tool, cancel any in-progress iso cylinder drag.
+        if self.iso_cylinder_dragging && !matches!(self.active_tool, ActiveTool::Ellipse { .. }) {
+            self.iso_cylinder_dragging = false;
+            self.drag_start = None;
+            self.shape_preview.clear();
+            self.canvas_dirty = true;
+        }
+        // If the user switches away from the Ellipse tool, cancel any in-progress iso cylinder phase.
+        if self.iso_cylinder_phase.is_some() && !matches!(self.active_tool, ActiveTool::Ellipse { .. }) {
+            self.iso_cylinder_phase = None;
+            self.shape_preview.clear();
+            self.canvas_dirty = true;
         }
 
         if !ctx.wants_keyboard_input() {
@@ -3711,18 +7988,91 @@ impl eframe::App for App {
             if ctx.input(|i| i.key_pressed(egui::Key::Space)) {
                 self.playback.is_playing = !self.playback.is_playing;
             }
+            // Arrow keys: nudge floating selection
+            if self.select_state.has_float() {
+                let shift_down = ctx.input(|i| i.modifiers.shift);
+                let step = if shift_down { 10.0 } else { 1.0 };
+                if ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
+                    self.select_state.offset.0 -= step;
+                    self.canvas_dirty = true;
+                }
+                if ctx.input(|i| i.key_pressed(egui::Key::ArrowRight)) {
+                    self.select_state.offset.0 += step;
+                    self.canvas_dirty = true;
+                }
+                if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+                    self.select_state.offset.1 -= step;
+                    self.canvas_dirty = true;
+                }
+                if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+                    self.select_state.offset.1 += step;
+                    self.canvas_dirty = true;
+                }
+            }
         }
 
-        let ctrl_z = ctx.input(|i| i.key_pressed(egui::Key::Z) && i.modifiers.ctrl);
-        let ctrl_y = ctx.input(|i| i.key_pressed(egui::Key::Y) && i.modifiers.ctrl);
-        if ctrl_z {
+        let command = ctx.input(|i| i.modifiers.command);
+        let shift   = ctx.input(|i| i.modifiers.shift);
+        let ctrl    = ctx.input(|i| i.modifiers.ctrl);
+
+        let undo = command && !shift && ctx.input(|i| i.key_pressed(egui::Key::Z));
+        let redo = (command && shift && ctx.input(|i| i.key_pressed(egui::Key::Z)))
+                || (ctrl && ctx.input(|i| i.key_pressed(egui::Key::Y)));
+
+        if undo {
             // Prefer color-aware undo so ColorState snapshots (ramp edits) are restored.
             self.undo_stack.undo_with_color(&mut self.project, &mut self.color_state);
             self.canvas_dirty = true;
+            if self.project.is_tiled() {
+                self.mark_all_thumbnails_dirty();
+            }
         }
-        if ctrl_y {
+        if redo {
             self.undo_stack.redo_with_color(&mut self.project, &mut self.color_state);
             self.canvas_dirty = true;
+            if self.project.is_tiled() {
+                self.mark_all_thumbnails_dirty();
+            }
+        }
+
+        // File shortcuts: ⌘N / ⌘O / ⌘S / ⇧⌘S / ⌘E, Edit: ⌘V
+        let file_new  = command && !shift && ctx.input(|i| i.key_pressed(egui::Key::N));
+        let file_open = command && !shift && ctx.input(|i| i.key_pressed(egui::Key::O));
+        let file_save = command && !shift && ctx.input(|i| i.key_pressed(egui::Key::S));
+        let file_save_as = command &&  shift && ctx.input(|i| i.key_pressed(egui::Key::S));
+        let file_export = command && !shift && ctx.input(|i| i.key_pressed(egui::Key::E));
+        let edit_paste = ctx.input(|i| {
+            i.events.iter().any(|event| {
+                if let egui::Event::Key { key: egui::Key::V, pressed: false, modifiers, .. } = event {
+                    (modifiers.command || modifiers.ctrl) && !modifiers.shift
+                } else {
+                    false
+                }
+            })
+        });
+
+        if edit_paste && !ctx.wants_keyboard_input() { self.paste_from_clipboard(); }
+
+        if file_new  { self.open_new_dialog(false); }
+        if file_open {
+            if let Some(path) = rfd_open() {
+                if let Ok(p) = load_sqr(&path) {
+                    self.open_in_new_tab(p, Some(path));
+                }
+            }
+        }
+        if file_save { self.save_active_tab(); }
+        if file_save_as {
+            let prev = self.current_path.take();
+            self.save_active_tab();
+            if self.current_path.is_none() {
+                self.current_path = prev;
+            }
+        }
+        if file_export {
+            let pos = Pos2::new(120.0, TOP_BAR_HEIGHT);
+            self.export_menu_open = if self.export_menu_open.is_some() { None } else { Some(pos) };
+            self.export_menu_frame = ctx.cumulative_pass_nr();
         }
 
         self.draw_top_bar(ctx);
@@ -3732,19 +8082,20 @@ impl eframe::App for App {
         self.draw_tool_submenu(ctx);  // floating tool group submenu (right of toolbar)
         self.draw_workspace(ctx);
         self.draw_layer_context_menu(ctx);
+        self.draw_canvas_context_menu(ctx);
         self.draw_new_project_dialog(ctx);
-
-        let dt = ctx.input(|i| i.unstable_dt).min(0.05);
-        let target_t = if self.playback.is_playing { 1.0 } else { 0.0 };
-        let speed = 8.0; // quick transition
-        if (self.play_anim_t - target_t).abs() > 0.001 {
-            if self.play_anim_t < target_t {
-                self.play_anim_t = (self.play_anim_t + speed * dt).min(target_t);
-            } else {
-                self.play_anim_t = (self.play_anim_t - speed * dt).max(target_t);
-            }
-            ctx.request_repaint();
-        }
+        self.draw_shortcuts_dialog(ctx);
+        self.draw_ramp_lab(ctx);
+        crate::palette_browser::draw_palette_browser(
+            &mut self.palette_browser,
+            ctx,
+            &mut self.theme,
+            &self.default_theme,
+            &mut self.project,
+        );
+        self.draw_save_confirm_dialog(ctx);
+        self.draw_anim_tile_menu(ctx);
+        self.draw_tab_resize_menu(ctx);
 
         if self.playback.is_playing {
             ctx.request_repaint();
@@ -3808,28 +8159,34 @@ fn window_check(visible: bool) -> Option<&'static str> {
     visible.then_some("✓")
 }
 
-/// Returns `(show_content, add_clicked)`.
-fn section_header(ui: &mut egui::Ui, theme: &Theme, state: &mut UiState, panel: Panel, icon: ImageSource<'static>, extra_btn: Option<ImageSource<'static>>) -> (bool, bool, bool) {
-    section_header_with_add(ui, theme, state, panel, icon, extra_btn, true)
+/// Returns `(show_content, add_clicked, extra_clicked)`.
+fn section_header(ui: &mut egui::Ui, theme: &Theme, state: &mut UiState, panel: Panel, icon: ImageSource<'static>, extra_btn: Option<ImageSource<'static>>, extra_btn_active: bool) -> (bool, bool, bool, bool, bool) {
+    let (show, add, extra, extra2, _, dbl) = section_header_with_add(ui, theme, state, panel, icon, extra_btn, extra_btn_active, None, false, None, false, true);
+    (show, add, extra, extra2, dbl)
 }
 
-fn section_header_with_add(ui: &mut egui::Ui, theme: &Theme, state: &mut UiState, panel: Panel, icon: ImageSource<'static>, extra_btn: Option<ImageSource<'static>>, show_add: bool) -> (bool, bool, bool) {
+fn section_header_with_add(ui: &mut egui::Ui, theme: &Theme, state: &mut UiState, panel: Panel, icon: ImageSource<'static>, extra_btn: Option<ImageSource<'static>>, extra_btn_active: bool, extra_btn_2: Option<ImageSource<'static>>, extra_btn_2_active: bool, extra_btn_3: Option<ImageSource<'static>>, extra_btn_3_active: bool, show_add: bool) -> (bool, bool, bool, bool, bool, bool) {
     if !state.is_visible(panel) {
-        return (false, false, false);
+        return (false, false, false, false, false, false);
     }
     let collapsed = state.is_collapsed(panel);
     let mut add_clicked = false;
     let mut extra_clicked = false;
+    let mut extra_2_clicked = false;
+    let mut extra_3_clicked = false;
+    let mut icon_double_clicked = false;
     Frame::new().fill(theme.panel).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
         let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), egui::Sense::hover());
         let painter = ui.painter_at(rect);
-        // Left: section icon — clickable to collapse/expand
+        // Left: section icon — single click collapses/expands, double-click opens Ramp Lab
         let icon_size = Vec2::splat(16.0);
         let icon_rect = egui::Rect::from_center_size(Pos2::new(rect.left() + 8.0, rect.center().y), icon_size);
         let icon_resp = ui.interact(icon_rect, egui::Id::new(("hdr_icon", panel)), egui::Sense::click());
         let icon_tint = if icon_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
         ui.put(icon_rect, Image::new(icon).tint(icon_tint).fit_to_exact_size(icon_size));
-        if icon_resp.clicked() {
+        if icon_resp.double_clicked() {
+            icon_double_clicked = true;
+        } else if icon_resp.clicked() {
             state.toggle_collapsed(panel);
         }
         if !collapsed {
@@ -3837,23 +8194,44 @@ fn section_header_with_add(ui: &mut egui::Ui, theme: &Theme, state: &mut UiState
             if show_add {
                 let plus_rect = egui::Rect::from_center_size(Pos2::new(rect.right() - 8.0, rect.center().y), Vec2::splat(16.0));
                 let plus_resp = ui.interact(plus_rect, egui::Id::new(("hdr_plus", panel)), egui::Sense::click());
-                let plus_color = if plus_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
-                painter.text(plus_rect.center(), egui::Align2::CENTER_CENTER, "+", FontId::new(16.0, FontFamily::Proportional), plus_color);
+                if panel == Panel::Tiles {
+                    let icon_tint = if plus_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                    ui.put(plus_rect, Image::new(egui::include_image!("../assets/icons/tiles_add.png")).tint(icon_tint).fit_to_exact_size(Vec2::splat(14.0)));
+                } else {
+                    let plus_color = if plus_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                    painter.text(plus_rect.center(), egui::Align2::CENTER_CENTER, "+", FontId::new(16.0, FontFamily::Proportional), plus_color);
+                }
                 if plus_resp.clicked() {
                     add_clicked = true;
                 }
+            }
+            // Optional third extra button, placed left of extra_btn_2
+            if let Some(extra_icon_3) = extra_btn_3 {
+                let extra_rect_3 = egui::Rect::from_center_size(Pos2::new(rect.right() - 68.0, rect.center().y), Vec2::splat(14.0));
+                let extra_resp_3 = ui.interact(extra_rect_3, egui::Id::new(("hdr_extra3", panel)), egui::Sense::click());
+                let tint_3 = if extra_btn_3_active { Color32::WHITE } else if extra_resp_3.hovered() { Color32::WHITE } else { theme.fg_desc };
+                ui.put(extra_rect_3, Image::new(extra_icon_3).tint(tint_3).fit_to_exact_size(Vec2::splat(14.0)));
+                if extra_resp_3.clicked() { extra_3_clicked = true; }
+            }
+            // Optional second extra button, placed left of extra_btn
+            if let Some(extra_icon_2) = extra_btn_2 {
+                let extra_rect_2 = egui::Rect::from_center_size(Pos2::new(rect.right() - 48.0, rect.center().y), Vec2::splat(14.0));
+                let extra_resp_2 = ui.interact(extra_rect_2, egui::Id::new(("hdr_extra2", panel)), egui::Sense::click());
+                let tint_2 = if extra_btn_2_active { Color32::WHITE } else if extra_resp_2.hovered() { Color32::WHITE } else { theme.fg_desc };
+                ui.put(extra_rect_2, Image::new(extra_icon_2).tint(tint_2).fit_to_exact_size(Vec2::splat(14.0)));
+                if extra_resp_2.clicked() { extra_2_clicked = true; }
             }
             // Optional extra button (folder/group icon), placed left of "+"
             if let Some(extra_icon) = extra_btn {
                 let extra_rect = egui::Rect::from_center_size(Pos2::new(rect.right() - 28.0, rect.center().y), Vec2::splat(14.0));
                 let extra_resp = ui.interact(extra_rect, egui::Id::new(("hdr_extra", panel)), egui::Sense::click());
-                let tint = if extra_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                let tint = if extra_btn_active { Color32::WHITE } else if extra_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
                 ui.put(extra_rect, Image::new(extra_icon).tint(tint).fit_to_exact_size(Vec2::splat(14.0)));
                 if extra_resp.clicked() { extra_clicked = true; }
             }
         }
     });
-    (!collapsed, add_clicked, extra_clicked)
+    (!collapsed, add_clicked, extra_clicked, extra_2_clicked, extra_3_clicked, icon_double_clicked)
 }
 
 /// Color slider with label inside the handle. Returns true when value changed.
@@ -3889,6 +8267,18 @@ fn sync_color_caches(state: &mut ColorState) {
     state.display_rgb_r = fg[0] as f32;
     state.display_rgb_g = fg[1] as f32;
     state.display_rgb_b = fg[2] as f32;
+}
+
+/// If `color` exactly matches any entry in `palette`, snap `color` to that entry.
+/// This ensures the palette highlight lights up when the picker lands on a palette color.
+fn snap_to_palette_if_exact(palette: &[[u8; 4]], color: &mut [u8; 4]) {
+    for &entry in palette {
+        if entry[3] == 0 { continue; }
+        if entry == *color {
+            *color = entry;
+            return;
+        }
+    }
 }
 
 fn color_slider(ui: &mut egui::Ui, theme: &Theme, label: &str, value: &mut f32, min: f32, max: f32) -> bool {
@@ -4022,7 +8412,7 @@ fn panel_icon(panel: Panel) -> egui::ImageSource<'static> {
         Panel::Animations => egui::include_image!("../assets/icons/animation.svg"),
         Panel::Preview    => egui::include_image!("../assets/icons/visibility.svg"),
         Panel::Timeline   => egui::include_image!("../assets/icons/visibility.svg"),
-        Panel::Tiles      => egui::include_image!("../assets/icons/grid.svg"),
+        Panel::Tiles      => egui::include_image!("../assets/icons/tiles.png"),
     }
 }
 
@@ -4030,6 +8420,13 @@ fn rfd_open() -> Option<std::path::PathBuf> {
     rfd::FileDialog::new()
         .add_filter("Squarez Project", &["sqr"])
         .pick_file()
+}
+
+fn rfd_save_as() -> Option<std::path::PathBuf> {
+    rfd::FileDialog::new()
+        .add_filter("Squarez Project", &["sqr"])
+        .set_file_name("untitled.sqr")
+        .save_file()
 }
 
 /// Shift-constrain the end point of a shape drag.
@@ -4057,5 +8454,776 @@ fn shape_shift_constrain(tool: &ActiveTool, x0: i32, y0: i32, ex: i32, ey: i32) 
             )
         }
         _ => (ex, ey),
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Ramp Lab helper free functions
+// ═════════════════════════════════════════════════════════════════════════════
+
+use crate::ramp_lab::CurveTab;
+
+/// Horizontal 1px divider line between sections.
+/// Hue override bar — shown when a ramp's hue dot is clicked.
+fn rl_override_bar(ui: &mut egui::Ui, theme: &Theme, rl: &mut RampLab, needs_regen: &mut bool) {
+    let idx = match rl.override_ramp_idx { Some(i) => i, None => return };
+    if idx >= rl.ramps.len() { return; }
+
+    let cur_hue = rl.hue_for_ramp(idx);
+
+    Frame::new()
+        .fill(theme.panel)
+        .inner_margin(Margin::symmetric(10, 6))
+        .show(ui, |ui| {
+            // ── Row 1: name + degree + reset ────────────────────────────────
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+
+                // Color swatch dot
+                let (sw_rect, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+                let c = {
+                    use crate::color::oklab::oklch_to_rgba;
+                    let rgba = oklch_to_rgba(0.55, 0.22, cur_hue, 255);
+                    egui::Color32::from_rgb(rgba[0], rgba[1], rgba[2])
+                };
+                ui.painter().circle_filled(sw_rect.center(), 5.0, c);
+
+                // Name
+                let name_text = rl.ramps[idx].name.clone();
+                ui.label(egui::RichText::new(name_text).color(theme.muted).size(9.0));
+
+                // Degree label + reset pushed to the right
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if rl.ramps[idx].hue_override.is_some() {
+                        if ui.add(egui::Button::new(
+                            egui::RichText::new("↺ Reset").color(theme.muted).size(10.0))
+                            .fill(egui::Color32::TRANSPARENT)
+                            .stroke(egui::Stroke::NONE)).clicked()
+                        {
+                            rl.ramps[idx].hue_override = None;
+                            *needs_regen = true;
+                        }
+                    }
+                    ui.label(
+                        egui::RichText::new(format!("{:.0}°", cur_hue))
+                            .color(theme.muted).size(10.0),
+                    );
+                });
+            });
+
+            // ── Row 2: full-width hue gradient strip ────────────────────────
+            // Spans exactly ui.available_width() — same left/right boundary as
+            // every other section in the window (10 px inner_margin each side).
+            let strip_w = ui.available_width();
+            let (strip_rect, strip_resp) = ui.allocate_exact_size(
+                egui::vec2(strip_w, 14.0),
+                egui::Sense::click_and_drag(),
+            );
+            let steps = strip_rect.width() as usize;
+            for s in 0..steps {
+                let h = s as f32 / steps.max(1) as f32 * 360.0;
+                use crate::color::oklab::oklch_to_rgba;
+                let rgba = oklch_to_rgba(0.55, 0.22, h, 255);
+                let sc = egui::Color32::from_rgb(rgba[0], rgba[1], rgba[2]);
+                let x = strip_rect.left() + s as f32;
+                ui.painter().rect_filled(
+                    egui::Rect::from_min_size(egui::Pos2::new(x, strip_rect.top()), egui::vec2(1.0, strip_rect.height())),
+                    egui::CornerRadius::ZERO,
+                    sc,
+                );
+            }
+            // Thumb at current hue
+            let thumb_x = strip_rect.left() + (cur_hue / 360.0) * strip_rect.width();
+            ui.painter().rect_filled(
+                egui::Rect::from_center_size(
+                    egui::Pos2::new(thumb_x, strip_rect.center().y),
+                    egui::vec2(3.0, strip_rect.height() + 4.0),
+                ),
+                egui::CornerRadius::ZERO,
+                theme.fg,
+            );
+            if strip_resp.dragged() || strip_resp.clicked() {
+                if let Some(pos) = strip_resp.interact_pointer_pos() {
+                    let t = ((pos.x - strip_rect.left()) / strip_rect.width()).clamp(0.0, 1.0);
+                    rl.ramps[idx].hue_override = Some(t * 360.0);
+                    *needs_regen = true;
+                }
+            }
+        });
+}
+
+/// Ramp grid — compact single-column list of ramp cards.
+fn rl_grid(ui: &mut egui::Ui, theme: &Theme, rl: &mut RampLab, corner_r: u8) {
+    let num_ramps = rl.ramps.len();
+    let num_steps = rl.num_steps;
+    let anchor_first = rl.anchor_first;
+    let anchor_last  = rl.anchor_last;
+    let override_idx = rl.override_ramp_idx;
+
+    let mut lock_toggle: Option<usize> = None;
+    let mut override_toggle: Option<usize> = None;
+    let mut toggle_anchor_first = false;
+    let mut toggle_anchor_last  = false;
+    let mut add_ramp            = false;
+    let mut delete_ramp: Option<usize> = None;
+    let mut drag_started: Option<usize> = None;
+    let mut drop_target: Option<usize>  = None;
+    let mut drag_released = false;
+    let mut add_step_global    = false;
+    let mut remove_step_global = false;
+    let mut add_step_global    = false;
+    let mut remove_step_global = false;
+    // Card inner height: header(14) + spacing(4) + swatches(20) = 38px
+    let card_inner_h = 38.0_f32;
+
+    Frame::new()
+        .fill(theme.panel)
+         .inner_margin(egui::Margin { left: 8, right: 8, top: 8, bottom: 6 })
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            // ── column geometry — per-cell to support stretch rules ───────────
+            let avail_w  = ui.available_width();
+            let gap      = 8.0_f32;
+            // Total cells = ramps + 1 "add" card (unless at max).
+            let total_cells = if num_ramps < 12 { num_ramps + 1 } else { num_ramps };
+
+            // Compute (x_offset_in_row, cell_width) for every cell index.
+            //  • num_ramps == 1: ramp spans 2/3, add spans 1/3 — both on one row.
+            //  • add alone in a row: stretch it to full width.
+            //  • otherwise: standard equal-column layout.
+            let (num_cols, cell_x_offsets, cell_widths): (usize, Vec<f32>, Vec<f32>) = {
+                if num_ramps == 1 && total_cells == 2 {
+                    let c3_col_w = ((avail_w - gap * 2.0) / 3.0).floor();
+                    let ramp_w   = c3_col_w * 2.0 + gap;
+                    let add_w    = c3_col_w;
+                    (2, vec![0.0, ramp_w + gap], vec![ramp_w, add_w])
+                } else {
+                    let nc = num_ramps.min(3).max(1);
+                    let cw = ((avail_w - gap * (nc - 1) as f32) / nc as f32).floor();
+                    let mut xs = Vec::with_capacity(total_cells);
+                    let mut ws = Vec::with_capacity(total_cells);
+                    for idx in 0..total_cells {
+                        let col_i      = idx % nc;
+                        let row_i      = idx / nc;
+                        let row_end    = ((row_i + 1) * nc).min(total_cells);
+                        let cells_in_row = row_end - row_i * nc;
+                        if idx == num_ramps && cells_in_row == 1 {
+                            // Add alone in row → full width
+                            xs.push(0.0);
+                            ws.push(avail_w);
+                        } else if idx == num_ramps && cells_in_row == 2 {
+                            // 1 ramp + add in same row → add takes 2 cols
+                            xs.push(cw + gap);
+                            ws.push(2.0 * cw + gap);
+                        } else {
+                            xs.push(col_i as f32 * (cw + gap));
+                            ws.push(cw);
+                        }
+                    }
+                    (nc, xs, ws)
+                }
+            };
+
+            // Actual ramp card outer height — measured from the first rendered ramp card
+            // and reused for the + card so heights always match.
+            let mut actual_card_outer_h: Option<f32> = None;
+            let num_rows = (total_cells + num_cols - 1) / num_cols;
+            for row in 0..num_rows {
+                let row_start = row * num_cols;
+                let row_end   = (row_start + num_cols).min(total_cells);
+
+                // Record top-left before allocating anything in this row.
+                let row_top  = ui.next_widget_position().y;
+                let row_left = ui.max_rect().left();
+
+                // Render each card into its own child Ui so we can set an
+                // explicit clip_rect of exactly its cell width.
+                let mut row_h = 0.0_f32;
+                for col in 0..(row_end - row_start) {
+                    let i        = row_start + col;
+                    let this_w   = cell_widths[i];
+                    let cell_x   = row_left + cell_x_offsets[i];
+                    // inner width of this card (Frame inner_margin is 5px each side = 10px)
+                    let card_inner_w = (this_w - 10.0).max(1.0);
+
+                    // max_rect is tall so content can grow; clip kills anything
+                    // past this_w horizontally (and past the panel vertically).
+                    let cell_rect = egui::Rect::from_min_size(
+                        egui::Pos2::new(cell_x, row_top),
+                        egui::vec2(this_w, 2000.0),
+                    );
+                    let cell_clip = egui::Rect::from_min_size(
+                        egui::Pos2::new(cell_x - corner_r as f32, row_top),
+                        egui::vec2(this_w + corner_r as f32 * 2.0, 2000.0),
+                    ).intersect(ui.clip_rect());
+
+                    let mut cell_ui = ui.new_child(
+                        egui::UiBuilder::new()
+                            .id_salt(("rl_card", i))
+                            .max_rect(cell_rect),
+                    );
+                    cell_ui.set_clip_rect(cell_clip);
+
+                    if i < num_ramps {
+                        // ── Drag sense (before children so drag is captured from whole card) ──
+                        let drag_resp = cell_ui.interact(
+                            cell_rect,
+                            egui::Id::new(("rl_card_drag", i)),
+                            egui::Sense::drag(),
+                        );
+                        if drag_resp.drag_started() { drag_started = Some(i); }
+                        if drag_resp.drag_stopped()  { drag_released = true; }
+
+                        // Drop target: check if pointer x is within this column and y >= row_top
+                        if rl.dragging_ramp.is_some() && rl.dragging_ramp != Some(i) {
+                            if let Some(pos) = cell_ui.ctx().pointer_latest_pos() {
+                                if pos.x >= cell_x && pos.x < cell_x + this_w && pos.y >= row_top {
+                                    drop_target = Some(i);
+                                }
+                            }
+                        }
+
+                        let is_overriding  = override_idx == Some(i);
+                        let is_dragging    = rl.dragging_ramp == Some(i);
+                        let is_drop_target = !is_dragging
+                            && rl.dragging_ramp.is_some()
+                            && drop_target == Some(i);
+                        let locked         = rl.ramps[i].locked;
+                        let has_hue_override = rl.ramps[i].hue_override.is_some();
+
+                        let card_fill = if is_dragging { theme.panel } else { theme.bg };
+
+                        if is_dragging {
+                            cell_ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                        }
+
+                    let frame_resp = Frame::new()
+                        .fill(card_fill)
+                        .corner_radius(egui::CornerRadius::same(corner_r))
+                        .inner_margin(Margin::symmetric(5, 4))
+                        .show(&mut cell_ui, |ui| {
+                            ui.set_width(card_inner_w);
+
+                            // ── Header row ─────────────────────────
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 3.0;
+
+                                // Editable name (left, fixed width to leave room for 3 icons + 5px right gap)
+                                let name_w = (card_inner_w - 56.0).max(10.0); // 3×14 + 2×3 + 3gap + 5pad
+                                let mut name_buf = rl.ramps[i].name.clone();
+                                let te = egui::TextEdit::singleline(&mut name_buf)
+                                    .desired_width(name_w)
+                                    .font(egui::FontId::new(9.0, egui::FontFamily::Proportional));
+                                if ui.add(te).changed() {
+                                    rl.ramps[i].name = name_buf;
+                                }
+
+                                // Hue dot
+                                let hue = rl.hue_for_ramp(i);
+                                let (dot_rect, dot_resp) = ui.allocate_exact_size(
+                                    egui::vec2(14.0, 14.0), egui::Sense::click(),
+                                );
+                                let dot_color = {
+                                    use crate::color::oklab::oklch_to_rgba;
+                                    let c = oklch_to_rgba(0.55, 0.22, hue, 255);
+                                    egui::Color32::from_rgb(c[0], c[1], c[2])
+                                };
+                                ui.painter().circle_filled(dot_rect.center(), 5.0, dot_color);
+                                if has_hue_override {
+                                    ui.painter().circle_stroke(
+                                        dot_rect.center(), 5.5,
+                                        egui::Stroke::new(1.5, theme.fg),
+                                    );
+                                }
+                                if dot_resp.clicked() { override_toggle = Some(i); }
+
+                                // Lock icon
+                                let (lock_rect, lock_resp) = ui.allocate_exact_size(
+                                    egui::vec2(14.0, 14.0), egui::Sense::click(),
+                                );
+                                let lock_icon = if locked {
+                                    egui::include_image!("../assets/icons/lock.svg")
+                                } else {
+                                    egui::include_image!("../assets/icons/lock_open.svg")
+                                };
+                                let lock_tint = if lock_resp.hovered() { egui::Color32::WHITE }
+                                               else if locked { theme.fg } else { theme.muted };
+                                ui.put(lock_rect, egui::Image::new(lock_icon)
+                                    .fit_to_exact_size(egui::vec2(12.0, 12.0))
+                                    .tint(lock_tint));
+                                if lock_resp.clicked() { lock_toggle = Some(i); }
+
+                                // Trash icon
+                                let (trash_rect, trash_resp) = ui.allocate_exact_size(
+                                    egui::vec2(14.0, 14.0), egui::Sense::click(),
+                                );
+                                let trash_tint = if trash_resp.hovered() { egui::Color32::WHITE }
+                                               else { theme.muted };
+                                ui.put(trash_rect, egui::Image::new(
+                                    egui::include_image!("../assets/icons/trash.svg"))
+                                    .fit_to_exact_size(egui::vec2(12.0, 12.0))
+                                    .tint(trash_tint));
+                                if trash_resp.clicked() { delete_ramp = Some(i); }
+                            });
+
+                            // ── Swatches ──────────────────────────
+                            let n_colors = rl.ramps[i].colors.len();
+                            if n_colors > 0 {
+                                let sw_w = (card_inner_w / num_steps as f32).max(1.0);
+                                let swatch_h = 20.0;
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 0.0;
+                                    for s in 0..n_colors {
+                                        let c = rl.ramps[i].colors[s];
+                                        let color = egui::Color32::from_rgb(c[0], c[1], c[2]);
+                                        let is_first = s == 0;
+                                        let is_last  = s == n_colors - 1;
+                                        let is_end   = is_first || is_last;
+                                        let is_anchor = (is_first && anchor_first)
+                                            || (is_last && anchor_last);
+                                        let sense = if is_end { egui::Sense::click() } else { egui::Sense::hover() };
+                                        let (sw_rect, sw_resp) = ui.allocate_exact_size(
+                                            egui::vec2(sw_w, swatch_h), sense,
+                                        );
+                                        if sw_resp.clicked() {
+                                            let ctrl = ui.ctx().input(|inp| inp.modifiers.ctrl);
+                                            if ctrl {
+                                                // Ctrl+click = toggle anchor
+                                                if is_first { toggle_anchor_first = true; }
+                                                if is_last  { toggle_anchor_last  = true; }
+                                            } else {
+                                                // Plain click = add/remove step globally
+                                                if is_last  { add_step_global    = true; }
+                                                if is_first { remove_step_global = true; }
+                                            }
+                                        }
+                                        let color_rect = egui::Rect::from_min_size(
+                                            sw_rect.min, egui::vec2(sw_w, 20.0),
+                                        );
+                                        ui.painter().rect_filled(color_rect, egui::CornerRadius::ZERO, color);
+                                        if is_anchor {
+                                            use crate::color::oklab::rgba_to_oklch;
+                                            let (l, _, _) = rgba_to_oklch([c[0], c[1], c[2], 255]);
+                                            let icon_color = if l > 0.5 {
+                                                egui::Color32::from_rgba_unmultiplied(0, 0, 0, 160)
+                                            } else {
+                                                egui::Color32::from_rgba_unmultiplied(255, 255, 255, 160)
+                                            };
+                                            let icon_size = (sw_w * 0.45).clamp(6.0, 10.0);
+                                            let icon_rect = egui::Rect::from_center_size(
+                                                color_rect.center(),
+                                                egui::vec2(icon_size, icon_size),
+                                            );
+                                            egui::Image::new(
+                                                egui::include_image!("../assets/icons/pin.svg"))
+                                                .fit_to_exact_size(egui::vec2(icon_size, icon_size))
+                                                .tint(icon_color)
+                                                .paint_at(ui, icon_rect);
+                                        }
+                                    }
+                                });
+                            }
+                        });
+                        // Record actual card height for the + card to match
+                        if actual_card_outer_h.is_none() {
+                            actual_card_outer_h = Some(frame_resp.response.rect.height());
+                        }
+                        // Paint drop-target / override outline as overlay — no layout impact
+                        if is_drop_target || is_overriding {
+                            let stroke_w = if is_drop_target { 2.0 } else { 1.0 };
+                            cell_ui.painter().rect_stroke(
+                                frame_resp.response.rect,
+                                egui::CornerRadius::same(corner_r),
+                                egui::Stroke::new(stroke_w, theme.accent),
+                                egui::StrokeKind::Outside,
+                            );
+                        }
+                    } else {
+                        // ── "Add ramp" card — same style as add animation frame ──
+                        let add_h = actual_card_outer_h.unwrap_or(card_inner_h + 8.0);
+                        let (rect, resp) = cell_ui.allocate_exact_size(
+                            egui::vec2(this_w, add_h),
+                            egui::Sense::click(),
+                        );
+                        let hovered = resp.hovered();
+                        let symbol_color = if hovered { theme.accent } else { theme.surface };
+
+                        // Background — same fill as ramp cards
+                        cell_ui.painter().rect_filled(rect, egui::CornerRadius::same(corner_r), theme.bg);
+
+                        // "+" label
+                        cell_ui.painter().text(
+                            rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "+",
+                            egui::FontId::new(18.0, FontFamily::Proportional),
+                            symbol_color,
+                        );
+
+                        // Dashed outline — marches clockwise on hover
+                        {
+                            let stroke  = egui::Stroke::new(1.0, symbol_color);
+                            let dash    = 4.0_f32;
+                            let gap_d   = 4.0_f32;
+                            let w       = rect.width();
+                            let h       = rect.height();
+                            let perim   = 2.0 * (w + h);
+                            let off = if hovered {
+                                let t = cell_ui.ctx().input(|i| i.time) as f32;
+                                cell_ui.ctx().request_repaint();
+                                (t * 20.0).rem_euclid(perim)
+                            } else { 0.0 };
+                            let (start, waypoints): (Pos2, [Pos2; 4]) = if off < w {
+                                (Pos2::new(rect.left() + off, rect.top()),
+                                 [rect.right_top(), rect.right_bottom(), rect.left_bottom(), rect.left_top()])
+                            } else if off < w + h {
+                                (Pos2::new(rect.right(), rect.top() + (off - w)),
+                                 [rect.right_bottom(), rect.left_bottom(), rect.left_top(), rect.right_top()])
+                            } else if off < 2.0 * w + h {
+                                (Pos2::new(rect.right() - (off - w - h), rect.bottom()),
+                                 [rect.left_bottom(), rect.left_top(), rect.right_top(), rect.right_bottom()])
+                            } else {
+                                (Pos2::new(rect.left(), rect.bottom() - (off - 2.0 * w - h)),
+                                 [rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom()])
+                            };
+                            let path   = [start, waypoints[0], waypoints[1], waypoints[2], waypoints[3], start];
+                            let shapes = egui::Shape::dashed_line(&path, stroke, dash, gap_d);
+                            cell_ui.painter().extend(shapes);
+                        }
+
+                        if resp.clicked() { add_ramp = true; }
+                    }
+
+                    row_h = row_h.max(cell_ui.min_rect().height());
+                }
+
+                // Advance the parent cursor by the actual row height so subsequent
+                // rows start at the correct y position.
+                let _ = ui.allocate_exact_size(
+                    egui::vec2(avail_w, row_h),
+                    egui::Sense::hover(),
+                );
+                if row + 1 < num_rows { ui.add_space(gap); }
+            }
+        });
+
+    // Apply deferred mutations
+    if add_ramp && rl.num_ramps < 12 {
+        rl.num_ramps += 1;
+        rl.regenerate_all();
+    }
+    if let Some(idx) = delete_ramp {
+        if idx < rl.ramps.len() {
+            rl.ramps.remove(idx);
+            rl.num_ramps = rl.ramps.len();
+            // Clear drag/override state if they referenced the deleted ramp
+            if rl.dragging_ramp == Some(idx) { rl.dragging_ramp = None; }
+            if rl.override_ramp_idx == Some(idx) { rl.override_ramp_idx = None; }
+        }
+    }
+    // Drag-and-drop reorder
+    if drag_released {
+        if let (Some(from), Some(to)) = (rl.dragging_ramp, drop_target) {
+            if from != to && from < rl.ramps.len() && to < rl.ramps.len() {
+                let item = rl.ramps.remove(from);
+                rl.ramps.insert(to, item);
+                rl.num_ramps = rl.ramps.len();
+            }
+        }
+        rl.dragging_ramp = None;
+    } else if let Some(idx) = drag_started {
+        rl.dragging_ramp = Some(idx);
+    }
+    if toggle_anchor_first {
+        rl.anchor_first = !rl.anchor_first;
+        for i in 0..rl.num_ramps { rl.regenerate_ramp(i); }
+    }
+    if toggle_anchor_last {
+        rl.anchor_last = !rl.anchor_last;
+        for i in 0..rl.num_ramps { rl.regenerate_ramp(i); }
+    }
+    if let Some(idx) = lock_toggle {
+        rl.ramps[idx].locked = !rl.ramps[idx].locked;
+    }
+    if add_step_global && rl.num_steps < 9 {
+        rl.num_steps += 1;
+        for i in 0..rl.ramps.len() { rl.regenerate_ramp(i); }
+    }
+    if remove_step_global && rl.num_steps > 3 {
+        rl.num_steps -= 1;
+        for i in 0..rl.ramps.len() { rl.regenerate_ramp(i); }
+    }
+    if let Some(idx) = override_toggle {
+        if rl.override_ramp_idx == Some(idx) {
+            rl.override_ramp_idx = None;
+        } else {
+            rl.override_ramp_idx = Some(idx);
+        }
+    }
+}
+
+/// Bézier curve editor — tabbed L / C / H.
+fn rl_curves(ui: &mut egui::Ui, theme: &Theme, rl: &mut RampLab, needs_regen: &mut bool, corner_r: u8) {
+    // Curve canvas
+    Frame::new()
+        .fill(egui::Color32::TRANSPARENT)
+        .inner_margin(egui::Margin { left: 8, right: 8, top: 5, bottom: 8 })
+        .show(ui, |ui| {
+            // Use available_width() inside this frame (already accounts for 2×10px margins).
+            let canvas_w = ui.available_width();
+            let canvas_h = 160.0_f32;
+            let (canvas_rect, _) = ui.allocate_exact_size(
+                egui::vec2(canvas_w, canvas_h),
+                egui::Sense::hover(),
+            );
+            let painter = ui.painter_at(canvas_rect);
+            let curve_bg = theme.bg;
+            painter.rect_filled(canvas_rect, egui::CornerRadius::same(corner_r), curve_bg);
+
+            let grid_color = egui::Color32::from_rgb(0x1e, 0x24, 0x30);
+
+            // Vertical grid lines (one per step)
+            let n = rl.num_steps;
+            for i in 1..n {
+                let t = i as f32 / n as f32;
+                let x = canvas_rect.left() + t * canvas_rect.width();
+                painter.line_segment(
+                    [egui::Pos2::new(x, canvas_rect.top()), egui::Pos2::new(x, canvas_rect.bottom())],
+                    egui::Stroke::new(1.0, grid_color),
+                );
+            }
+            // Horizontal grid lines at 0.25, 0.50, 0.75
+            for q in [0.25_f32, 0.50, 0.75] {
+                let y = canvas_rect.bottom() - q * canvas_rect.height();
+                painter.line_segment(
+                    [egui::Pos2::new(canvas_rect.left(), y), egui::Pos2::new(canvas_rect.right(), y)],
+                    egui::Stroke::new(1.0, grid_color),
+                );
+            }
+
+            // Draw curve as polyline (100 segments)
+            // Clone curve values first to avoid borrow conflict with the drag mutation below.
+            let (curve_p0, curve_p1, curve_p2) = match &rl.active_curve_tab {
+                CurveTab::L => (rl.l_curve.p0, rl.l_curve.p1, rl.l_curve.p2),
+                CurveTab::C => (rl.c_curve.p0, rl.c_curve.p1, rl.c_curve.p2),
+                CurveTab::H => (rl.h_curve.p0, rl.h_curve.p1, rl.h_curve.p2),
+            };
+            let curve_snapshot = crate::ramp_lab::BezierCurve::new(curve_p0, curve_p1, curve_p2);
+            let mut poly: Vec<egui::Pos2> = Vec::with_capacity(101);
+            for s in 0..=100 {
+                let t = s as f32 / 100.0;
+                let v = curve_snapshot.eval(t).clamp(0.0, 1.0);
+                poly.push(egui::Pos2::new(
+                    canvas_rect.left() + t * canvas_rect.width(),
+                    canvas_rect.bottom() - v * canvas_rect.height(),
+                ));
+            }
+            painter.add(egui::Shape::line(poly, egui::Stroke::new(2.0, theme.fg)));
+
+            // ── Draggable handles ────────────────────────────────────────────
+            // All three handles sit ON the curve:
+            //   p0_screen / p2_screen are curve endpoints (eval at t=0/1 = p0/p2).
+            //   p1_visual is the curve value at t=0.5: eval(0.5) = 0.25p0+0.5p1+0.25p2.
+            //   When dragging p1, invert: p1 = 2*v - 0.5*p0 - 0.5*p2.
+            //   p0/p2 are dragged Y-only (they always sit at x=0 / x=1 of the canvas).
+
+            let p0_screen = egui::Pos2::new(
+                canvas_rect.left(),
+                canvas_rect.bottom() - curve_p0.clamp(0.0, 1.0) * canvas_rect.height(),
+            );
+            let p2_screen = egui::Pos2::new(
+                canvas_rect.right(),
+                canvas_rect.bottom() - curve_p2.clamp(0.0, 1.0) * canvas_rect.height(),
+            );
+            let p1_curve_v = curve_snapshot.eval(0.5).clamp(0.0, 1.0);
+            let p1_visual = egui::Pos2::new(
+                canvas_rect.left() + 0.5 * canvas_rect.width(),
+                canvas_rect.bottom() - p1_curve_v * canvas_rect.height(),
+            );
+
+            // Register interaction zones first (before painting so input is correct)
+            let p0_rect = egui::Rect::from_center_size(p0_screen, egui::vec2(16.0, 16.0));
+            let p0_resp = ui.interact(p0_rect, egui::Id::new("rl_p0_drag"), egui::Sense::drag());
+            if p0_resp.dragged() {
+                if let Some(pos) = p0_resp.interact_pointer_pos() {
+                    let new_v = ((canvas_rect.bottom() - pos.y) / canvas_rect.height()).clamp(0.0, 1.0);
+                    match &rl.active_curve_tab {
+                        CurveTab::L => rl.l_curve.p0 = new_v,
+                        CurveTab::C => rl.c_curve.p0 = new_v,
+                        CurveTab::H => rl.h_curve.p0 = new_v,
+                    }
+                    *needs_regen = true;
+                }
+            }
+
+            let p2_rect = egui::Rect::from_center_size(p2_screen, egui::vec2(16.0, 16.0));
+            let p2_resp = ui.interact(p2_rect, egui::Id::new("rl_p2_drag"), egui::Sense::drag());
+            if p2_resp.dragged() {
+                if let Some(pos) = p2_resp.interact_pointer_pos() {
+                    let new_v = ((canvas_rect.bottom() - pos.y) / canvas_rect.height()).clamp(0.0, 1.0);
+                    match &rl.active_curve_tab {
+                        CurveTab::L => rl.l_curve.p2 = new_v,
+                        CurveTab::C => rl.c_curve.p2 = new_v,
+                        CurveTab::H => rl.h_curve.p2 = new_v,
+                    }
+                    *needs_regen = true;
+                }
+            }
+
+            let p1_rect = egui::Rect::from_center_size(p1_visual, egui::vec2(16.0, 16.0));
+            let p1_resp = ui.interact(p1_rect, egui::Id::new("rl_p1_drag"), egui::Sense::drag());
+            if p1_resp.dragged() {
+                if let Some(pos) = p1_resp.interact_pointer_pos() {
+                    let v = ((canvas_rect.bottom() - pos.y) / canvas_rect.height()).clamp(0.0, 1.0);
+                    let (p0_cur, p2_cur) = match &rl.active_curve_tab {
+                        CurveTab::L => (rl.l_curve.p0, rl.l_curve.p2),
+                        CurveTab::C => (rl.c_curve.p0, rl.c_curve.p2),
+                        CurveTab::H => (rl.h_curve.p0, rl.h_curve.p2),
+                    };
+                    let new_p1 = (2.0 * v - 0.5 * p0_cur - 0.5 * p2_cur).clamp(-0.5, 1.5);
+                    match &rl.active_curve_tab {
+                        CurveTab::L => rl.l_curve.p1 = new_p1,
+                        CurveTab::C => rl.c_curve.p1 = new_p1,
+                        CurveTab::H => rl.h_curve.p1 = new_p1,
+                    }
+                    *needs_regen = true;
+                }
+            }
+
+            // Paint all handles last so they sit on top of the curve line
+            let p0_fill = if p0_resp.hovered() || p0_resp.dragged() { egui::Color32::WHITE } else { theme.fg };
+            painter.circle_filled(p0_screen, 5.0, p0_fill);
+            painter.circle_stroke(p0_screen, 5.0, egui::Stroke::new(1.5, theme.bg));
+
+            let p2_fill = if p2_resp.hovered() || p2_resp.dragged() { egui::Color32::WHITE } else { theme.fg };
+            painter.circle_filled(p2_screen, 5.0, p2_fill);
+            painter.circle_stroke(p2_screen, 5.0, egui::Stroke::new(1.5, theme.bg));
+
+            let p1_fill = if p1_resp.hovered() || p1_resp.dragged() { egui::Color32::WHITE } else { theme.fg };
+            painter.circle_filled(p1_visual, 6.0, p1_fill);
+            painter.circle_stroke(p1_visual, 6.0, egui::Stroke::new(1.5, theme.bg));
+
+            // Tab toggle — bottom-right corner of canvas
+            let btn_label = match &rl.active_curve_tab {
+                CurveTab::L => "L",
+                CurveTab::C => "C",
+                CurveTab::H => "H",
+            };
+            let btn_size = egui::vec2(20.0, 16.0);
+            let btn_rect = egui::Rect::from_min_size(
+                egui::Pos2::new(
+                    canvas_rect.right() - btn_size.x - 22.0,
+                    canvas_rect.bottom() - btn_size.y - 12.0,
+                ),
+                btn_size,
+            );
+            let tab_btn = egui::Button::new(
+                egui::RichText::new(btn_label).size(10.0).color(theme.fg)
+            )
+            .fill(theme.surface)
+            .stroke(egui::Stroke::NONE);
+            if ui.put(btn_rect, tab_btn).clicked() {
+                rl.active_curve_tab = match &rl.active_curve_tab {
+                    CurveTab::L => CurveTab::C,
+                    CurveTab::C => CurveTab::H,
+                    CurveTab::H => CurveTab::L,
+                };
+            }
+        });
+}
+
+/// Export bar — single PNG export button.
+fn rl_export(ui: &mut egui::Ui, theme: &Theme, rl: &RampLab, project: &mut crate::project::Project) {
+    Frame::new()
+        .fill(theme.panel)
+        .inner_margin(egui::Margin { left: 10, right: 10, top: 0, bottom: 6 })
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(4.0, 0.0);
+
+                // Shared tab dimensions matching OKL/HSV style
+                let btn_h = 19.0;
+
+                // ── Export PNG ─────────────────────────────────────────────
+                let export_label = "Export PNG";
+                let export_w = export_label.chars().count() as f32 * 6.0 + 16.0;
+                let (export_rect, export_resp) = ui.allocate_exact_size(
+                    Vec2::new(export_w, btn_h), egui::Sense::click(),
+                );
+                let export_bg = if export_resp.hovered() { theme.surface } else { Color32::TRANSPARENT };
+                if export_bg != Color32::TRANSPARENT {
+                    ui.painter().rect_filled(export_rect, 0.0, export_bg);
+                }
+                let export_col = if export_resp.hovered() { theme.fg } else { theme.fg_desc };
+                ui.painter().text(
+                    export_rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    export_label,
+                    FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
+                    export_col,
+                );
+                if export_resp.clicked() { rl_do_export_png(rl); }
+
+                // ── Send to Palette ────────────────────────────────────────
+                let send_label = "Send to Palette";
+                let send_w = send_label.chars().count() as f32 * 6.0 + 16.0;
+                let (send_rect, send_resp) = ui.allocate_exact_size(
+                    Vec2::new(send_w, btn_h), egui::Sense::click(),
+                );
+                let send_bg = if send_resp.hovered() { theme.surface } else { Color32::TRANSPARENT };
+                if send_bg != Color32::TRANSPARENT {
+                    ui.painter().rect_filled(send_rect, 0.0, send_bg);
+                }
+                let send_col = if send_resp.hovered() { theme.fg } else { theme.fg_desc };
+                ui.painter().text(
+                    send_rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    send_label,
+                    FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
+                    send_col,
+                );
+                if send_resp.clicked() { project.palette = rl.all_colors(); }
+
+                let total = rl.ramps.iter().map(|r| r.colors.len()).sum::<usize>();
+                let label = format!("{} colors · {} ramps × {} steps", total, rl.ramps.len(), rl.num_steps);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(egui::RichText::new(label).size(9.0).color(theme.muted));
+                });
+            });
+        });
+}
+
+/// Save the ramp swatch sheet as a PNG file.
+fn rl_do_export_png(rl: &RampLab) {
+    let path = rfd::FileDialog::new()
+        .set_file_name("ramps.png")
+        .add_filter("PNG Image", &["png"])
+        .save_file();
+
+    if let Some(path) = path {
+        let sw = 16_u32; // swatch size in pixels
+        let n_ramps = rl.ramps.len() as u32;
+        let n_steps = rl.num_steps as u32;
+        let img_w = n_steps * sw;
+        let img_h = n_ramps * sw;
+        let mut pixels: Vec<u8> = vec![0; (img_w * img_h * 4) as usize];
+
+        for (ri, ramp) in rl.ramps.iter().enumerate() {
+            for (si, &color) in ramp.colors.iter().enumerate() {
+                let rx = si as u32 * sw;
+                let ry = ri as u32 * sw;
+                for py in 0..sw {
+                    for px in 0..sw {
+                        let idx = (((ry + py) * img_w + (rx + px)) * 4) as usize;
+                        pixels[idx]     = color[0];
+                        pixels[idx + 1] = color[1];
+                        pixels[idx + 2] = color[2];
+                        pixels[idx + 3] = color[3];
+                    }
+                }
+            }
+        }
+
+        let _ = image::save_buffer(&path, &pixels, img_w, img_h, image::ColorType::Rgba8);
     }
 }
