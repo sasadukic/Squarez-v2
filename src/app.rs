@@ -1286,7 +1286,7 @@ impl App {
                     text_rect,
                     egui::TextEdit::singleline(buf)
                         .frame(false)
-                        .margin(egui::Margin::symmetric(0.0, (TOP_BAR_HEIGHT - FONT_SIZE_SM) / 2.0))
+                        .margin(egui::Margin::symmetric(0, ((TOP_BAR_HEIGHT - FONT_SIZE_SM) / 2.0) as i8))
                         .text_color(theme.fg)
                         .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
                         .desired_width(text_w)
