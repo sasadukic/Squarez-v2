@@ -557,21 +557,14 @@ impl App {
         self.other_tabs.len() + 1
     }
 
-    /// Display name for tab at logical index `i`.
     fn tab_display_name(&self, i: usize) -> String {
-        let (path, name, modified) = if i == self.active_tab_idx {
-            (self.current_path.as_ref(), self.project.name.as_str(), self.active_modified)
+        let (name, modified) = if i == self.active_tab_idx {
+            (self.project.name.as_str(), self.active_modified)
         } else {
             let slot = self.other_tabs_slot(i);
-            let t = &self.other_tabs[slot];
-            (t.current_path.as_ref(), t.project.name.as_str(), t.modified)
+            (self.other_tabs[slot].project.name.as_str(), self.other_tabs[slot].modified)
         };
-        let base = path
-            .and_then(|p| p.file_stem())
-            .and_then(|s| s.to_str())
-            .unwrap_or(name)
-            .to_string();
-        if modified { format!("*{base}") } else { base }
+        if modified { format!("*{name}") } else { name.to_string() }
     }
 
     /// Convert logical index → other_tabs Vec index (panics on active tab).
@@ -654,7 +647,12 @@ impl App {
     }
 
     /// Open `project` / `path` in a new tab to the right of the current active tab.
-    fn open_in_new_tab(&mut self, project: Project, path: Option<std::path::PathBuf>) {
+    fn open_in_new_tab(&mut self, mut project: Project, path: Option<std::path::PathBuf>) {
+        if let Some(ref p) = path {
+            if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                project.name = stem.to_string();
+            }
+        }
         // Pack the currently active tab into other_tabs at active_tab_idx.
         let snap = InactiveTab {
             project: std::mem::replace(&mut self.project, project),
@@ -754,7 +752,14 @@ impl App {
     fn save_active_tab(&mut self) -> bool {
         if self.current_path.is_none() {
             match rfd_save_as() {
-                Some(p) => self.current_path = Some(p),
+                Some(p) => {
+                    self.current_path = Some(p);
+                    if let Some(ref path) = self.current_path {
+                        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                            self.project.name = stem.to_string();
+                        }
+                    }
+                }
                 None => return false,
             }
         }
@@ -1275,21 +1280,28 @@ impl App {
             let is_renaming = matches!(&self.renaming_tab, Some((idx, _)) if *idx == i);
 
             if is_renaming {
-                // Inline rename input box - use full tab height and center text via margin
+                // Inline rename input box - centered vertically, with a fixed visual border + background
                 let text_w = close_rect.left() - tab_rect.left() - pad_left - 4.0;
+                let text_h = 18.0;
+                let text_y = tab_rect.center().y - text_h / 2.0;
                 let text_rect = egui::Rect::from_min_max(
-                    Pos2::new(tab_rect.left() + pad_left, tab_rect.top()),
-                    Pos2::new(tab_rect.left() + pad_left + text_w, tab_rect.bottom()),
+                    Pos2::new(tab_rect.left() + pad_left, text_y),
+                    Pos2::new(tab_rect.left() + pad_left + text_w, text_y + text_h),
                 );
+                
+                // Draw fixed styling for the input box
+                ui.painter().rect_filled(text_rect, 2.0, theme.bg);
+                ui.painter().rect_stroke(text_rect, 2.0, egui::Stroke::new(1.0, theme.accent));
+
                 let buf = &mut self.renaming_tab.as_mut().unwrap().1;
                 let text_resp = ui.put(
                     text_rect,
                     egui::TextEdit::singleline(buf)
                         .frame(false)
-                        .margin(egui::Margin::symmetric(0, ((TOP_BAR_HEIGHT - FONT_SIZE_SM) / 2.0) as i8))
+                        .margin(egui::Margin::symmetric(4, ((text_h - FONT_SIZE_SM) / 2.0) as i8))
                         .text_color(theme.fg)
                         .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
-                        .desired_width(text_w)
+                        .desired_width(text_w - 8.0)
                 );
                 text_resp.request_focus();
                 if text_resp.lost_focus() {
@@ -1336,7 +1348,7 @@ impl App {
             );
 
             // Interactions
-            if close_resp.clicked() {
+            if !is_renaming && close_resp.clicked() {
                 *close_req = Some(i);
             } else if !is_renaming {
                 if tab_resp.secondary_clicked() && !self.any_modal_open() && !self.menu_was_open_at_frame_start && !close_rect.contains(ui.ctx().input(|inp| inp.pointer.hover_pos().unwrap_or(Pos2::ZERO))) {
