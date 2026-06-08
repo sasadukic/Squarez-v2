@@ -5209,7 +5209,7 @@ print("FAIL")
         let mut put_back = false;
         let theme = self.theme.clone();
 
-        let win_resp = egui::Window::new("Preview")
+        let _win_resp = egui::Window::new("Preview")
             .id(egui::Id::new("floating_preview_win"))
             .open(&mut open)
             .resizable(true)
