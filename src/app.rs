@@ -8194,7 +8194,6 @@ impl eframe::App for App {
             ctx.request_repaint();
         }
     }
-    }
 }
 
 fn rich(text: &str, color: Color32, size: f32) -> RichText {
