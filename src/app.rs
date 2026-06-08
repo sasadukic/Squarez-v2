@@ -5213,7 +5213,7 @@ print("FAIL")
         let theme = self.theme.clone();
 
         let win_width = self.preview_window_width;
-        let avail_w = (win_width - 16.0).max(10.0);
+        let avail_w = (win_width - 20.0).max(10.0);
 
         let pw_size = if self.project.is_tiled() { self.project.tile_w } else { self.project.canvas_width };
         let ph_size = if self.project.is_tiled() { self.project.tile_h } else { self.project.canvas_height };
@@ -5227,34 +5227,82 @@ print("FAIL")
             avail_w
         };
 
-        let total_h = ph + 60.0;
+        let total_h = ph + 42.0;
 
-        let win_resp = egui::Window::new("Preview")
+        let win_resp = egui::Window::new("##floating_preview_win")
             .id(egui::Id::new("floating_preview_win"))
             .open(&mut open)
             .resizable(true)
+            .title_bar(false)
             .default_width(176.0)
             .min_height(total_h)
             .max_height(total_h)
+            .frame(
+                Frame::new()
+                    .fill(theme.panel)
+                    .stroke(egui::Stroke::NONE)
+                    .corner_radius(egui::CornerRadius::ZERO)
+                    .shadow(egui::Shadow {
+                        offset: [0, 14],
+                        blur: 36,
+                        spread: 0,
+                        color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
+                    })
+                    .inner_margin(Margin::ZERO),
+            )
             .show(ctx, |ui| {
-                // Pin button at the top-right of the window content
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let pin_size = Vec2::splat(14.0);
-                    let pin_resp = ui.add(
-                        egui::ImageButton::new(
-                            egui::Image::new(egui::include_image!("../assets/icons/pin.svg"))
-                                .tint(theme.fg_desc)
-                                .fit_to_exact_size(pin_size)
-                        )
-                        .frame(false)
+                ui.spacing_mut().item_spacing = Vec2::ZERO;
+
+                // 1. Custom Title Bar/Header
+                Frame::new().fill(theme.panel).inner_margin(egui::Margin::symmetric(10, 3)).show(ui, |ui| {
+                    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), egui::Sense::hover());
+
+                    // Left: visibility eye icon
+                    let icon_size = Vec2::splat(16.0);
+                    let icon_rect = egui::Rect::from_center_size(
+                        egui::Pos2::new(rect.left() + 8.0, rect.center().y),
+                        icon_size,
                     );
-                    if pin_resp.clicked() {
+                    let icon_tint = theme.fg_desc;
+                    ui.put(
+                        icon_rect,
+                        egui::Image::new(egui::include_image!("../assets/icons/visibility.svg"))
+                            .tint(icon_tint)
+                            .fit_to_exact_size(icon_size),
+                    );
+
+                    // Center: "Preview" text
+                    ui.painter().text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "Preview",
+                        FontId::new(12.0, FontFamily::Proportional),
+                        theme.fg,
+                    );
+
+                    // Right: Close button ("X")
+                    let close_size = Vec2::splat(14.0);
+                    let close_rect = egui::Rect::from_center_size(
+                        egui::Pos2::new(rect.right() - 8.0, rect.center().y),
+                        close_size,
+                    );
+                    let close_resp = ui.interact(close_rect, ui.id().with("floating_preview_close"), egui::Sense::click());
+                    let close_tint = if close_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                    ui.put(
+                        close_rect,
+                        egui::Image::new(egui::include_image!("../assets/icons/close.svg"))
+                            .tint(close_tint)
+                            .fit_to_exact_size(close_size),
+                    );
+                    if close_resp.clicked() {
                         put_back = true;
                     }
                 });
 
-                // Content
-                self.draw_preview_content(ui);
+                // 2. Content
+                Frame::new().fill(theme.panel).inner_margin(Margin::symmetric(10, 8)).show(ui, |ui| {
+                    self.draw_preview_content(ui);
+                });
             });
 
         if let Some(resp) = win_resp {
