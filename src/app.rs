@@ -5213,7 +5213,8 @@ print("FAIL")
             .id(egui::Id::new("floating_preview_win"))
             .open(&mut open)
             .resizable(true)
-            .default_size(Vec2::new(176.0, 176.0))
+            .default_width(176.0)
+            .auto_shrink([false, true])
             .show(ctx, |ui| {
                 // Pin button at the top-right of the window content
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
