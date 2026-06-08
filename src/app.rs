@@ -5271,15 +5271,6 @@ print("FAIL")
                             .fit_to_exact_size(icon_size),
                     );
 
-                    // Center: "Preview" text
-                    ui.painter().text(
-                        rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "Preview",
-                        FontId::new(12.0, FontFamily::Proportional),
-                        theme.fg,
-                    );
-
                     // Right: Pin button (to dock it back)
                     let pin_size = Vec2::splat(14.0);
                     let pin_rect = egui::Rect::from_center_size(
@@ -5300,9 +5291,12 @@ print("FAIL")
                 });
 
                 // 2. Content
-                Frame::new().fill(theme.panel).inner_margin(Margin::symmetric(10, 8)).show(ui, |ui| {
-                    self.draw_preview_content(ui);
-                });
+                Frame::new()
+                    .fill(theme.panel)
+                    .inner_margin(Margin { left: 10, right: 10, top: 0, bottom: 8 })
+                    .show(ui, |ui| {
+                        self.draw_preview_content(ui);
+                    });
             });
 
         if let Some(resp) = win_resp {
