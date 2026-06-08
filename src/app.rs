@@ -231,6 +231,8 @@ pub struct App {
     sidebar_left_x: f32,
     /// Floating state of the preview window
     preview_popped_out: bool,
+    /// Width of the floating preview window (from previous frame)
+    preview_window_width: f32,
 }
 
 #[allow(dead_code)]
@@ -448,6 +450,7 @@ impl App {
             onion_skinning: false,
             sidebar_left_x: 0.0,
             preview_popped_out: false,
+            preview_window_width: 176.0,
         }
     }
 
@@ -5209,11 +5212,30 @@ print("FAIL")
         let mut put_back = false;
         let theme = self.theme.clone();
 
-        let _win_resp = egui::Window::new("Preview")
+        let win_width = self.preview_window_width;
+        let avail_w = (win_width - 16.0).max(10.0);
+
+        let pw_size = if self.project.is_tiled() { self.project.tile_w } else { self.project.canvas_width };
+        let ph_size = if self.project.is_tiled() { self.project.tile_h } else { self.project.canvas_height };
+        let cw = pw_size as f32;
+        let ch = ph_size as f32;
+        let aspect = if ch > 0.0 { cw / ch } else { 1.0 };
+
+        let ph = if aspect >= 1.0 {
+            avail_w / aspect
+        } else {
+            avail_w
+        };
+
+        let total_h = ph + 60.0;
+
+        let win_resp = egui::Window::new("Preview")
             .id(egui::Id::new("floating_preview_win"))
             .open(&mut open)
             .resizable(true)
             .default_width(176.0)
+            .min_height(total_h)
+            .max_height(total_h)
             .show(ctx, |ui| {
                 // Pin button at the top-right of the window content
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -5234,6 +5256,10 @@ print("FAIL")
                 // Content
                 self.draw_preview_content(ui);
             });
+
+        if let Some(resp) = win_resp {
+            self.preview_window_width = resp.response.rect.width();
+        }
 
         if !open || put_back {
             self.preview_popped_out = false;
