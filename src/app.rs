@@ -169,6 +169,7 @@ pub struct App {
     renaming_animation: Option<(usize, String)>,
     // Inline rename state for tabs: (tab_index, current_edit_string)
     renaming_tab: Option<(usize, String)>,
+    renaming_tab_focused: bool,
     // Palette drag-and-drop reorder
     palette_drag_idx: Option<usize>,
     // Spring-animated selection highlight for layers panel
@@ -409,6 +410,7 @@ impl App {
             renaming_layer: None,
             renaming_animation: None,
             renaming_tab: None,
+            renaming_tab_focused: false,
             palette_drag_idx: None,
             layer_sel_y: 0.0,
             layer_sel_vel: 0.0,
@@ -1302,7 +1304,10 @@ impl App {
                         .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
                         .desired_width(text_w - 8.0)
                 );
-                text_resp.request_focus();
+                if !self.renaming_tab_focused {
+                    text_resp.request_focus();
+                    self.renaming_tab_focused = true;
+                }
                 if text_resp.lost_focus() {
                     if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                         rename_cancelled = true;
@@ -1380,6 +1385,7 @@ impl App {
                                 self.other_tabs[slot].project.name.clone()
                             };
                             self.renaming_tab = Some((i, current_name));
+                            self.renaming_tab_focused = false;
                             self.last_tab_click = None;
                         } else {
                             *switch_to = Some(i);
@@ -1406,11 +1412,13 @@ impl App {
                 }
             }
             self.renaming_tab = None;
+            self.renaming_tab_focused = false;
             self.canvas_dirty = true;
         }
 
         if rename_cancelled {
             self.renaming_tab = None;
+            self.renaming_tab_focused = false;
         }
     }
 
