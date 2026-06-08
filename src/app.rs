@@ -1266,35 +1266,27 @@ impl App {
             let bg = if selected { theme.surface } else if tab_resp.hovered() { theme.accent } else { theme.panel };
             ui.painter().rect_filled(tab_rect, 0.0, bg);
 
-            // × close button (right-aligned)
+            // × close button rect (right-aligned) - calculated first to compute text_w
             let close_rect = egui::Rect::from_min_size(
                 Pos2::new(tab_rect.right() - close_w - pad_right, tab_rect.center().y - close_w / 2.0),
                 Vec2::splat(close_w),
-            );
-            let close_resp = ui.interact(close_rect, ui.id().with(("tab_close", i)), egui::Sense::click());
-            let close_color = if close_resp.hovered() { theme.fg } else { theme.fg_muted };
-            ui.painter().text(
-                close_rect.center(),
-                egui::Align2::CENTER_CENTER,
-                "×",
-                FontId::new(FONT_SIZE_SM + 2.0, FontFamily::Proportional),
-                close_color,
             );
 
             let is_renaming = matches!(&self.renaming_tab, Some((idx, _)) if *idx == i);
 
             if is_renaming {
-                // Inline rename input box
+                // Inline rename input box - use full tab height and center text via margin
                 let text_w = close_rect.left() - tab_rect.left() - pad_left - 4.0;
                 let text_rect = egui::Rect::from_min_max(
-                    Pos2::new(tab_rect.left() + pad_left, tab_rect.top() + 4.0),
-                    Pos2::new(tab_rect.left() + pad_left + text_w, tab_rect.bottom() - 4.0),
+                    Pos2::new(tab_rect.left() + pad_left, tab_rect.top()),
+                    Pos2::new(tab_rect.left() + pad_left + text_w, tab_rect.bottom()),
                 );
                 let buf = &mut self.renaming_tab.as_mut().unwrap().1;
                 let text_resp = ui.put(
                     text_rect,
                     egui::TextEdit::singleline(buf)
                         .frame(false)
+                        .margin(egui::Margin::symmetric(0.0, (TOP_BAR_HEIGHT - FONT_SIZE_SM) / 2.0))
                         .text_color(theme.fg)
                         .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
                         .desired_width(text_w)
@@ -1330,11 +1322,24 @@ impl App {
                     FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
                     text_color,
                 );
+            }
 
-                // Interactions
-                if close_resp.clicked() {
-                    *close_req = Some(i);
-                } else if tab_resp.secondary_clicked() && !self.any_modal_open() && !self.menu_was_open_at_frame_start && !close_rect.contains(ui.ctx().input(|inp| inp.pointer.hover_pos().unwrap_or(Pos2::ZERO))) {
+            // Draw and handle close button AFTER the text / text edit so it is always on top
+            let close_resp = ui.interact(close_rect, ui.id().with(("tab_close", i)), egui::Sense::click());
+            let close_color = if close_resp.hovered() { theme.fg } else { theme.fg_muted };
+            ui.painter().text(
+                close_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "×",
+                FontId::new(FONT_SIZE_SM + 2.0, FontFamily::Proportional),
+                close_color,
+            );
+
+            // Interactions
+            if close_resp.clicked() {
+                *close_req = Some(i);
+            } else if !is_renaming {
+                if tab_resp.secondary_clicked() && !self.any_modal_open() && !self.menu_was_open_at_frame_start && !close_rect.contains(ui.ctx().input(|inp| inp.pointer.hover_pos().unwrap_or(Pos2::ZERO))) {
                     if i != active_idx {
                         *switch_to = Some(i);
                     }
