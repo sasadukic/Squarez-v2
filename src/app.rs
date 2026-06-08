@@ -5176,8 +5176,8 @@ print("FAIL")
                 self.ui_state.toggle_collapsed(Panel::Preview);
             }
 
-            // Draw pin icon on the right side if the sidebar is not collapsed
-            if rect.width() > 50.0 {
+            // Draw pin icon on the right side if the sidebar is not collapsed and section is not collapsed
+            if rect.width() > 50.0 && !collapsed {
                 let pin_size = Vec2::splat(14.0);
                 let pin_rect = egui::Rect::from_center_size(
                     egui::Pos2::new(rect.right() - 8.0, rect.center().y),
