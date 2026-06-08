@@ -1291,7 +1291,7 @@ impl App {
                 
                 // Draw fixed styling for the input box
                 ui.painter().rect_filled(text_rect, 2.0, theme.bg);
-                ui.painter().rect_stroke(text_rect, 2.0, egui::Stroke::new(1.0, theme.accent));
+                ui.painter().rect_stroke(text_rect, 2.0, egui::Stroke::new(1.0, theme.accent), egui::StrokeKind::Inside);
 
                 let buf = &mut self.renaming_tab.as_mut().unwrap().1;
                 let text_resp = ui.put(
