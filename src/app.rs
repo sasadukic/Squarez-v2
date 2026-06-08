@@ -7255,11 +7255,13 @@ print("FAIL")
                 ui.put(icon_rect, Image::new(egui::include_image!("../assets/logo.png")).fit_to_exact_size(Vec2::splat(20.0)));
 
                 // Draw logo text
-                let text = RichText::new("SQUAREZ")
-                    .color(Color32::WHITE)
-                    .font(FontId::new(MENU_FONT_SIZE, FontFamily::Name("bold".into())));
-                let text_rect = egui::Rect::from_min_size(rect.min + Vec2::new(28.0, 0.0), Vec2::new(rect.width() - 28.0, 20.0));
-                ui.put(text_rect, egui::Label::new(text));
+                ui.painter().text(
+                    Pos2::new(rect.min.x + 28.0, rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    "SQUAREZ",
+                    FontId::new(MENU_FONT_SIZE, FontFamily::Name("bold".into())),
+                    Color32::WHITE,
+                );
 
                 let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
                 if response.clicked() && !self.menu_was_open_at_frame_start {
