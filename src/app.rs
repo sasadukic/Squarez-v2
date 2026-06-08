@@ -5202,6 +5202,44 @@ print("FAIL")
         });
     }
 
+    fn draw_floating_preview(&mut self, ctx: &egui::Context) {
+        if !self.preview_popped_out { return; }
+
+        let mut open = true;
+        let mut put_back = false;
+        let theme = self.theme.clone();
+
+        let win_resp = egui::Window::new("Preview")
+            .id(egui::Id::new("floating_preview_win"))
+            .open(&mut open)
+            .resizable(true)
+            .default_size(Vec2::new(176.0, 176.0))
+            .show(ctx, |ui| {
+                // Pin button at the top-right of the window content
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let pin_size = Vec2::splat(14.0);
+                    let pin_resp = ui.add(
+                        egui::ImageButton::new(
+                            egui::Image::new(egui::include_image!("../assets/icons/pin.svg"))
+                                .tint(theme.fg_desc)
+                                .fit_to_exact_size(pin_size)
+                        )
+                        .frame(false)
+                    );
+                    if pin_resp.clicked() {
+                        put_back = true;
+                    }
+                });
+
+                // Content
+                self.draw_preview_content(ui);
+            });
+
+        if !open || put_back {
+            self.preview_popped_out = false;
+        }
+    }
+
     fn handle_zoom_tool_input(&mut self, response: &egui::Response, canvas_rect: egui::Rect) {
         let w = self.project.canvas_width;
         let h = self.project.canvas_height;
@@ -8156,43 +8194,6 @@ impl eframe::App for App {
             ctx.request_repaint();
         }
     }
-
-    fn draw_floating_preview(&mut self, ctx: &egui::Context) {
-        if !self.preview_popped_out { return; }
-
-        let mut open = true;
-        let mut put_back = false;
-        let theme = self.theme.clone();
-
-        let win_resp = egui::Window::new("Preview")
-            .id(egui::Id::new("floating_preview_win"))
-            .open(&mut open)
-            .resizable(true)
-            .default_size(Vec2::new(176.0, 176.0))
-            .show(ctx, |ui| {
-                // Pin button at the top-right of the window content
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let pin_size = Vec2::splat(14.0);
-                    let pin_resp = ui.add(
-                        egui::ImageButton::new(
-                            egui::Image::new(egui::include_image!("../assets/icons/pin.svg"))
-                                .tint(theme.fg_desc)
-                                .fit_to_exact_size(pin_size)
-                        )
-                        .frame(false)
-                    );
-                    if pin_resp.clicked() {
-                        put_back = true;
-                    }
-                });
-
-                // Content
-                self.draw_preview_content(ui);
-            });
-
-        if !open || put_back {
-            self.preview_popped_out = false;
-        }
     }
 }
 
