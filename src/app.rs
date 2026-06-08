@@ -748,10 +748,9 @@ impl App {
         self.pending_zoom_fit = true;
     }
 
-    /// Save the active tab. Shows rfd Save As picker if no path. Returns true if saved.
     fn save_active_tab(&mut self) -> bool {
         if self.current_path.is_none() {
-            match rfd_save_as() {
+            match rfd_save_as(&self.project.name) {
                 Some(p) => {
                     self.current_path = Some(p);
                     if let Some(ref path) = self.current_path {
@@ -8689,10 +8688,15 @@ fn rfd_open() -> Option<std::path::PathBuf> {
         .pick_file()
 }
 
-fn rfd_save_as() -> Option<std::path::PathBuf> {
+fn rfd_save_as(default_name: &str) -> Option<std::path::PathBuf> {
+    let filename = if default_name.to_lowercase().ends_with(".sqr") {
+        default_name.to_string()
+    } else {
+        format!("{}.sqr", default_name)
+    };
     rfd::FileDialog::new()
         .add_filter("Squarez Project", &["sqr"])
-        .set_file_name("untitled.sqr")
+        .set_file_name(&filename)
         .save_file()
 }
 
