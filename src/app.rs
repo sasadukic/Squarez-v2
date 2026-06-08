@@ -4607,9 +4607,22 @@ impl App {
                         self.pen_size_scroll_accum += THRESH;
                         if self.pen_size > 1 { self.pen_size -= 1; }
                     }
-                } else if !self.palette_browser.open {
-                    self.pen_size_scroll_accum = 0.0;
-                    self.canvas.handle_input(ui, canvas_rect);
+                } else {
+                    let any_menu_open = self.top_menu_open.is_some()
+                        || self.export_menu_open.is_some()
+                        || self.frame_menu.is_some()
+                        || self.layer_ctx_menu.is_some()
+                        || self.anim_tile_menu.is_some()
+                        || self.tab_resize_menu.is_some()
+                        || self.canvas_ctx_menu.is_some()
+                        || self.open_tool_submenu.is_some()
+                        || self.palette_browser.open
+                        || self.tile_browser.open
+                        || self.any_modal_open();
+                    if !any_menu_open {
+                        self.pen_size_scroll_accum = 0.0;
+                        self.canvas.handle_input(ui, canvas_rect);
+                    }
                 }
 
                 let art_rect = self.canvas.art_rect(canvas_rect, disp_w, disp_h);
