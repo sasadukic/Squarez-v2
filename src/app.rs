@@ -2022,8 +2022,22 @@ impl App {
         let _ = current; // silence unused if we don't need it elsewhere
     }
 
-    fn draw_right_sidebar(&mut self, ctx: &egui::Context) {
+        fn draw_right_sidebar(&mut self, ctx: &egui::Context) {
         let sidebar_order = self.sidebar_order.clone();
+
+        let any_visible = sidebar_order.iter().any(|&p| {
+            if p == Panel::Tiles && !self.project.is_tiled() {
+                false
+            } else {
+                self.ui_state.is_visible(p)
+            }
+        });
+
+        if !any_visible {
+            self.sidebar_left_x = ctx.screen_rect().right();
+            self.sidebar_icon_rects.clear();
+            return;
+        }
 
         // Narrow mode: every visible panel is collapsed (only icon rows visible)
         let all_narrow = sidebar_order.iter().all(|&p| {
@@ -2053,15 +2067,20 @@ impl App {
                         self.sidebar_left_x = sidebar_x;
                         let dragging = self.sidebar_drag;
 
+                        let mut first = true;
                         for (i, &panel) in sidebar_order.iter().enumerate() {
                             // Tiles panel is only meaningful when the project has more than one tile.
                             if panel == Panel::Tiles && !self.project.is_tiled() {
                                 continue;
                             }
+                            if !self.ui_state.is_visible(panel) {
+                                continue;
+                            }
 
-                            if i > 0 {
+                            if !first {
                                 ui.add_space(RIGHT_SECTION_STACK_GAP);
                             }
+                            first = false;
 
                             let y_before = ui.next_widget_position().y;
 
@@ -2083,7 +2102,7 @@ impl App {
                             }
                             if handle_resp.drag_started() {
                                 self.sidebar_drag = Some(panel);
-                                self.sidebar_drag_over_idx = Some(i);
+                                self.sidebar_drag_over_idx = self.sidebar_icon_rects.iter().position(|&(p, _)| p == panel);
                                 self.sidebar_press_start = None;
                             }
 
@@ -2150,7 +2169,13 @@ impl App {
         if primary_released {
             if let (Some(dragged), Some(drop_idx)) = (self.sidebar_drag.take(), self.sidebar_drag_over_idx.take()) {
                 if let Some(from_idx) = self.sidebar_order.iter().position(|&p| p == dragged) {
-                    let effective = if drop_idx > from_idx { drop_idx - 1 } else { drop_idx };
+                    let target_idx = if drop_idx < self.sidebar_icon_rects.len() {
+                        let target_panel = self.sidebar_icon_rects[drop_idx].0;
+                        self.sidebar_order.iter().position(|&p| p == target_panel).unwrap_or(self.sidebar_order.len())
+                    } else {
+                        self.sidebar_order.len()
+                    };
+                    let effective = if target_idx > from_idx { target_idx - 1 } else { target_idx };
                     let effective = effective.min(self.sidebar_order.len() - 1);
                     self.sidebar_order.remove(from_idx);
                     self.sidebar_order.insert(effective, dragged);
