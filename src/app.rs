@@ -2068,7 +2068,7 @@ impl App {
                         let dragging = self.sidebar_drag;
 
                         let mut first = true;
-                        for (i, &panel) in sidebar_order.iter().enumerate() {
+                        for &panel in sidebar_order.iter() {
                             // Tiles panel is only meaningful when the project has more than one tile.
                             if panel == Panel::Tiles && !self.project.is_tiled() {
                                 continue;
