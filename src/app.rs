@@ -7258,7 +7258,7 @@ print("FAIL")
                 let text = RichText::new("SQUAREZ")
                     .color(Color32::WHITE)
                     .font(FontId::new(MENU_FONT_SIZE, FontFamily::Name("bold".into())));
-                let text_rect = egui::Rect::from_min_size(rect.min + Vec2::new(24.0, 0.0), Vec2::new(rect.width() - 24.0, 20.0));
+                let text_rect = egui::Rect::from_min_size(rect.min + Vec2::new(22.0, 0.0), Vec2::new(rect.width() - 22.0, 20.0));
                 ui.put(text_rect, egui::Label::new(text));
 
                 let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
