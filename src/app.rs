@@ -233,6 +233,8 @@ pub struct App {
     preview_popped_out: bool,
     /// Width of the floating preview window (from previous frame)
     preview_window_width: f32,
+    /// Track if any menu was open at the start of the current frame
+    menu_was_open_at_frame_start: bool,
 }
 
 #[allow(dead_code)]
@@ -451,6 +453,7 @@ impl App {
             sidebar_left_x: 0.0,
             preview_popped_out: false,
             preview_window_width: 176.0,
+            menu_was_open_at_frame_start: false,
         }
     }
 
@@ -614,6 +617,21 @@ impl App {
             || self.close_tab_pending.is_some()
             || self.ramp_lab.open
             || self.tab_resize_menu.is_some()
+    }
+
+    fn any_menu_open(&self) -> bool {
+        self.top_menu_open.is_some()
+            || self.export_menu_open.is_some()
+            || self.frame_menu.is_some()
+            || self.layer_ctx_menu.is_some()
+            || self.anim_tile_menu.is_some()
+            || self.tab_resize_menu.is_some()
+            || self.canvas_ctx_menu.is_some()
+            || self.open_tool_submenu.is_some()
+            || self.palette_browser.open
+            || self.tile_browser.open
+            || self.any_modal_open()
+            || self.show_shortcuts_window
     }
 
     fn open_new_dialog(&mut self, replace_pending: bool) {
@@ -1316,7 +1334,7 @@ impl App {
                 // Interactions
                 if close_resp.clicked() {
                     *close_req = Some(i);
-                } else if tab_resp.secondary_clicked() && !self.any_modal_open() && !close_rect.contains(ui.ctx().input(|inp| inp.pointer.hover_pos().unwrap_or(Pos2::ZERO))) {
+                } else if tab_resp.secondary_clicked() && !self.any_modal_open() && !self.menu_was_open_at_frame_start && !close_rect.contains(ui.ctx().input(|inp| inp.pointer.hover_pos().unwrap_or(Pos2::ZERO))) {
                     if i != active_idx {
                         *switch_to = Some(i);
                     }
@@ -1869,7 +1887,11 @@ impl App {
                 let pen_rect = pen_resp.rect;
                 if pen_resp.clicked() {
                     if self.is_group_selected(0) {
-                        self.open_tool_submenu = if self.open_tool_submenu == Some(0) { None } else { Some(0) };
+                        if self.open_tool_submenu == Some(0) {
+                            self.open_tool_submenu = None;
+                        } else if !self.menu_was_open_at_frame_start {
+                            self.open_tool_submenu = Some(0);
+                        }
                     } else {
                         self.active_tool = self.pen_group_current.clone();
                         self.open_tool_submenu = None;
@@ -1882,7 +1904,11 @@ impl App {
                 let bucket_rect = bucket_resp.rect;
                 if bucket_resp.clicked() {
                     if self.is_group_selected(1) {
-                        self.open_tool_submenu = if self.open_tool_submenu == Some(1) { None } else { Some(1) };
+                        if self.open_tool_submenu == Some(1) {
+                            self.open_tool_submenu = None;
+                        } else if !self.menu_was_open_at_frame_start {
+                            self.open_tool_submenu = Some(1);
+                        }
                     } else {
                         self.active_tool = self.bucket_group_current.clone();
                         self.open_tool_submenu = None;
@@ -1895,7 +1921,11 @@ impl App {
                 let shape_rect = shape_resp.rect;
                 if shape_resp.clicked() {
                     if self.is_group_selected(2) {
-                        self.open_tool_submenu = if self.open_tool_submenu == Some(2) { None } else { Some(2) };
+                        if self.open_tool_submenu == Some(2) {
+                            self.open_tool_submenu = None;
+                        } else if !self.menu_was_open_at_frame_start {
+                            self.open_tool_submenu = Some(2);
+                        }
                     } else {
                         self.active_tool = self.shape_group_current.clone();
                         self.open_tool_submenu = None;
@@ -1908,7 +1938,11 @@ impl App {
                 let select_rect = select_resp.rect;
                 if select_resp.clicked() {
                     if self.is_group_selected(3) {
-                        self.open_tool_submenu = if self.open_tool_submenu == Some(3) { None } else { Some(3) };
+                        if self.open_tool_submenu == Some(3) {
+                            self.open_tool_submenu = None;
+                        } else if !self.menu_was_open_at_frame_start {
+                            self.open_tool_submenu = Some(3);
+                        }
                     } else {
                         self.active_tool = self.select_group_current.clone();
                         self.open_tool_submenu = None;
@@ -3191,7 +3225,7 @@ impl App {
                     // Secondary-click check BEFORE any widgets are placed in this row
                     let row_origin = ui.next_widget_position();
                     let row_rect = egui::Rect::from_min_size(row_origin, Vec2::new(list_width, ROW_H));
-                    if ui.input(|i| {
+                    if !self.menu_was_open_at_frame_start && ui.input(|i| {
                         i.pointer.secondary_clicked() &&
                         i.pointer.interact_pos().map(|p| row_rect.contains(p)).unwrap_or(false)
                     }) {
@@ -3531,7 +3565,7 @@ impl App {
                                     self.canvas_dirty = true;
                                 }
 
-                                if bg_resp.secondary_clicked() && self.project.is_tiled() {
+                                if bg_resp.secondary_clicked() && self.project.is_tiled() && !self.menu_was_open_at_frame_start {
                                     let now = ui.ctx().input(|inp| inp.time);
                                     let menu_pos = Pos2::new(self.sidebar_left_x, bg_resp.rect.center().y - 22.0);
                                     self.anim_tile_menu = Some((i, menu_pos, now));
@@ -3918,7 +3952,7 @@ impl App {
                                 self.project.active_frame = idx;
                                 self.canvas_dirty = true;
                             }
-                            if response.secondary_clicked() {
+                            if response.secondary_clicked() && !self.menu_was_open_at_frame_start {
                                 self.project.active_frame = idx;
                                 let menu_outer_w = 144.0;
                                 let menu_outer_h = 44.0;
@@ -5519,9 +5553,20 @@ print("FAIL")
                     && i.pointer.hover_pos().map(|p| canvas_rect.contains(p)).unwrap_or(false)
             });
             if right_clicked && !self.palette_browser.open && !self.any_modal_open() {
-                let pos = response.ctx.input(|i| i.pointer.hover_pos().unwrap_or(canvas_rect.center()));
-                self.canvas_ctx_menu = Some(ContextMenuState::new(pos, response.ctx.input(|i| i.time)));
-                return;
+                let non_canvas_menu = self.top_menu_open.is_some()
+                    || self.export_menu_open.is_some()
+                    || self.frame_menu.is_some()
+                    || self.layer_ctx_menu.is_some()
+                    || self.anim_tile_menu.is_some()
+                    || self.tab_resize_menu.is_some()
+                    || self.open_tool_submenu.is_some()
+                    || self.tile_browser.open
+                    || self.show_shortcuts_window;
+                if !non_canvas_menu {
+                    let pos = response.ctx.input(|i| i.pointer.hover_pos().unwrap_or(canvas_rect.center()));
+                    self.canvas_ctx_menu = Some(ContextMenuState::new(pos, response.ctx.input(|i| i.time)));
+                    return;
+                }
             }
         }
 
@@ -7211,13 +7256,13 @@ print("FAIL")
 
                 // Draw logo text
                 let text = RichText::new("SQUAREZ")
-                    .color(if response.hovered() { theme.fg } else { theme.fg_desc })
+                    .color(Color32::WHITE)
                     .font(FontId::new(MENU_FONT_SIZE, FontFamily::Name("bold".into())));
-                let text_rect = egui::Rect::from_min_size(rect.min + Vec2::new(27.0, 0.0), Vec2::new(rect.width() - 27.0, 20.0));
+                let text_rect = egui::Rect::from_min_size(rect.min + Vec2::new(24.0, 0.0), Vec2::new(rect.width() - 24.0, 20.0));
                 ui.put(text_rect, egui::Label::new(text));
 
                 let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-                if response.clicked() {
+                if response.clicked() && !self.menu_was_open_at_frame_start {
                     self.show_shortcuts_window = !self.show_shortcuts_window;
                 }
             },
@@ -8084,6 +8129,7 @@ impl eframe::App for App {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.menu_was_open_at_frame_start = self.any_menu_open();
         self.theme.apply(ctx);
 
         if cfg!(debug_assertions) {
