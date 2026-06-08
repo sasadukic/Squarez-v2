@@ -8294,6 +8294,20 @@ impl eframe::App for App {
                 }
             }
         }
+
+        // Handle drag and drop of .sqr files
+        let dropped_files = ctx.input(|i| i.raw.dropped_files.clone());
+        for file in dropped_files {
+            if let Some(path) = file.path {
+                if let Some(ext) = path.extension() {
+                    if ext.eq_ignore_ascii_case("sqr") {
+                        if let Ok(p) = load_sqr(&path) {
+                            self.open_in_new_tab(p, Some(path));
+                        }
+                    }
+                }
+            }
+        }
         if file_save { self.save_active_tab(); }
         if file_save_as {
             let prev = self.current_path.take();
