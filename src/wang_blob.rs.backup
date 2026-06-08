@@ -1,0 +1,249 @@
+// src/wang_blob.rs
+//
+// Wang tiles (16-tile, 4×4 grid) and Blob tiles (48-tile, 12×4 grid with gap).
+// Edge-matching sync: bidirectional (paint on any tile updates matching edges of neighbors)
+// and unidirectional (only center tile propagates to neighbors).
+
+use crate::project::Rgba;
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WangBlobMode {
+    None,
+    Wang,   // 16 tiles, 4 edges (N/E/S/W), 4×4 grid
+    Blob,   // 48 tiles (1 gap), 8 neighbors (TL/T/TR/R/BR/B/BL/L), 12×4 grid
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncMode {
+    Bidirectional,  // Paint on any tile → update all matching neighbors (A)
+    Unidirectional, // Paint only on center tile → propagate to neighbors (B)
+}
+
+// ─── Grid constants ───────────────────────────────────────────────────────────
+
+/// 4×4 grid for Wang tiles.
+pub const WANG_COLS: u32 = 4;
+pub const WANG_ROWS: u32 = 4;
+pub const WANG_TOTAL: usize = 16;
+
+/// 12×4 grid for Blob tiles (position row=1, col=10 is the gap).
+pub const BLOB_COLS: u32 = 12;
+pub const BLOB_ROWS: u32 = 4;
+pub const BLOB_TOTAL: usize = 48; // includes the gap
+
+/// Center tile indices (where existing canvas content is placed).
+pub const WANG_CENTER_ROW: u32 = 3;
+pub const WANG_CENTER_COL: u32 = 3; // index 15 in row-major
+
+/// Blob center tile: row=2, col=9 (index 255 in Tilesetter layout).
+pub const BLOB_CENTER_ROW: u32 = 2;
+pub const BLOB_CENTER_COL: u32 = 9;
+
+// ─── Data structures ──────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+    pub struct WangBlobState {
+        pub mode:        WangBlobMode,
+        pub sync_mode:   SyncMode,
+        /// tile_data[row][col] = [u8; 4] pixel data for that grid position.
+        /// Each grid cell is one tile, and each tile is represented by ts*ts pixels of [u8; 4].
+        pub tile_data:   Vec<Vec<[u8; 4]>>,
+        /// Size of each individual tile (same as original canvas width/height).
+        pub tile_size:   u32,
+    }
+
+impl Default for WangBlobState {
+    fn default() -> Self {
+        Self {
+            mode:        WangBlobMode::None,
+            sync_mode:   SyncMode::Bidirectional,
+            tile_data:   Vec::new(),
+            tile_size:   16,
+        }
+    }
+}
+
+impl WangBlobState {
+    /// Expand the canvas to show all tiles. Center tile gets existing canvas content; rest transparent.
+    pub fn expand(
+        &mut self,
+        mode: WangBlobMode,
+        canvas_width: u32,
+        canvas_height: u32,
+        canvas_pixels: &[u8],
+    ) {
+        self.mode = mode;
+        self.tile_size = canvas_width.max(canvas_height);
+        let cols = match mode { WangBlobMode::Wang => WANG_COLS, _ => BLOB_COLS };
+        let rows = match mode { WangBlobMode::Wang => WANG_ROWS, _ => BLOB_ROWS };
+        let ts = self.tile_size as usize;
+
+        // Build tile_data grid: each cell is ts*ts pixels of [u8; 4].
+        self.tile_data = vec![vec![[0, 0, 0, 0]; ts * ts]; (rows * cols) as usize];
+
+        // Copy existing canvas content to the center tile.
+        let (center_row, center_col) = match mode {
+            WangBlobMode::Wang => (WANG_CENTER_ROW, WANG_CENTER_COL),
+            _ => (BLOB_CENTER_ROW, BLOB_CENTER_COL),
+        };
+        let center_idx = (center_row * cols + center_col) as usize;
+
+        if !canvas_pixels.is_empty() {
+            let cw = canvas_width as usize;
+            let ch = canvas_height as usize;
+            let ts = self.tile_size as usize;
+
+            for y in 0..ch {
+                for x in 0..cw {
+                    let src_idx = (y * cw + x) * 4;
+                    if src_idx + 3 < canvas_pixels.len() {
+                        let dst_x = x % ts;
+                        let dst_y = y % ts;
+                        
+                        // Calculate flat index within the center tile's pixel array (ts*ts pixels)
+                        let pixel_idx = dst_y * ts + dst_x;
+                        
+                        if pixel_idx < ts * ts {
+                            // tile_data structure: [grid_row][pixel_in_tile] = [u8; 4]
+                            self.tile_data[center_idx][pixel_idx] = [
+                                canvas_pixels[src_idx],
+                                canvas_pixels[src_idx + 1],
+                                canvas_pixels[src_idx + 2],
+                                canvas_pixels[src_idx + 3],
+                            ];
+                        }
+                    }
+                }
+            }
+        }
+
+        // Update canvas dimensions.
+        let new_w = self.tile_size * cols;
+        let new_h = self.tile_size * rows;
+    }
+
+    /// Get tile dimensions for the current mode.
+    pub fn grid_dims(&self) -> (u32, u32) {
+        match self.mode {
+            WangBlobMode::Wang => (self.tile_size * WANG_COLS, self.tile_size * WANG_ROWS),
+            WangBlobMode::Blob => (self.tile_size * BLOB_COLS, self.tile_size * BLOB_ROWS),
+            _ => (0, 0),
+        }
+    }
+
+    /// Convert screen coordinates to tile-local coordinates.
+    pub fn screen_to_tile(&self, canvas_x: u32, canvas_y: u32) -> Option<(u32, u32, u32, u32)> {
+        // (tile_row, tile_col, local_x, local_y)
+        let (cols, rows) = self.grid_dims();
+        if canvas_x >= cols || canvas_y >= rows { return None; }
+
+        let (grid_cols, grid_rows) = match self.mode {
+            WangBlobMode::Wang => (WANG_COLS, WANG_ROWS),
+            WangBlobMode::Blob => (BLOB_COLS, BLOB_ROWS),
+            _ => return None,
+        };
+
+        let tile_col = canvas_x / self.tile_size;
+        let tile_row = canvas_y / self.tile_size;
+        let local_x  = canvas_x % self.tile_size;
+        let local_y  = canvas_y % self.tile_size;
+
+        Some((tile_row, tile_col, local_x, local_y))
+    }
+
+    /// Get the index of a tile from grid position.
+    pub fn tile_index(&self, row: u32, col: u32) -> usize {
+        (row * match self.mode { WangBlobMode::Wang => WANG_COLS, _ => BLOB_COLS } + col) as usize
+    }
+
+    /// Get grid position from tile index.
+    pub fn tile_coords(&self, idx: usize) -> Option<(u32, u32)> {
+        let cols = match self.mode { WangBlobMode::Wang => WANG_COLS, _ => BLOB_COLS };
+        let row = (idx / cols as usize) as u32;
+        let col = (idx % cols as usize) as u32;
+        Some((row, col))
+    }
+
+    /// Check if a grid position is the gap (only for Blob mode).
+    pub fn is_gap(&self, row: u32, col: u32) -> bool {
+        if self.mode != WangBlobMode::Blob { return false; }
+        row == 1 && col == 10 // The empty slot in Tilesetter layout
+    }
+
+    /// Paint pixels on a specific tile (bidirectional sync).
+    pub fn paint_tile(&mut self, edits: &[crate::tools::PixelEdit], tile_row: u32, tile_col: u32) {
+        let (grid_cols, grid_rows) = match self.mode {
+            WangBlobMode::Wang => (WANG_COLS, WANG_ROWS),
+            WangBlobMode::Blob => (BLOB_COLS, BLOB_ROWS),
+            _ => return,
+        };
+
+        let ts = self.tile_size as usize;
+
+        // Apply edits to the target tile.
+        let tidx = self.tile_index(tile_row, tile_col);
+        if tidx >= self.tile_data.len() { return; }
+
+        for &(x, y, _old, new) in edits {
+            let local_x = (x % self.tile_size) as usize;
+            let local_y = (y % self.tile_size) as usize;
+            
+            // Calculate flat index within the tile's pixel array (ts*ts pixels)
+            let pixel_idx = local_y * ts + local_x;
+            
+            if tidx < self.tile_data.len() && pixel_idx < ts * ts {
+                // tile_data structure: [grid_row][pixel_in_tile] = [u8; 4]
+                self.tile_data[tidx][pixel_idx] = [new[0], new[1], new[2], new[3]];
+            }
+        }
+
+        // Propagate to neighbors based on sync mode.
+        match self.sync_mode {
+            SyncMode::Bidirectional => self.propagate_bidirectional(tile_row, tile_col, edits),
+            SyncMode::Unidirectional => self.propagate_unidirectional(tile_row, tile_col, edits),
+        }
+    }
+
+    /// Get all pixels for the expanded canvas (tile_data flattened).
+        pub fn flatten_canvas(&self) -> Vec<u8> {
+            let (cols, rows) = self.grid_dims();
+            
+            // tile_data is structured as: [grid_row][pixel_idx] = [u8; 4]
+            // So we just flatten it row by row, then each element is 4 bytes
+            let mut result = Vec::with_capacity(self.tile_data.len() * 4);
+            for row in 0..rows {
+                for col in 0..cols {
+                    let tidx = self.tile_index(row, col);
+                    if tidx >= self.tile_data.len() { continue; }
+                    // Each element is a [u8; 4] array, extend by copying all 4 bytes
+                    let pixel = &self.tile_data[tidx][tidx];
+                    result.extend_from_slice(&[pixel[0], pixel[1], pixel[2], pixel[3]]);
+                }
+            }
+            result
+        }
+
+    /// Get pixel data for a single tile (for export).
+        pub fn get_single_tile(&self, row: u32, col: u32) -> Vec<u8> {
+            let tidx = self.tile_index(row, col);
+            if tidx >= self.tile_data.len() { return Vec::new(); }
+            
+            // tile_data[tidx] is a Vec<[u8; 4]> with ts elements (one pixel per grid position)
+            // Flatten to Vec<u8> by concatenating all channels
+            let ts = self.tile_size as usize;
+            let mut result = Vec::with_capacity(ts * ts * 4);
+            for pixel in &self.tile_data[tidx] {
+                result.extend_from_slice(&[pixel[0], pixel[1], pixel[2], pixel[3]]);
+            }
+            result
+        }
+
+    /// Export full tileset as a flat RGBA buffer (for spritesheet export).
+        pub fn get_tileset_pixels(&self) -> Vec<u8> {
+            self.flatten_canvas()
+        }
+
+    /// Get all tiles as a spritesheet (all tiles laid out in grid order).
+        pub fn get_spritesheet(&self) -> Vec<u8> {

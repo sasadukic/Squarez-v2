@@ -6,9 +6,9 @@ pub mod shapes;
 pub mod select;
 
 pub use pencil::{apply_pencil, apply_eraser, bresenham_line, bresenham_positions};
-pub use fill::apply_fill;
+pub use fill::{apply_fill, fill_enclosed_region};
 pub use eyedropper::apply_eyedropper;
-pub use shapes::{apply_rect, apply_ellipse, apply_line};
+pub use shapes::{apply_rect, apply_ellipse, apply_line, iso_box_preview, iso_box_pixels, iso_cylinder_preview, iso_cylinder_pixels};
 pub use select::{SelectState, SelectInteraction, Handle, FloatBuffer, DragAnchor, sample_transformed};
 
 use crate::project::Rgba;

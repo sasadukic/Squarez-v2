@@ -15,23 +15,57 @@ pub struct Project {
     pub active_layer: usize,
     #[serde(default = "default_id_counter")]
     pub layer_id_counter: u64,
+    // Tile/sprite-sheet grid.
+    // tiles_w = tiles_h = 1, tile_w = tile_h = 0 means "not tiled" (legacy behavior)
+    #[serde(default)]
+    pub tiles_w: u32,
+    #[serde(default)]
+    pub tiles_h: u32,
+    #[serde(default)]
+    pub tile_w: u32,
+    #[serde(default)]
+    pub tile_h: u32,
 }
 
 fn default_id_counter() -> u64 { 1 }
 
 impl Project {
     pub fn new(width: u32, height: u32, name: String) -> Self {
+        Self::new_tiled(width, height, name, 1, 1, width, height)
+    }
+
+    pub fn new_tiled(width: u32, height: u32, name: String, tiles_w: u32, tiles_h: u32, tile_w: u32, tile_h: u32) -> Self {
+        let frame_count = if tiles_w > 1 || tiles_h > 1 { (tiles_w * tiles_h) as usize } else { 1 };
+        let mut frames = Vec::with_capacity(frame_count);
+        for _ in 0..frame_count {
+            frames.push(Frame::new(width, height, 1));
+        }
         Self {
             name,
             canvas_width: width,
             canvas_height: height,
             palette: default_palette(),
-            animations: vec![Animation::new("Animation 1".to_string(), width, height, 1)],
+            animations: vec![Animation {
+                name: "Animation 1".to_string(),
+                fps: 12,
+                frames,
+                tile_start: 0,
+                tile_end: if frame_count > 0 { frame_count - 1 } else { 0 },
+                tile_visible: true,
+            }],
             active_animation: 0,
             active_frame: 0,
             active_layer: 0,
             layer_id_counter: 1,
+            tiles_w,
+            tiles_h,
+            tile_w,
+            tile_h,
         }
+    }
+
+    pub fn is_tiled(&self) -> bool {
+        self.tiles_w > 1 || self.tiles_h > 1
     }
 
     pub fn next_layer_id(&mut self) -> u64 {
@@ -93,7 +127,15 @@ pub struct Animation {
     pub name: String,
     pub fps: u8,
     pub frames: Vec<Frame>,
+    #[serde(default)]
+    pub tile_start: usize,
+    #[serde(default)]
+    pub tile_end: usize,
+    #[serde(default = "true_default")]
+    pub tile_visible: bool,
 }
+
+pub fn true_default() -> bool { true }
 
 impl Animation {
     pub fn new(name: String, width: u32, height: u32, layer_id: u64) -> Self {
@@ -101,6 +143,9 @@ impl Animation {
             name,
             fps: 12,
             frames: vec![Frame::new(width, height, layer_id)],
+            tile_start: 0,
+            tile_end: 0,
+            tile_visible: true,
         }
     }
 }
@@ -120,6 +165,28 @@ impl Frame {
             layers: vec![Layer::new_with_id("Layer 1".to_string(), width, height, layer_id)],
             dirty: true,
         }
+    }
+
+    pub fn resize_canvas(&mut self, new_width: u32, new_height: u32) {
+        for layer in &mut self.layers {
+            if layer.is_group { continue; }
+            let old_pixels = std::mem::take(&mut layer.pixels);
+            let new_len = (new_width * new_height * 4) as usize;
+            let mut new_pixels = vec![0u8; new_len];
+            let copy_w = layer.width.min(new_width) as usize;
+            let copy_h = layer.height.min(new_height) as usize;
+            for y in 0..copy_h {
+                let old_row_start = y * layer.width as usize * 4;
+                let new_row_start = y * new_width as usize * 4;
+                let copy_bytes = copy_w * 4;
+                let src = &old_pixels[old_row_start..old_row_start + copy_bytes];
+                new_pixels[new_row_start..new_row_start + copy_bytes].copy_from_slice(src);
+            }
+            layer.pixels = new_pixels;
+            layer.width = new_width;
+            layer.height = new_height;
+        }
+        self.dirty = true;
     }
 }
 

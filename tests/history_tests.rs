@@ -78,3 +78,39 @@ fn duplicate_frame_can_be_undone_and_redone_with_snapshot() {
     assert_eq!(project.animations[0].frames.len(), 2);
     assert_eq!(project.animations[0].frames[1].layers[0].get_pixel(2, 2), [7, 8, 9, 255]);
 }
+
+#[test]
+fn tiled_mode_undo_redo_maps_coordinates_correctly() {
+    let mut project = Project::new_tiled(32, 16, "t".to_string(), 2, 1, 16, 16);
+    let mut stack = UndoStack::new();
+    
+    assert_eq!(project.animations[0].frames[0].layers[0].get_pixel(2, 3), [0, 0, 0, 0]);
+    assert_eq!(project.animations[0].frames[1].layers[0].get_pixel(2, 5), [0, 0, 0, 0]);
+
+    let edits = vec![
+        (2, 3, [0, 0, 0, 0], [255, 0, 0, 255]),
+        (18, 5, [0, 0, 0, 0], [0, 255, 0, 255]),
+    ];
+
+    let cmd = Command::PaintPixels {
+        animation_id: 0,
+        frame_id: 0,
+        layer_id: 0,
+        edits,
+    };
+
+    stack.push(cmd);
+    
+    project.animations[0].frames[0].layers[0].set_pixel(2, 3, [255, 0, 0, 255]);
+    project.animations[0].frames[1].layers[0].set_pixel(2, 5, [0, 255, 0, 255]);
+
+    stack.undo(&mut project);
+
+    assert_eq!(project.animations[0].frames[0].layers[0].get_pixel(2, 3), [0, 0, 0, 0]);
+    assert_eq!(project.animations[0].frames[1].layers[0].get_pixel(2, 5), [0, 0, 0, 0]);
+
+    stack.redo(&mut project);
+
+    assert_eq!(project.animations[0].frames[0].layers[0].get_pixel(2, 3), [255, 0, 0, 255]);
+    assert_eq!(project.animations[0].frames[1].layers[0].get_pixel(2, 5), [0, 255, 0, 255]);
+}

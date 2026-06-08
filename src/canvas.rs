@@ -98,10 +98,10 @@ impl CanvasState {
             return;
         }
         let factor = if scroll > 0.0 { 1.05f32 } else { 1.0 / 1.05 };
-        self.zoom = (self.zoom * factor).clamp(1.0, 64.0);
+        self.zoom_at_point(factor, pointer_pos.unwrap(), canvas_rect);
     }
 
-    /// Draw checkerboard background + canvas texture
+    /// Draw checkerboard background + canvas texture.
     pub fn draw(&self, painter: &Painter, canvas_rect: Rect, width: u32, height: u32, theme: &Theme) {
         let canvas_screen_rect = self.art_rect(canvas_rect, width, height);
         let clipped = painter.with_clip_rect(canvas_screen_rect);

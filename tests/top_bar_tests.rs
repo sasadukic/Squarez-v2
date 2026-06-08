@@ -6,7 +6,7 @@ use squarez::top_bar::{
 #[test]
 fn top_bar_uses_mockup_geometry_tokens() {
     assert_eq!(TOP_BAR_HEIGHT, 36.0);
-    assert_eq!(BRAND_WIDTH, 108.0);
+    assert_eq!(BRAND_WIDTH, 120.0);
     assert_eq!(MENU_HORIZONTAL_PADDING, 22.0);
     assert_eq!(MENU_FONT_SIZE, 11.0);
     assert_eq!(DROPDOWN_WIDTH, 184.0);

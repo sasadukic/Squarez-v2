@@ -6,6 +6,7 @@ pub enum Panel {
     Layers,
     Animations,
     Timeline,
+    Tiles,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -16,11 +17,13 @@ pub struct UiState {
     pub show_layers: bool,
     pub show_animations: bool,
     pub show_timeline: bool,
+    pub show_tiles: bool,
     pub collapse_color: bool,
     pub collapse_palette: bool,
     pub collapse_preview: bool,
     pub collapse_layers: bool,
     pub collapse_animations: bool,
+    pub collapse_tiles: bool,
 }
 
 impl Default for UiState {
@@ -32,11 +35,13 @@ impl Default for UiState {
             show_layers: true,
             show_animations: true,
             show_timeline: true,
+            show_tiles: true,
             collapse_color: false,
             collapse_palette: false,
             collapse_preview: false,
             collapse_layers: false,
             collapse_animations: false,
+            collapse_tiles: false,
         }
     }
 }
@@ -50,6 +55,7 @@ impl UiState {
             Panel::Layers => self.show_layers,
             Panel::Animations => self.show_animations,
             Panel::Timeline => self.show_timeline,
+            Panel::Tiles => self.show_tiles,
         }
     }
 
@@ -61,6 +67,7 @@ impl UiState {
             Panel::Layers => self.collapse_layers,
             Panel::Animations => self.collapse_animations,
             Panel::Timeline => false,
+            Panel::Tiles => self.collapse_tiles,
         }
     }
 
@@ -87,6 +94,7 @@ impl UiState {
             Panel::Layers => &mut self.show_layers,
             Panel::Animations => &mut self.show_animations,
             Panel::Timeline => &mut self.show_timeline,
+            Panel::Tiles => &mut self.show_tiles,
         }
     }
 
@@ -98,6 +106,7 @@ impl UiState {
             Panel::Layers => &mut self.collapse_layers,
             Panel::Animations => &mut self.collapse_animations,
             Panel::Timeline => panic!("timeline is hideable from the Windows menu but not collapsible"),
+            Panel::Tiles => &mut self.collapse_tiles,
         }
     }
 }

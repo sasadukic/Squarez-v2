@@ -65,6 +65,10 @@ impl LegacyProjectV1 {
             active_frame: self.active_frame,
             active_layer: self.active_layer,
             layer_id_counter: 1,
+            tiles_w: 1,
+            tiles_h: 1,
+            tile_w: 0,
+            tile_h: 0,
         }
     }
 }
@@ -82,6 +86,9 @@ impl LegacyAnimationV1 {
             name: self.name,
             fps: self.fps,
             frames: self.frames.into_iter().map(LegacyFrameV1::into_frame).collect(),
+            tile_start: 0,
+            tile_end: 0,
+            tile_visible: true,
         }
     }
 }

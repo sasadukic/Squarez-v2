@@ -51,6 +51,14 @@ pub struct ProjectMeta {
     pub active_frame: usize,
     pub active_layer: usize,
     pub layer_id_counter: u64,
+    #[serde(default)]
+    pub tiles_w: u32,
+    #[serde(default)]
+    pub tiles_h: u32,
+    #[serde(default)]
+    pub tile_w: u32,
+    #[serde(default)]
+    pub tile_h: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,6 +67,12 @@ pub struct AnimMeta {
     pub fps: u8,
     pub frame_count: usize,
     pub layers_order: Vec<u64>,
+    #[serde(default)]
+    pub tile_start: usize,
+    #[serde(default)]
+    pub tile_end: usize,
+    #[serde(default = "super::super::project::true_default")]
+    pub tile_visible: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,6 +152,10 @@ pub fn prepare_entries(project: &Project, snapshots: &[UndoSnapshotV2], _work_di
         active_frame: project.active_frame,
         active_layer: project.active_layer,
         layer_id_counter: project.layer_id_counter,
+        tiles_w: project.tiles_w,
+        tiles_h: project.tiles_h,
+        tile_w: project.tile_w,
+        tile_h: project.tile_h,
     };
     let proj_bytes = serde_json::to_vec(&proj_meta)?;
     entries.push(PreparedEntry {
@@ -161,6 +179,9 @@ pub fn prepare_entries(project: &Project, snapshots: &[UndoSnapshotV2], _work_di
             fps: anim.fps,
             frame_count: anim.frames.len(),
             layers_order: layers_order.clone(),
+            tile_start: anim.tile_start,
+            tile_end: anim.tile_end,
+            tile_visible: anim.tile_visible,
         };
         let anim_bytes = serde_json::to_vec(&anim_meta)?;
         entries.push(PreparedEntry {
@@ -481,6 +502,9 @@ pub fn load_v2(path: &Path) -> Result<Project, LoadError> {
             name: anim_meta.name,
             fps: anim_meta.fps,
             frames,
+            tile_start: anim_meta.tile_start,
+            tile_end: anim_meta.tile_end,
+            tile_visible: anim_meta.tile_visible,
         });
     }
 
@@ -495,6 +519,10 @@ pub fn load_v2(path: &Path) -> Result<Project, LoadError> {
         active_frame: proj_meta.active_frame,
         active_layer: proj_meta.active_layer,
         layer_id_counter: proj_meta.layer_id_counter.max(1),
+        tiles_w: proj_meta.tiles_w,
+        tiles_h: proj_meta.tiles_h,
+        tile_w: proj_meta.tile_w,
+        tile_h: proj_meta.tile_h,
     })
 }
 

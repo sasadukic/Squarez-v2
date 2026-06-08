@@ -126,6 +126,10 @@ pub struct App {
     sidebar_icon_rects: Vec<(Panel, egui::Rect)>,
     /// Static icon texture. Loaded once on first draw.
     logo_sprite: Option<egui::TextureHandle>,
+    /// Track the timeline visible state from the previous frame to trigger auto zoom-to-fit
+    last_timeline_visible: bool,
+    /// Accordion-style layout animation transition progress [0..1] when playback is active
+    play_anim_t: f32,
 }
 
 #[allow(dead_code)]
@@ -288,6 +292,8 @@ impl App {
             sidebar_press_start: None,
             sidebar_icon_rects: Vec::new(),
             logo_sprite: None,
+            last_timeline_visible: true,
+            play_anim_t: 0.0,
         }
     }
 
@@ -313,7 +319,7 @@ impl App {
             new
         }).collect();
         let frame = ProjectFrame { duration_ms: 0, layers, dirty: true };
-        Animation { name, fps: 12, frames: vec![frame] }
+        Animation { name, fps: 12, frames: vec![frame], tile_start: 0, tile_end: 0, tile_visible: true }
     }
 
     fn active_tool_index(&self) -> usize {
@@ -1121,8 +1127,9 @@ impl App {
                                     Panel::Color      => self.draw_color_picker(ui),
                                     Panel::Layers     => self.draw_layers_section(ui),
                                     Panel::Animations => self.draw_animations_section(ui),
-                                    Panel::Preview    => self.draw_preview_section(ui),
+                                    Panel::Preview    => {},
                                     Panel::Timeline   => {},
+                                    Panel::Tiles      => {},
                                 }
                             }
 
@@ -2363,35 +2370,93 @@ impl App {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 10.0;
                         let frame_count = self.project.active_anim().frames.len();
+                        let mut frame_rects: Vec<egui::Rect> = Vec::with_capacity(frame_count);
                         for i in 0..frame_count {
                             let selected = self.project.active_frame == i;
-                            let fill = if selected { self.theme.accent } else { self.theme.panel };
-                            let response = ui.add(
+                            
+                            // Normal spacing is 84px + 10px item spacing = 94px.
+                            // Shift other frames to the left toward frame 0.
+                            let mut rect = egui::Rect::from_min_size(
+                                ui.next_widget_position(),
+                                Vec2::splat(84.0),
+                            );
+                            if i > 0 {
+                                let shift = i as f32 * 94.0 * self.play_anim_t;
+                                rect = rect.translate(Vec2::new(-shift, 0.0));
+                            }
+                            frame_rects.push(rect);
+                            
+                            let alpha = if i == 0 {
+                                255
+                            } else {
+                                ((1.0 - self.play_anim_t) * 255.0) as u8
+                            };
+                            
+                            let fill_base = if selected { self.theme.accent } else { self.theme.panel };
+                            let fill = Color32::from_rgba_unmultiplied(fill_base.r(), fill_base.g(), fill_base.b(), alpha);
+                            
+                            let response = ui.put(
+                                rect,
                                 egui::Button::new(self.label_muted(""))
                                     .fill(fill)
                                     .stroke(egui::Stroke::NONE)
-                                    .min_size(Vec2::splat(84.0)),
                             );
-                            if response.clicked() {
+                            
+                            if i == 0 && self.playback.is_playing {
+                                let ai = self.project.active_animation;
+                                let fi = self.project.active_frame;
+                                if ai < self.thumbnails.len() && fi < self.thumbnails[ai].len() {
+                                    if let Some(ref handle) = self.thumbnails[ai][fi].handle {
+                                        ui.painter().image(
+                                            handle.id(),
+                                            rect.shrink(4.0),
+                                            egui::Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                                            Color32::WHITE,
+                                        );
+                                    }
+                                }
+                            }
+                            
+                            if response.clicked() && alpha > 0 {
                                 self.project.active_frame = i;
                                 self.canvas_dirty = true;
                             }
-                            if response.secondary_clicked() {
+                            if response.secondary_clicked() && alpha > 0 {
                                 self.project.active_frame = i;
                                 let menu_outer_w = 144.0;
                                 let menu_outer_h = 44.0;
-                                let x = response.rect.center().x - menu_outer_w / 2.0;
-                                let y = response.rect.top() - menu_outer_h - 4.0;
-                    let now = ui.ctx().input(|i| i.time);
+                                let x = rect.center().x - menu_outer_w / 2.0;
+                                let y = rect.top() - menu_outer_h - 4.0;
+                                let now = ui.ctx().input(|inp| inp.time);
                                 self.frame_menu = Some((i, Pos2::new(x, y), now));
                                 self.canvas_dirty = true;
                             }
+                            
+                            // Advance spacing manually because we used ui.put
+                            let spacing_offset = (84.0 + 10.0) * (1.0 - self.play_anim_t);
+                            let _ = ui.allocate_exact_size(Vec2::new(spacing_offset, 0.0), egui::Sense::hover());
                         }
-                        let (r, resp) = ui.allocate_exact_size(Vec2::splat(84.0), egui::Sense::click());
-                        let tint = if resp.hovered() { Color32::WHITE } else { self.theme.fg_desc };
-                        if resp.hovered() { ui.painter().rect_filled(r, 0.0, self.theme.accent); }
-                        ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, "+", FontId::new(22.0, FontFamily::Proportional), tint);
-                        if resp.clicked() { self.add_frame(); }
+                        
+                        let mut r = egui::Rect::from_min_size(
+                            ui.next_widget_position(),
+                            Vec2::splat(84.0),
+                        );
+                        if frame_count > 0 {
+                            let shift = frame_count as f32 * 94.0 * self.play_anim_t;
+                            r = r.translate(Vec2::new(-shift, 0.0));
+                        }
+                        let alpha = ((1.0 - self.play_anim_t) * 255.0) as u8;
+                        let tint = Color32::from_rgba_unmultiplied(self.theme.fg_desc.r(), self.theme.fg_desc.g(), self.theme.fg_desc.b(), alpha);
+                        let btn_bg = Color32::from_rgba_unmultiplied(self.theme.accent.r(), self.theme.accent.g(), self.theme.accent.b(), alpha);
+                        
+                        let resp = ui.put(r, egui::Button::new("").fill(Color32::TRANSPARENT).stroke(egui::Stroke::NONE));
+                        if alpha > 0 {
+                            if resp.hovered() { ui.painter().rect_filled(r, 0.0, btn_bg); }
+                            ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, "+", FontId::new(22.0, FontFamily::Proportional), tint);
+                            if resp.clicked() { self.add_frame(); }
+                        }
+                        let spacing_offset = (84.0 + 10.0) * (1.0 - self.play_anim_t);
+                        let _ = ui.allocate_exact_size(Vec2::new(spacing_offset, 0.0), egui::Sense::hover());
                     });
                 });
             });
@@ -3611,7 +3676,7 @@ impl eframe::App for App {
 
         let fps = self.project.active_anim().fps;
         let total = self.project.active_anim().frames.len();
-        if self.playback.tick(fps, &mut self.project.active_frame, total) {
+        if self.playback.tick(fps, &mut self.project.active_frame, total, 0, total) {
             self.canvas_dirty = true;
         }
 
@@ -3668,6 +3733,18 @@ impl eframe::App for App {
         self.draw_workspace(ctx);
         self.draw_layer_context_menu(ctx);
         self.draw_new_project_dialog(ctx);
+
+        let dt = ctx.input(|i| i.unstable_dt).min(0.05);
+        let target_t = if self.playback.is_playing { 1.0 } else { 0.0 };
+        let speed = 8.0; // quick transition
+        if (self.play_anim_t - target_t).abs() > 0.001 {
+            if self.play_anim_t < target_t {
+                self.play_anim_t = (self.play_anim_t + speed * dt).min(target_t);
+            } else {
+                self.play_anim_t = (self.play_anim_t - speed * dt).max(target_t);
+            }
+            ctx.request_repaint();
+        }
 
         if self.playback.is_playing {
             ctx.request_repaint();
@@ -3945,6 +4022,7 @@ fn panel_icon(panel: Panel) -> egui::ImageSource<'static> {
         Panel::Animations => egui::include_image!("../assets/icons/animation.svg"),
         Panel::Preview    => egui::include_image!("../assets/icons/visibility.svg"),
         Panel::Timeline   => egui::include_image!("../assets/icons/visibility.svg"),
+        Panel::Tiles      => egui::include_image!("../assets/icons/grid.svg"),
     }
 }
 

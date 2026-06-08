@@ -2,15 +2,26 @@
 #![windows_subsystem = "windows"]
 
 fn load_icon() -> egui::IconData {
-    let bytes = include_bytes!("../assets/logo.png");
+    let bytes = include_bytes!("../assets/icon.ico");
     let img = image::load_from_memory(bytes)
-        .expect("logo.png")
+        .expect("icon.ico")
         .into_rgba8();
     let (w, h) = img.dimensions();
     egui::IconData { rgba: img.into_raw(), width: w, height: h }
 }
 
 fn main() -> eframe::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::io::AsRawFd;
+        let null = std::fs::File::open("/dev/null").unwrap();
+        let fd = null.as_raw_fd();
+        unsafe {
+            libc::dup2(fd, 0);
+            libc::dup2(fd, 1);
+            libc::dup2(fd, 2);
+        }
+    }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Squarez")

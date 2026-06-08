@@ -17,11 +17,19 @@ impl Default for PlaybackState {
 
 impl PlaybackState {
     /// Returns true and advances frame if enough time has elapsed.
-    pub fn tick(&mut self, fps: u8, current_frame: &mut usize, total_frames: usize) -> bool {
-        if !self.is_playing || total_frames == 0 { return false; }
+    /// Plays within `clip_start .. clip_start + clip_len` range.
+    pub fn tick(&mut self, fps: u8, current_frame: &mut usize, total_frames: usize, clip_start: usize, clip_len: usize) -> bool {
+        if !self.is_playing || total_frames == 0 || clip_len == 0 { return false; }
         let interval = std::time::Duration::from_secs_f32(1.0 / fps.max(1) as f32);
         if self.last_tick.elapsed() >= interval {
-            *current_frame = (*current_frame + 1) % total_frames;
+            let end = clip_start + clip_len - 1;
+            if *current_frame < clip_start || *current_frame > end {
+                *current_frame = clip_start;
+            } else if *current_frame >= end {
+                *current_frame = clip_start;
+            } else {
+                *current_frame += 1;
+            }
             self.last_tick = Instant::now();
             return true;
         }
@@ -52,7 +60,7 @@ mod tests {
     fn playback_does_not_advance_when_paused() {
         let mut state = PlaybackState::default();
         let mut frame = 0usize;
-        let advanced = state.tick(12, &mut frame, 5);
+        let advanced = state.tick(12, &mut frame, 5, 0, 5);
         assert!(!advanced);
         assert_eq!(frame, 0);
     }
@@ -64,7 +72,24 @@ mod tests {
             last_tick: Instant::now() - std::time::Duration::from_secs(1),
         };
         let mut frame = 4usize;
-        state.tick(12, &mut frame, 5);
+        state.tick(12, &mut frame, 5, 0, 5);
         assert_eq!(frame, 0);
+    }
+
+    #[test]
+    fn playback_respects_clip_range() {
+        let mut state = PlaybackState {
+            is_playing: true,
+            last_tick: Instant::now() - std::time::Duration::from_secs(1),
+        };
+        let mut frame = 2usize;
+        state.tick(12, &mut frame, 5, 2, 3); // clip 2..=4
+        assert_eq!(frame, 3);
+        state.last_tick = Instant::now() - std::time::Duration::from_secs(1);
+        state.tick(12, &mut frame, 5, 2, 3);
+        assert_eq!(frame, 4);
+        state.last_tick = Instant::now() - std::time::Duration::from_secs(1);
+        state.tick(12, &mut frame, 5, 2, 3);
+        assert_eq!(frame, 2); // wraps back to clip_start
     }
 }

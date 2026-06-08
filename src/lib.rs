@@ -1,6 +1,10 @@
 // src/lib.rs
 pub mod app;
 pub mod project;
+pub mod ramp_lab;
+pub mod palette_browser;
+pub mod tile_browser;
+pub mod wang_blob;
 pub mod theme;
 pub mod canvas;
 pub mod history;
@@ -12,3 +16,4 @@ pub mod io;
 pub mod ui_state;
 pub mod top_bar;
 pub mod ui_metrics;
+pub mod ui_widgets;

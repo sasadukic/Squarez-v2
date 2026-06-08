@@ -1398,6 +1398,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gif"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee8cfcc411d9adbbaba82fb72661cc1bcca13e8bba98b364e62b2dba8f960159"
+dependencies = [
+ "color_quant",
+ "weezl",
+]
+
+[[package]]
 name = "gl_generator"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1692,6 +1702,8 @@ checksum = "85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104"
 dependencies = [
  "bytemuck",
  "byteorder-lite",
+ "color_quant",
+ "gif 0.14.2",
  "moxcms",
  "num-traits",
  "png 0.18.1",
@@ -3246,13 +3258,15 @@ dependencies = [
 name = "squarez"
 version = "0.1.0"
 dependencies = [
+ "arboard",
  "bincode",
  "eframe",
  "egui",
  "egui_extras",
- "gif",
+ "gif 0.13.3",
  "hex",
  "image",
+ "libc",
  "lz4_flex",
  "palette",
  "rfd",

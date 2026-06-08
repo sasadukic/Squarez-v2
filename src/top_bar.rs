@@ -1,5 +1,5 @@
 pub const TOP_BAR_HEIGHT: f32 = 36.0;
-pub const BRAND_WIDTH: f32 = 108.0;
+pub const BRAND_WIDTH: f32 = 120.0;
 pub const MENU_LEFT_GAP: f32 = 16.0; // padding between logo and first menu item
 pub const MENU_HORIZONTAL_PADDING: f32 = 22.0;
 pub const MENU_FONT_SIZE: f32 = 11.0;
