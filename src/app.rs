@@ -5280,21 +5280,21 @@ print("FAIL")
                         theme.fg,
                     );
 
-                    // Right: Close button ("X")
-                    let close_size = Vec2::splat(14.0);
-                    let close_rect = egui::Rect::from_center_size(
+                    // Right: Pin button (to dock it back)
+                    let pin_size = Vec2::splat(14.0);
+                    let pin_rect = egui::Rect::from_center_size(
                         egui::Pos2::new(rect.right() - 8.0, rect.center().y),
-                        close_size,
+                        pin_size,
                     );
-                    let close_resp = ui.interact(close_rect, ui.id().with("floating_preview_close"), egui::Sense::click());
-                    let close_tint = if close_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                    let pin_resp = ui.interact(pin_rect, ui.id().with("floating_preview_pin"), egui::Sense::click());
+                    let pin_tint = if pin_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
                     ui.put(
-                        close_rect,
-                        egui::Image::new(egui::include_image!("../assets/icons/close.svg"))
-                            .tint(close_tint)
-                            .fit_to_exact_size(close_size),
+                        pin_rect,
+                        egui::Image::new(egui::include_image!("../assets/icons/pin.svg"))
+                            .tint(pin_tint)
+                            .fit_to_exact_size(pin_size),
                     );
-                    if close_resp.clicked() {
+                    if pin_resp.clicked() {
                         put_back = true;
                     }
                 });
