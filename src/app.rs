@@ -1291,25 +1291,24 @@ impl App {
                     Pos2::new(tab_rect.left() + pad_left + text_w, tab_rect.bottom() - 4.0),
                 );
                 let buf = &mut self.renaming_tab.as_mut().unwrap().1;
-                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(text_rect), |ui| {
-                    let text_resp = ui.add(
-                        egui::TextEdit::singleline(buf)
-                            .frame(false)
-                            .text_color(theme.fg)
-                            .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
-                            .desired_width(text_w)
-                    );
-                    text_resp.request_focus();
-                    if text_resp.lost_focus() {
-                        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                            rename_cancelled = true;
-                        } else {
-                            rename_finished = Some((i, buf.clone()));
-                        }
-                    } else if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                let text_resp = ui.put(
+                    text_rect,
+                    egui::TextEdit::singleline(buf)
+                        .frame(false)
+                        .text_color(theme.fg)
+                        .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
+                        .desired_width(text_w)
+                );
+                text_resp.request_focus();
+                if text_resp.lost_focus() {
+                    if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                        rename_cancelled = true;
+                    } else {
                         rename_finished = Some((i, buf.clone()));
                     }
-                });
+                } else if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    rename_finished = Some((i, buf.clone()));
+                }
             } else {
                 // Tab label text
                 let text_color = if selected { theme.fg } else { theme.fg_desc };
