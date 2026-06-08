@@ -229,6 +229,8 @@ pub struct App {
     pub onion_skinning: bool,
     /// Cached left-edge x of the right sidebar content area (set each frame in draw_right_sidebar).
     sidebar_left_x: f32,
+    /// Floating state of the preview window
+    preview_popped_out: bool,
 }
 
 #[allow(dead_code)]
@@ -445,6 +447,7 @@ impl App {
             wang_blob: crate::wang_blob::WangBlobState::default(),
             onion_skinning: false,
             sidebar_left_x: 0.0,
+            preview_popped_out: false,
         }
     }
 
@@ -2028,6 +2031,8 @@ impl App {
         let any_visible = sidebar_order.iter().any(|&p| {
             if p == Panel::Tiles && !self.project.is_tiled() {
                 false
+            } else if p == Panel::Preview && self.preview_popped_out {
+                false
             } else {
                 self.ui_state.is_visible(p)
             }
@@ -2073,7 +2078,7 @@ impl App {
                             if panel == Panel::Tiles && !self.project.is_tiled() {
                                 continue;
                             }
-                            if !self.ui_state.is_visible(panel) {
+                            if !self.ui_state.is_visible(panel) || (panel == Panel::Preview && self.preview_popped_out) {
                                 continue;
                             }
 
@@ -5107,6 +5112,46 @@ print("FAIL")
         });
     }
 
+    fn draw_preview_content(&mut self, ui: &mut egui::Ui) {
+        let (pixels, pw_size, ph_size) = if self.project.is_tiled() {
+            let tile_w = self.project.tile_w;
+            let tile_h = self.project.tile_h;
+            let cw = self.project.canvas_width;
+            (crate::layers::composite_frame_tile(
+                self.project.active_frame_ref(),
+                cw,
+                tile_w,
+                tile_h,
+            ), tile_w, tile_h)
+        } else {
+            (self.composite_active_frame(), self.project.canvas_width, self.project.canvas_height)
+        };
+        let tex = ui.ctx().load_texture(
+            "preview_content",
+            egui::ColorImage::from_rgba_unmultiplied(
+                [pw_size as usize, ph_size as usize],
+                &pixels,
+            ),
+            egui::TextureOptions::NEAREST,
+        );
+        let avail = ui.available_width();
+        let cw = pw_size as f32;
+        let ch = ph_size as f32;
+        let aspect = cw / ch;
+        let (pw, ph) = if aspect >= 1.0 {
+            (avail, avail / aspect)
+        } else {
+            (avail * aspect, avail)
+        };
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(pw, ph), egui::Sense::hover());
+        ui.painter().image(
+            tex.id(),
+            rect,
+            egui::Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+    }
+
     fn draw_preview_section(&mut self, ui: &mut egui::Ui) {
         if !self.ui_state.is_visible(Panel::Preview) { return; }
 
@@ -5127,49 +5172,33 @@ print("FAIL")
             if icon_resp.clicked() {
                 self.ui_state.toggle_collapsed(Panel::Preview);
             }
+
+            // Draw pin icon on the right side if the sidebar is not collapsed
+            if rect.width() > 50.0 {
+                let pin_size = Vec2::splat(14.0);
+                let pin_rect = egui::Rect::from_center_size(
+                    egui::Pos2::new(rect.right() - 8.0, rect.center().y),
+                    pin_size,
+                );
+                let pin_resp = ui.interact(pin_rect, egui::Id::new("hdr_pin_preview"), egui::Sense::click());
+                let pin_tint = if pin_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                ui.put(
+                    pin_rect,
+                    egui::Image::new(egui::include_image!("../assets/icons/pin.svg"))
+                        .tint(pin_tint)
+                        .fit_to_exact_size(pin_size),
+                );
+                if pin_resp.clicked() {
+                    self.preview_popped_out = true;
+                }
+            }
         });
 
         if collapsed { return; }
 
-        let (pixels, pw_size, ph_size) = if self.project.is_tiled() {
-            let tile_w = self.project.tile_w;
-            let tile_h = self.project.tile_h;
-            let cw = self.project.canvas_width;
-            (crate::layers::composite_frame_tile(
-                self.project.active_frame_ref(),
-                cw,
-                tile_w,
-                tile_h,
-            ), tile_w, tile_h)
-        } else {
-            (self.composite_active_frame(), self.project.canvas_width, self.project.canvas_height)
-        };
-        let tex = ui.ctx().load_texture(
-            "preview_sidebar",
-            egui::ColorImage::from_rgba_unmultiplied(
-                [pw_size as usize, ph_size as usize],
-                &pixels,
-            ),
-            egui::TextureOptions::NEAREST,
-        );
         let theme = self.theme.clone();
         Frame::new().fill(theme.panel).inner_margin(Margin::symmetric(10, 8)).show(ui, |ui| {
-            let avail = ui.available_width();
-            let cw = pw_size as f32;
-            let ch = ph_size as f32;
-            let aspect = cw / ch;
-            let (pw, ph) = if aspect >= 1.0 {
-                (avail, avail / aspect)
-            } else {
-                (avail * aspect, avail)
-            };
-            let (rect, _) = ui.allocate_exact_size(Vec2::new(pw, ph), egui::Sense::hover());
-            ui.painter().image(
-                tex.id(),
-                rect,
-                egui::Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
-                egui::Color32::WHITE,
-            );
+            self.draw_preview_content(ui);
         });
     }
 
@@ -8111,6 +8140,7 @@ impl eframe::App for App {
         self.draw_new_project_dialog(ctx);
         self.draw_shortcuts_dialog(ctx);
         self.draw_ramp_lab(ctx);
+        self.draw_floating_preview(ctx);
         crate::palette_browser::draw_palette_browser(
             &mut self.palette_browser,
             ctx,
@@ -8124,6 +8154,44 @@ impl eframe::App for App {
 
         if self.playback.is_playing {
             ctx.request_repaint();
+        }
+    }
+
+    fn draw_floating_preview(&mut self, ctx: &egui::Context) {
+        if !self.preview_popped_out { return; }
+
+        let mut open = true;
+        let mut put_back = false;
+        let theme = self.theme.clone();
+
+        let win_resp = egui::Window::new("Preview")
+            .id(egui::Id::new("floating_preview_win"))
+            .open(&mut open)
+            .resizable(true)
+            .default_size(Vec2::new(176.0, 176.0))
+            .show(ctx, |ui| {
+                // Pin button at the top-right of the window content
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let pin_size = Vec2::splat(14.0);
+                    let pin_resp = ui.add(
+                        egui::ImageButton::new(
+                            egui::Image::new(egui::include_image!("../assets/icons/pin.svg"))
+                                .tint(theme.fg_desc)
+                                .fit_to_exact_size(pin_size)
+                        )
+                        .frame(false)
+                    );
+                    if pin_resp.clicked() {
+                        put_back = true;
+                    }
+                });
+
+                // Content
+                self.draw_preview_content(ui);
+            });
+
+        if !open || put_back {
+            self.preview_popped_out = false;
         }
     }
 }
