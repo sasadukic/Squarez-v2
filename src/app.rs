@@ -5214,7 +5214,6 @@ print("FAIL")
             .open(&mut open)
             .resizable(true)
             .default_width(176.0)
-            .auto_shrink([false, true])
             .show(ctx, |ui| {
                 // Pin button at the top-right of the window content
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
