@@ -1297,6 +1297,7 @@ impl App {
                             .frame(false)
                             .text_color(theme.fg)
                             .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
+                            .desired_width(text_w)
                     );
                     text_resp.request_focus();
                     if text_resp.lost_focus() {
