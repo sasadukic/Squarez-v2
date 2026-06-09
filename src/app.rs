@@ -6185,7 +6185,7 @@ print("FAIL")
                         self.lift_mask_to_float();
                         self.select_state.interaction = SelectInteraction::Moving;
                         let latest = response.ctx.input(|i| i.pointer.latest_pos()).unwrap_or(pos);
-                        let (cx, cy) = self.canvas.screen_to_canvas_f32(latest, canvas_rect, w as f32, h as f32);
+                        let (cx, cy) = self.canvas.screen_to_canvas_f32(latest, canvas_rect, w, h);
                         self.select_state.drag_anchor = Some(crate::tools::DragAnchor {
                             mouse_x: cx,
                             mouse_y: cy,
