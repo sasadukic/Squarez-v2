@@ -6066,7 +6066,7 @@ print("FAIL")
             self.mirror_x_sequence.clear();
             self.mirror_y_sequence.clear();
             self.mirror_xy_sequence.clear();
-            // RectSelect: lift selected pixels into a floating buffer.
+            // RectSelect / MagicWand: lift selected pixels into a floating buffer.
             if matches!(self.active_tool, ActiveTool::RectSelect) {
                 if let Some(rect) = self.select_state.rect {
                     if rect.2 > 0 && rect.3 > 0 {
@@ -6074,6 +6074,10 @@ print("FAIL")
                     } else {
                         self.select_state.clear();
                     }
+                }
+            } else if matches!(self.active_tool, ActiveTool::MagicWand) {
+                if self.select_state.mask.is_some() {
+                    self.lift_mask_to_float();
                 }
             }
             self.drag_start = None;
