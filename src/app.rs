@@ -7682,37 +7682,40 @@ print("FAIL")
                         spread: 0,
                         color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
                     })
-                    .inner_margin(Margin::symmetric(8, 8))
+                    .inner_margin(Margin { left: 8, right: 8, top: 0, bottom: 8 })
                     .show(ui, |ui| {
                         ui.set_width(200.0);
                         let row_w = 200.0;
 
-                        // ── Message ──
-                        let text_h = 18.0;
-                        let total_h = text_h + 6.0;
+                        // ── Header Title (with Divider Line) ──
+                        ui.add_space(8.0);
+                        let title_text_h = 18.0;
                         ui.allocate_ui_with_layout(
-                            Vec2::new(row_w, total_h),
+                            Vec2::new(row_w, title_text_h),
                             egui::Layout::top_down(egui::Align::Center),
                             |ui| {
-                                let (rect, _) = ui.allocate_exact_size(Vec2::new(row_w, total_h), egui::Sense::hover());
-                                ui.painter().rect_filled(rect, 3.0, theme.bg);
+                                let (rect, _) = ui.allocate_exact_size(Vec2::new(row_w, title_text_h), egui::Sense::hover());
                                 let text_w = (row_w - 12.0) * 0.9;
                                 let te_h = FONT_SIZE_SM + 6.0;
                                 let text_rect = egui::Rect::from_center_size(
-                                    egui::Pos2::new(rect.center().x, rect.center().y + 1.0),
+                                    egui::Pos2::new(rect.center().x, rect.center().y),
                                     Vec2::new(text_w, te_h),
                                 );
                                 ui.painter().text(
                                     text_rect.center(),
                                     egui::Align2::CENTER_CENTER,
                                     format!("Save changes to \"{}\"?", tab_name),
-                                    FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
+                                    FontId::new(FONT_SIZE_SM, FontFamily::Name("bold".into())),
                                     theme.fg,
                                 );
+                                let line_y = rect.bottom() + 4.0;
+                                let p1 = egui::Pos2::new(rect.left(), line_y);
+                                let p2 = egui::Pos2::new(rect.right(), line_y);
+                                ui.painter().line_segment([p1, p2], egui::Stroke::new(1.0, theme.border));
                             },
                         );
 
-                        ui.add_space(8.0);
+                        ui.add_space(12.0);
 
                         // ── Buttons ──
                         let btn_h = 19.0;
