@@ -6179,8 +6179,8 @@ print("FAIL")
             };
             self.drag_start = Some(start);
 
-            // If we have a selection mask and the user clicked inside it, lift it to float!
-            if is_select_tool && !self.select_state.has_float() {
+            // If we have a selection mask and the user dragged inside it, lift it to float!
+            if is_select_tool && !self.select_state.has_float() && response.drag_started() {
                 if let Some(ref mask) = self.select_state.mask {
                     if mask.get(px, py) {
                         self.lift_mask_to_float();
