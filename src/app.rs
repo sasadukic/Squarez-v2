@@ -6221,7 +6221,6 @@ print("FAIL")
                         new_mask
                     };
                     self.select_state.mask = Some(combined);
-                    self.drag_start = None; // disable marquee drag
                     self.canvas_dirty = true;
                 }
             }
@@ -6805,7 +6804,7 @@ print("FAIL")
     /// Returns true if the event was consumed (caller should skip normal input).
     fn handle_selection_transform(&mut self, response: &egui::Response, canvas_rect: egui::Rect) -> bool {
         if !self.select_state.has_float() { return false; }
-        if !matches!(self.active_tool, ActiveTool::RectSelect) { return false; }
+        if !matches!(self.active_tool, ActiveTool::RectSelect | ActiveTool::MagicWand) { return false; }
 
         let primary_down = response.ctx.input(|i| i.pointer.primary_down());
         let shift_held = response.ctx.input(|i| i.modifiers.shift);
