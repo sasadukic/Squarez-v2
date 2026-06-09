@@ -9,7 +9,7 @@ pub use pencil::{apply_pencil, apply_eraser, bresenham_line, bresenham_positions
 pub use fill::{apply_fill, fill_enclosed_region};
 pub use eyedropper::apply_eyedropper;
 pub use shapes::{apply_rect, apply_ellipse, apply_line, iso_box_preview, iso_box_pixels, iso_cylinder_preview, iso_cylinder_pixels};
-pub use select::{SelectState, SelectInteraction, Handle, FloatBuffer, DragAnchor, sample_transformed};
+pub use select::{SelectState, SelectInteraction, Handle, FloatBuffer, DragAnchor, sample_transformed, SelectionMask, SelectionMode, magic_wand_select};
 
 use crate::project::Rgba;
 
@@ -25,6 +25,7 @@ pub enum ActiveTool {
     Ellipse   { filled: bool },
     Line,
     RectSelect,
+    MagicWand,
     Move,
     Zoom,
 }
@@ -35,3 +36,4 @@ pub struct ToolInput {
     pub canvas_y: u32,
     pub color: Rgba,
 }
+

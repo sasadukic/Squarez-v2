@@ -79,6 +79,8 @@ pub struct App {
     stroke_pixel_sequence: Vec<(u32, u32)>,
     canvas_dirty: bool,
     show_new_dialog: bool,
+    /// True from app launch until the first project is created/loaded. Hides all canvas UI.
+    startup_blank: bool,
     show_shortcuts_window: bool,
     replace_project_pending: bool, // replace project in-place instead of new tab
     new_width: u32,
@@ -169,7 +171,6 @@ pub struct App {
     renaming_animation: Option<(usize, String)>,
     // Inline rename state for tabs: (tab_index, current_edit_string)
     renaming_tab: Option<(usize, String)>,
-    renaming_tab_focused: bool,
     // Palette drag-and-drop reorder
     palette_drag_idx: Option<usize>,
     // Spring-animated selection highlight for layers panel
@@ -230,12 +231,6 @@ pub struct App {
     pub onion_skinning: bool,
     /// Cached left-edge x of the right sidebar content area (set each frame in draw_right_sidebar).
     sidebar_left_x: f32,
-    /// Floating state of the preview window
-    preview_popped_out: bool,
-    /// Width of the floating preview window (from previous frame)
-    preview_window_width: f32,
-    /// Track if any menu was open at the start of the current frame
-    menu_was_open_at_frame_start: bool,
 }
 
 #[allow(dead_code)]
@@ -319,7 +314,16 @@ impl App {
             playback: PlaybackState::default(),
             thumbnails,
             current_path: None,
-            ui_state: layout.as_ref().map(|l| l.ui_state.clone()).unwrap_or_default(),
+            ui_state: {
+                let mut state = layout.as_ref().map(|l| l.ui_state.clone()).unwrap_or_default();
+                state.collapse_color = true;
+                state.collapse_palette = true;
+                state.collapse_preview = true;
+                state.collapse_layers = true;
+                state.collapse_animations = true;
+                state.collapse_tiles = true;
+                state
+            },
             other_tabs: Vec::new(),
             active_tab_idx: 0,
             active_modified: false,
@@ -330,9 +334,10 @@ impl App {
             stroke_painted: std::collections::HashSet::new(),
             stroke_pixel_sequence: Vec::new(),
             canvas_dirty: true,
-            show_new_dialog: false,
+            show_new_dialog: true,
             show_shortcuts_window: false,
-            replace_project_pending: false,
+            replace_project_pending: true,
+            startup_blank: true,
             new_width: 16,
             new_height: 16,
             new_width_str: "16".to_string(),
@@ -410,7 +415,6 @@ impl App {
             renaming_layer: None,
             renaming_animation: None,
             renaming_tab: None,
-            renaming_tab_focused: false,
             palette_drag_idx: None,
             layer_sel_y: 0.0,
             layer_sel_vel: 0.0,
@@ -453,9 +457,6 @@ impl App {
             wang_blob: crate::wang_blob::WangBlobState::default(),
             onion_skinning: false,
             sidebar_left_x: 0.0,
-            preview_popped_out: false,
-            preview_window_width: 176.0,
-            menu_was_open_at_frame_start: false,
         }
     }
 
@@ -559,14 +560,21 @@ impl App {
         self.other_tabs.len() + 1
     }
 
+    /// Display name for tab at logical index `i`.
     fn tab_display_name(&self, i: usize) -> String {
-        let (name, modified) = if i == self.active_tab_idx {
-            (self.project.name.as_str(), self.active_modified)
+        let (path, name, modified) = if i == self.active_tab_idx {
+            (self.current_path.as_ref(), self.project.name.as_str(), self.active_modified)
         } else {
             let slot = self.other_tabs_slot(i);
-            (self.other_tabs[slot].project.name.as_str(), self.other_tabs[slot].modified)
+            let t = &self.other_tabs[slot];
+            (t.current_path.as_ref(), t.project.name.as_str(), t.modified)
         };
-        if modified { format!("*{name}") } else { name.to_string() }
+        let base = path
+            .and_then(|p| p.file_stem())
+            .and_then(|s| s.to_str())
+            .unwrap_or(name)
+            .to_string();
+        if modified { format!("*{base}") } else { base }
     }
 
     /// Convert logical index → other_tabs Vec index (panics on active tab).
@@ -614,21 +622,6 @@ impl App {
             || self.tab_resize_menu.is_some()
     }
 
-    fn any_menu_open(&self) -> bool {
-        self.top_menu_open.is_some()
-            || self.export_menu_open.is_some()
-            || self.frame_menu.is_some()
-            || self.layer_ctx_menu.is_some()
-            || self.anim_tile_menu.is_some()
-            || self.tab_resize_menu.is_some()
-            || self.canvas_ctx_menu.is_some()
-            || self.open_tool_submenu.is_some()
-            || self.palette_browser.open
-            || self.tile_browser.open
-            || self.any_modal_open()
-            || self.show_shortcuts_window
-    }
-
     fn open_new_dialog(&mut self, replace_pending: bool) {
         if self.any_modal_open() { return; }
         self.replace_project_pending = replace_pending;
@@ -649,12 +642,7 @@ impl App {
     }
 
     /// Open `project` / `path` in a new tab to the right of the current active tab.
-    fn open_in_new_tab(&mut self, mut project: Project, path: Option<std::path::PathBuf>) {
-        if let Some(ref p) = path {
-            if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
-                project.name = stem.to_string();
-            }
-        }
+    fn open_in_new_tab(&mut self, project: Project, path: Option<std::path::PathBuf>) {
         // Pack the currently active tab into other_tabs at active_tab_idx.
         let snap = InactiveTab {
             project: std::mem::replace(&mut self.project, project),
@@ -719,6 +707,8 @@ impl App {
                 self.ui_state.collapse_layers = true;
                 self.ui_state.collapse_animations = true;
                 self.ui_state.collapse_tiles = true;
+                // Return to blank startup state — hide canvas UI, show only the new dialog
+                self.startup_blank = true;
 
                 self.open_new_dialog(true);
             } else {
@@ -750,17 +740,11 @@ impl App {
         self.pending_zoom_fit = true;
     }
 
+    /// Save the active tab. Shows rfd Save As picker if no path. Returns true if saved.
     fn save_active_tab(&mut self) -> bool {
         if self.current_path.is_none() {
-            match rfd_save_as(&self.project.name) {
-                Some(p) => {
-                    self.current_path = Some(p);
-                    if let Some(ref path) = self.current_path {
-                        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                            self.project.name = stem.to_string();
-                        }
-                    }
-                }
+            match rfd_save_as() {
+                Some(p) => self.current_path = Some(p),
                 None => return false,
             }
         }
@@ -816,7 +800,7 @@ impl App {
             ActiveTool::Rectangle { .. }
             | ActiveTool::Ellipse { .. }
             | ActiveTool::Line                                => 2, // shape group
-            ActiveTool::RectSelect | ActiveTool::MagicWand | ActiveTool::Move => 3, // select group
+            ActiveTool::RectSelect | ActiveTool::Move         => 3, // select group
             ActiveTool::Zoom                                  => 4,
         }
     }
@@ -826,7 +810,7 @@ impl App {
             0 => matches!(self.active_tool, ActiveTool::Pencil | ActiveTool::Eraser),
             1 => matches!(self.active_tool, ActiveTool::Fill | ActiveTool::Eyedropper),
             2 => matches!(self.active_tool, ActiveTool::Rectangle { .. } | ActiveTool::Ellipse { .. } | ActiveTool::Line),
-            3 => matches!(self.active_tool, ActiveTool::RectSelect | ActiveTool::MagicWand | ActiveTool::Move),
+            3 => matches!(self.active_tool, ActiveTool::RectSelect | ActiveTool::Move),
             _ => false,
         }
     }
@@ -841,8 +825,7 @@ impl App {
             ActiveTool::Rectangle { .. } => ActiveTool::Ellipse { filled: false },
             ActiveTool::Ellipse { .. } => ActiveTool::Line,
             ActiveTool::Line => ActiveTool::Rectangle { filled: false },
-            ActiveTool::RectSelect => ActiveTool::MagicWand,
-            ActiveTool::MagicWand => ActiveTool::RectSelect,
+            ActiveTool::RectSelect => ActiveTool::RectSelect,
             ActiveTool::Move => ActiveTool::RectSelect,
             _ => return,
         };
@@ -857,7 +840,7 @@ impl App {
             ActiveTool::Rectangle { .. } | ActiveTool::Ellipse { .. } | ActiveTool::Line => {
                 self.shape_group_current = t.clone();
             }
-            ActiveTool::RectSelect | ActiveTool::MagicWand | ActiveTool::Move => self.select_group_current = t.clone(),
+            ActiveTool::RectSelect | ActiveTool::Move => self.select_group_current = t.clone(),
             _ => {}
         }
         self.active_tool = t;
@@ -1075,14 +1058,7 @@ impl App {
 
         // ── Compute tab sizes before entering the Area ────────────────────
         let all_narrow = self.sidebar_order.iter().all(|&p| {
-            let visible_in_sidebar = if p == Panel::Tiles && !self.project.is_tiled() {
-                false
-            } else if p == Panel::Preview && self.preview_popped_out {
-                false
-            } else {
-                self.ui_state.is_visible(p)
-            };
-            !visible_in_sidebar || self.ui_state.is_collapsed(p)
+            !self.ui_state.is_visible(p) || self.ui_state.is_collapsed(p)
         });
         let sidebar_w     = if all_narrow { 38.0 } else { 176.0 };
         let max_tab_area_w = (screen_w - tabs_x - sidebar_w).max(0.0);
@@ -1273,43 +1249,39 @@ impl App {
             let bg = if selected { theme.surface } else if tab_resp.hovered() { theme.accent } else { theme.panel };
             ui.painter().rect_filled(tab_rect, 0.0, bg);
 
-            // × close button rect (right-aligned) - calculated first to compute text_w
+            // × close button (right-aligned)
             let close_rect = egui::Rect::from_min_size(
                 Pos2::new(tab_rect.right() - close_w - pad_right, tab_rect.center().y - close_w / 2.0),
                 Vec2::splat(close_w),
+            );
+            let close_resp = ui.interact(close_rect, ui.id().with(("tab_close", i)), egui::Sense::click());
+            let close_color = if close_resp.hovered() { theme.fg } else { theme.fg_muted };
+            ui.painter().text(
+                close_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "×",
+                FontId::new(FONT_SIZE_SM + 2.0, FontFamily::Proportional),
+                close_color,
             );
 
             let is_renaming = matches!(&self.renaming_tab, Some((idx, _)) if *idx == i);
 
             if is_renaming {
-                // Inline rename input box - centered vertically, with a fixed visual border + background
+                // Inline rename input box
                 let text_w = close_rect.left() - tab_rect.left() - pad_left - 4.0;
-                let text_h = 18.0;
-                let text_y = tab_rect.center().y - text_h / 2.0;
                 let text_rect = egui::Rect::from_min_max(
-                    Pos2::new(tab_rect.left() + pad_left, text_y),
-                    Pos2::new(tab_rect.left() + pad_left + text_w, text_y + text_h),
+                    Pos2::new(tab_rect.left() + pad_left, tab_rect.top() + 4.0),
+                    Pos2::new(tab_rect.left() + pad_left + text_w, tab_rect.bottom() - 4.0),
                 );
-                
-                // Draw fixed styling for the input box
-                ui.painter().rect_filled(text_rect, 2.0, theme.bg);
-                ui.painter().rect_stroke(text_rect, 2.0, egui::Stroke::new(1.0, theme.accent), egui::StrokeKind::Inside);
-
                 let buf = &mut self.renaming_tab.as_mut().unwrap().1;
                 ui.allocate_new_ui(egui::UiBuilder::new().max_rect(text_rect), |ui| {
-                    ui.set_clip_rect(text_rect);
                     let text_resp = ui.add(
                         egui::TextEdit::singleline(buf)
                             .frame(false)
-                            .margin(egui::Margin::symmetric(4, ((text_h - FONT_SIZE_SM) / 2.0) as i8))
                             .text_color(theme.fg)
                             .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
-                            .desired_width(text_w - 8.0)
                     );
-                    if !self.renaming_tab_focused {
-                        text_resp.request_focus();
-                        self.renaming_tab_focused = true;
-                    }
+                    text_resp.request_focus();
                     if text_resp.lost_focus() {
                         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                             rename_cancelled = true;
@@ -1341,24 +1313,11 @@ impl App {
                     FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
                     text_color,
                 );
-            }
 
-            // Draw and handle close button AFTER the text / text edit so it is always on top
-            let close_resp = ui.interact(close_rect, ui.id().with(("tab_close", i)), egui::Sense::click());
-            let close_color = if close_resp.hovered() { theme.fg } else { theme.fg_muted };
-            ui.painter().text(
-                close_rect.center(),
-                egui::Align2::CENTER_CENTER,
-                "×",
-                FontId::new(FONT_SIZE_SM + 2.0, FontFamily::Proportional),
-                close_color,
-            );
-
-            // Interactions
-            if !is_renaming && close_resp.clicked() {
-                *close_req = Some(i);
-            } else if !is_renaming {
-                if tab_resp.secondary_clicked() && !self.any_modal_open() && !self.menu_was_open_at_frame_start && !close_rect.contains(ui.ctx().input(|inp| inp.pointer.hover_pos().unwrap_or(Pos2::ZERO))) {
+                // Interactions
+                if close_resp.clicked() {
+                    *close_req = Some(i);
+                } else if tab_resp.secondary_clicked() && !self.any_modal_open() && !close_rect.contains(ui.ctx().input(|inp| inp.pointer.hover_pos().unwrap_or(Pos2::ZERO))) {
                     if i != active_idx {
                         *switch_to = Some(i);
                     }
@@ -1388,7 +1347,6 @@ impl App {
                                 self.other_tabs[slot].project.name.clone()
                             };
                             self.renaming_tab = Some((i, current_name));
-                            self.renaming_tab_focused = false;
                             self.last_tab_click = None;
                         } else {
                             *switch_to = Some(i);
@@ -1415,13 +1373,11 @@ impl App {
                 }
             }
             self.renaming_tab = None;
-            self.renaming_tab_focused = false;
             self.canvas_dirty = true;
         }
 
         if rename_cancelled {
             self.renaming_tab = None;
-            self.renaming_tab_focused = false;
         }
     }
 
@@ -1914,11 +1870,7 @@ impl App {
                 let pen_rect = pen_resp.rect;
                 if pen_resp.clicked() {
                     if self.is_group_selected(0) {
-                        if self.open_tool_submenu == Some(0) {
-                            self.open_tool_submenu = None;
-                        } else if !self.menu_was_open_at_frame_start {
-                            self.open_tool_submenu = Some(0);
-                        }
+                        self.open_tool_submenu = if self.open_tool_submenu == Some(0) { None } else { Some(0) };
                     } else {
                         self.active_tool = self.pen_group_current.clone();
                         self.open_tool_submenu = None;
@@ -1931,11 +1883,7 @@ impl App {
                 let bucket_rect = bucket_resp.rect;
                 if bucket_resp.clicked() {
                     if self.is_group_selected(1) {
-                        if self.open_tool_submenu == Some(1) {
-                            self.open_tool_submenu = None;
-                        } else if !self.menu_was_open_at_frame_start {
-                            self.open_tool_submenu = Some(1);
-                        }
+                        self.open_tool_submenu = if self.open_tool_submenu == Some(1) { None } else { Some(1) };
                     } else {
                         self.active_tool = self.bucket_group_current.clone();
                         self.open_tool_submenu = None;
@@ -1948,11 +1896,7 @@ impl App {
                 let shape_rect = shape_resp.rect;
                 if shape_resp.clicked() {
                     if self.is_group_selected(2) {
-                        if self.open_tool_submenu == Some(2) {
-                            self.open_tool_submenu = None;
-                        } else if !self.menu_was_open_at_frame_start {
-                            self.open_tool_submenu = Some(2);
-                        }
+                        self.open_tool_submenu = if self.open_tool_submenu == Some(2) { None } else { Some(2) };
                     } else {
                         self.active_tool = self.shape_group_current.clone();
                         self.open_tool_submenu = None;
@@ -1965,11 +1909,7 @@ impl App {
                 let select_rect = select_resp.rect;
                 if select_resp.clicked() {
                     if self.is_group_selected(3) {
-                        if self.open_tool_submenu == Some(3) {
-                            self.open_tool_submenu = None;
-                        } else if !self.menu_was_open_at_frame_start {
-                            self.open_tool_submenu = Some(3);
-                        }
+                        self.open_tool_submenu = if self.open_tool_submenu == Some(3) { None } else { Some(3) };
                     } else {
                         self.active_tool = self.select_group_current.clone();
                         self.open_tool_submenu = None;
@@ -2037,8 +1977,7 @@ impl App {
                 let Some(r) = self.select_slot_rect else { return; };
                 let cur = self.select_group_current.clone();
                 let others = match cur {
-                    ActiveTool::RectSelect => vec![ActiveTool::MagicWand],
-                    ActiveTool::MagicWand  => vec![ActiveTool::RectSelect],
+                    ActiveTool::RectSelect => vec![],
                     _                      => vec![ActiveTool::RectSelect],
                 };
                 (r, cur, others)
@@ -2097,35 +2036,12 @@ impl App {
         let _ = current; // silence unused if we don't need it elsewhere
     }
 
-        fn draw_right_sidebar(&mut self, ctx: &egui::Context) {
+    fn draw_right_sidebar(&mut self, ctx: &egui::Context) {
         let sidebar_order = self.sidebar_order.clone();
-
-        let any_visible = sidebar_order.iter().any(|&p| {
-            if p == Panel::Tiles && !self.project.is_tiled() {
-                false
-            } else if p == Panel::Preview && self.preview_popped_out {
-                false
-            } else {
-                self.ui_state.is_visible(p)
-            }
-        });
-
-        if !any_visible {
-            self.sidebar_left_x = ctx.screen_rect().right();
-            self.sidebar_icon_rects.clear();
-            return;
-        }
 
         // Narrow mode: every visible panel is collapsed (only icon rows visible)
         let all_narrow = sidebar_order.iter().all(|&p| {
-            let visible_in_sidebar = if p == Panel::Tiles && !self.project.is_tiled() {
-                false
-            } else if p == Panel::Preview && self.preview_popped_out {
-                false
-            } else {
-                self.ui_state.is_visible(p)
-            };
-            !visible_in_sidebar || self.ui_state.is_collapsed(p)
+            !self.ui_state.is_visible(p) || self.ui_state.is_collapsed(p)
         });
         let sidebar_w = if all_narrow { 38.0 } else { 176.0 };
 
@@ -2151,20 +2067,15 @@ impl App {
                         self.sidebar_left_x = sidebar_x;
                         let dragging = self.sidebar_drag;
 
-                        let mut first = true;
-                        for &panel in sidebar_order.iter() {
+                        for (i, &panel) in sidebar_order.iter().enumerate() {
                             // Tiles panel is only meaningful when the project has more than one tile.
                             if panel == Panel::Tiles && !self.project.is_tiled() {
                                 continue;
                             }
-                            if !self.ui_state.is_visible(panel) || (panel == Panel::Preview && self.preview_popped_out) {
-                                continue;
-                            }
 
-                            if !first {
+                            if i > 0 {
                                 ui.add_space(RIGHT_SECTION_STACK_GAP);
                             }
-                            first = false;
 
                             let y_before = ui.next_widget_position().y;
 
@@ -2186,7 +2097,7 @@ impl App {
                             }
                             if handle_resp.drag_started() {
                                 self.sidebar_drag = Some(panel);
-                                self.sidebar_drag_over_idx = self.sidebar_icon_rects.iter().position(|&(p, _)| p == panel);
+                                self.sidebar_drag_over_idx = Some(i);
                                 self.sidebar_press_start = None;
                             }
 
@@ -2253,13 +2164,7 @@ impl App {
         if primary_released {
             if let (Some(dragged), Some(drop_idx)) = (self.sidebar_drag.take(), self.sidebar_drag_over_idx.take()) {
                 if let Some(from_idx) = self.sidebar_order.iter().position(|&p| p == dragged) {
-                    let target_idx = if drop_idx < self.sidebar_icon_rects.len() {
-                        let target_panel = self.sidebar_icon_rects[drop_idx].0;
-                        self.sidebar_order.iter().position(|&p| p == target_panel).unwrap_or(self.sidebar_order.len())
-                    } else {
-                        self.sidebar_order.len()
-                    };
-                    let effective = if target_idx > from_idx { target_idx - 1 } else { target_idx };
+                    let effective = if drop_idx > from_idx { drop_idx - 1 } else { drop_idx };
                     let effective = effective.min(self.sidebar_order.len() - 1);
                     self.sidebar_order.remove(from_idx);
                     self.sidebar_order.insert(effective, dragged);
@@ -3253,7 +3158,7 @@ impl App {
                     // Secondary-click check BEFORE any widgets are placed in this row
                     let row_origin = ui.next_widget_position();
                     let row_rect = egui::Rect::from_min_size(row_origin, Vec2::new(list_width, ROW_H));
-                    if !self.menu_was_open_at_frame_start && ui.input(|i| {
+                    if ui.input(|i| {
                         i.pointer.secondary_clicked() &&
                         i.pointer.interact_pos().map(|p| row_rect.contains(p)).unwrap_or(false)
                     }) {
@@ -3593,7 +3498,7 @@ impl App {
                                     self.canvas_dirty = true;
                                 }
 
-                                if bg_resp.secondary_clicked() && self.project.is_tiled() && !self.menu_was_open_at_frame_start {
+                                if bg_resp.secondary_clicked() && self.project.is_tiled() {
                                     let now = ui.ctx().input(|inp| inp.time);
                                     let menu_pos = Pos2::new(self.sidebar_left_x, bg_resp.rect.center().y - 22.0);
                                     self.anim_tile_menu = Some((i, menu_pos, now));
@@ -3854,7 +3759,7 @@ impl App {
     }
 
     fn draw_timeline(&mut self, ctx: &egui::Context) {
-        if !self.ui_state.is_visible(Panel::Timeline) {
+        if !self.ui_state.is_visible(Panel::Timeline) || self.ui_state.collapse_animations {
             return;
         }
         let panel_resp = TopBottomPanel::bottom("timeline")
@@ -3980,7 +3885,7 @@ impl App {
                                 self.project.active_frame = idx;
                                 self.canvas_dirty = true;
                             }
-                            if response.secondary_clicked() && !self.menu_was_open_at_frame_start {
+                            if response.secondary_clicked() {
                                 self.project.active_frame = idx;
                                 let menu_outer_w = 144.0;
                                 let menu_outer_h = 44.0;
@@ -4249,10 +4154,8 @@ impl App {
         let controls_w = ctrl_w * 2.0 + pad;     // two controls + gap between them
         let content_w = label_w + pad + controls_w;
 
-        let is_select_tool = matches!(self.active_tool, ActiveTool::RectSelect | ActiveTool::MagicWand);
-        // 6 rows when Wang/Blob active, 4 otherwise. Plus 2 rows for selection tools.
-        let base_rows = if self.wang_blob.mode != WangBlobMode::None { 6 } else { 4 };
-        let num_rows = if is_select_tool { base_rows + 2 } else { base_rows };
+        // 6 rows when Wang/Blob active, 4 otherwise.
+        let num_rows = if self.wang_blob.mode != WangBlobMode::None { 6 } else { 4 };
         let content_h = btn_h * (num_rows as f32) + pad * ((num_rows - 1) as f32);
 
         let outcome = show_context_menu(
@@ -4440,49 +4343,6 @@ impl App {
                     let uni_fg = if uni_resp.hovered() || self.wang_blob.sync_mode == crate::wang_blob::SyncMode::Unidirectional { theme.fg } else { theme.fg_muted };
                     ui.painter().text(uni_rect.center(), egui::Align2::CENTER_CENTER, "Uni", FontId::new(10.0, FontFamily::Proportional), uni_fg);
                     if uni_resp.clicked() { self.wang_blob.sync_mode = crate::wang_blob::SyncMode::Unidirectional; }
-                }
-
-                // ── Rows for selection settings (Wand Mode & Connect) ──
-                if is_select_tool {
-                    let sel_row1_y = row3_y + btn_h + pad + btn_h + pad;
-                    let label_sel1 = egui::Rect::from_min_size(egui::Pos2::new(base.x, sel_row1_y), Vec2::new(label_w, btn_h));
-                    ui.painter().text(egui::Pos2::new(label_sel1.min.x + 4.0, label_sel1.center().y), egui::Align2::LEFT_CENTER, "Wand Mode", FontId::new(10.0, FontFamily::Proportional), theme.fg_desc);
-
-                    let mode_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, sel_row1_y), Vec2::new(controls_w, btn_h));
-                    let mode_resp = ui.interact(mode_rect, egui::Id::new("ctx_wand_mode"), egui::Sense::click());
-                    let mode_bg = if mode_resp.hovered() { theme.accent } else { theme.surface };
-                    ui.painter().rect_filled(mode_rect, 0.0, mode_bg);
-                    let mode_fg = if mode_resp.hovered() { theme.fg } else { theme.fg_muted };
-                    let mode_str = match self.select_state.wand_mode {
-                        crate::tools::SelectionMode::Replace => "Replace",
-                        crate::tools::SelectionMode::Add => "Add",
-                        crate::tools::SelectionMode::Subtract => "Subtract",
-                        crate::tools::SelectionMode::Intersect => "Intersect",
-                    };
-                    ui.painter().text(mode_rect.center(), egui::Align2::CENTER_CENTER, mode_str, FontId::new(10.0, FontFamily::Proportional), mode_fg);
-                    if mode_resp.clicked() {
-                        self.select_state.wand_mode = match self.select_state.wand_mode {
-                            crate::tools::SelectionMode::Replace => crate::tools::SelectionMode::Add,
-                            crate::tools::SelectionMode::Add => crate::tools::SelectionMode::Subtract,
-                            crate::tools::SelectionMode::Subtract => crate::tools::SelectionMode::Intersect,
-                            crate::tools::SelectionMode::Intersect => crate::tools::SelectionMode::Replace,
-                        };
-                    }
-
-                    let sel_row2_y = sel_row1_y + btn_h + pad;
-                    let label_sel2 = egui::Rect::from_min_size(egui::Pos2::new(base.x, sel_row2_y), Vec2::new(label_w, btn_h));
-                    ui.painter().text(egui::Pos2::new(label_sel2.min.x + 4.0, label_sel2.center().y), egui::Align2::LEFT_CENTER, "Connect", FontId::new(10.0, FontFamily::Proportional), theme.fg_desc);
-
-                    let conn_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, sel_row2_y), Vec2::new(controls_w, btn_h));
-                    let conn_resp = ui.interact(conn_rect, egui::Id::new("ctx_wand_conn"), egui::Sense::click());
-                    let conn_bg = if conn_resp.hovered() { theme.accent } else { theme.surface };
-                    ui.painter().rect_filled(conn_rect, 0.0, conn_bg);
-                    let conn_fg = if conn_resp.hovered() { theme.fg } else { theme.fg_muted };
-                    let conn_str = if self.select_state.wand_eight_way { "8-Way" } else { "4-Way" };
-                    ui.painter().text(conn_rect.center(), egui::Align2::CENTER_CENTER, conn_str, FontId::new(10.0, FontFamily::Proportional), conn_fg);
-                    if conn_resp.clicked() {
-                        self.select_state.wand_eight_way = !self.select_state.wand_eight_way;
-                    }
                 }
 
                 None  // Never close from an internal click
@@ -4714,22 +4574,9 @@ impl App {
                         self.pen_size_scroll_accum += THRESH;
                         if self.pen_size > 1 { self.pen_size -= 1; }
                     }
-                } else {
-                    let any_menu_open = self.top_menu_open.is_some()
-                        || self.export_menu_open.is_some()
-                        || self.frame_menu.is_some()
-                        || self.layer_ctx_menu.is_some()
-                        || self.anim_tile_menu.is_some()
-                        || self.tab_resize_menu.is_some()
-                        || self.canvas_ctx_menu.is_some()
-                        || self.open_tool_submenu.is_some()
-                        || self.palette_browser.open
-                        || self.tile_browser.open
-                        || self.any_modal_open();
-                    if !any_menu_open {
-                        self.pen_size_scroll_accum = 0.0;
-                        self.canvas.handle_input(ui, canvas_rect);
-                    }
+                } else if !self.palette_browser.open {
+                    self.pen_size_scroll_accum = 0.0;
+                    self.canvas.handle_input(ui, canvas_rect);
                 }
 
                 let art_rect = self.canvas.art_rect(canvas_rect, disp_w, disp_h);
@@ -4833,54 +4680,6 @@ impl App {
                                 egui::Stroke::new(2.0, self.theme.accent),
                                 egui::StrokeKind::Outside,
                             );
-                        }
-                    }
-                }
-
-                // Selection mask overlay (Magic Wand)
-                if let Some(ref selection) = self.select_state.mask {
-                    if !self.select_state.has_float() {
-                        let zoom = self.canvas.zoom;
-                        let w = selection.width;
-                        let h = selection.height;
-                        for y in 0..h {
-                            for x in 0..w {
-                                if selection.get(x, y) {
-                                    let min_x = art_rect.min.x + x as f32 * zoom;
-                                    let max_x = art_rect.min.x + (x + 1) as f32 * zoom;
-                                    let min_y = art_rect.min.y + y as f32 * zoom;
-                                    let max_y = art_rect.min.y + (y + 1) as f32 * zoom;
-
-                                    // Check top neighbor
-                                    if y == 0 || !selection.get(x, y - 1) {
-                                        let p1 = egui::Pos2::new(min_x, min_y);
-                                        let p2 = egui::Pos2::new(max_x, min_y);
-                                        painter.line_segment([p1, p2], egui::Stroke::new(2.0, egui::Color32::from_black_alpha(120)));
-                                        painter.line_segment([p1, p2], egui::Stroke::new(1.0, egui::Color32::WHITE));
-                                    }
-                                    // Check bottom neighbor
-                                    if y == h - 1 || !selection.get(x, y + 1) {
-                                        let p1 = egui::Pos2::new(min_x, max_y);
-                                        let p2 = egui::Pos2::new(max_x, max_y);
-                                        painter.line_segment([p1, p2], egui::Stroke::new(2.0, egui::Color32::from_black_alpha(120)));
-                                        painter.line_segment([p1, p2], egui::Stroke::new(1.0, egui::Color32::WHITE));
-                                    }
-                                    // Check left neighbor
-                                    if x == 0 || !selection.get(x - 1, y) {
-                                        let p1 = egui::Pos2::new(min_x, min_y);
-                                        let p2 = egui::Pos2::new(min_x, max_y);
-                                        painter.line_segment([p1, p2], egui::Stroke::new(2.0, egui::Color32::from_black_alpha(120)));
-                                        painter.line_segment([p1, p2], egui::Stroke::new(1.0, egui::Color32::WHITE));
-                                    }
-                                    // Check right neighbor
-                                    if x == w - 1 || !selection.get(x + 1, y) {
-                                        let p1 = egui::Pos2::new(max_x, min_y);
-                                        let p2 = egui::Pos2::new(max_x, max_y);
-                                        painter.line_segment([p1, p2], egui::Stroke::new(2.0, egui::Color32::from_black_alpha(120)));
-                                        painter.line_segment([p1, p2], egui::Stroke::new(1.0, egui::Color32::WHITE));
-                                    }
-                                }
-                            }
                         }
                     }
                 }
@@ -5297,46 +5096,6 @@ print("FAIL")
         });
     }
 
-    fn draw_preview_content(&mut self, ui: &mut egui::Ui) {
-        let (pixels, pw_size, ph_size) = if self.project.is_tiled() {
-            let tile_w = self.project.tile_w;
-            let tile_h = self.project.tile_h;
-            let cw = self.project.canvas_width;
-            (crate::layers::composite_frame_tile(
-                self.project.active_frame_ref(),
-                cw,
-                tile_w,
-                tile_h,
-            ), tile_w, tile_h)
-        } else {
-            (self.composite_active_frame(), self.project.canvas_width, self.project.canvas_height)
-        };
-        let tex = ui.ctx().load_texture(
-            "preview_content",
-            egui::ColorImage::from_rgba_unmultiplied(
-                [pw_size as usize, ph_size as usize],
-                &pixels,
-            ),
-            egui::TextureOptions::NEAREST,
-        );
-        let avail = ui.available_width();
-        let cw = pw_size as f32;
-        let ch = ph_size as f32;
-        let aspect = cw / ch;
-        let (pw, ph) = if aspect >= 1.0 {
-            (avail, avail / aspect)
-        } else {
-            (avail * aspect, avail)
-        };
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(pw, ph), egui::Sense::hover());
-        ui.painter().image(
-            tex.id(),
-            rect,
-            egui::Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
-            egui::Color32::WHITE,
-        );
-    }
-
     fn draw_preview_section(&mut self, ui: &mut egui::Ui) {
         if !self.ui_state.is_visible(Panel::Preview) { return; }
 
@@ -5357,137 +5116,50 @@ print("FAIL")
             if icon_resp.clicked() {
                 self.ui_state.toggle_collapsed(Panel::Preview);
             }
-
-            // Draw pin icon on the right side if the sidebar is not collapsed and section is not collapsed
-            if rect.width() > 50.0 && !collapsed {
-                let pin_size = Vec2::splat(14.0);
-                let pin_rect = egui::Rect::from_center_size(
-                    egui::Pos2::new(rect.right() - 8.0, rect.center().y),
-                    pin_size,
-                );
-                let pin_resp = ui.interact(pin_rect, egui::Id::new("hdr_pin_preview"), egui::Sense::click());
-                let pin_tint = if pin_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
-                ui.put(
-                    pin_rect,
-                    egui::Image::new(egui::include_image!("../assets/icons/pin.svg"))
-                        .tint(pin_tint)
-                        .fit_to_exact_size(pin_size),
-                );
-                if pin_resp.clicked() {
-                    self.preview_popped_out = true;
-                }
-            }
         });
 
         if collapsed { return; }
 
+        let (pixels, pw_size, ph_size) = if self.project.is_tiled() {
+            let tile_w = self.project.tile_w;
+            let tile_h = self.project.tile_h;
+            let cw = self.project.canvas_width;
+            (crate::layers::composite_frame_tile(
+                self.project.active_frame_ref(),
+                cw,
+                tile_w,
+                tile_h,
+            ), tile_w, tile_h)
+        } else {
+            (self.composite_active_frame(), self.project.canvas_width, self.project.canvas_height)
+        };
+        let tex = ui.ctx().load_texture(
+            "preview_sidebar",
+            egui::ColorImage::from_rgba_unmultiplied(
+                [pw_size as usize, ph_size as usize],
+                &pixels,
+            ),
+            egui::TextureOptions::NEAREST,
+        );
         let theme = self.theme.clone();
         Frame::new().fill(theme.panel).inner_margin(Margin::symmetric(10, 8)).show(ui, |ui| {
-            self.draw_preview_content(ui);
+            let avail = ui.available_width();
+            let cw = pw_size as f32;
+            let ch = ph_size as f32;
+            let aspect = cw / ch;
+            let (pw, ph) = if aspect >= 1.0 {
+                (avail, avail / aspect)
+            } else {
+                (avail * aspect, avail)
+            };
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(pw, ph), egui::Sense::hover());
+            ui.painter().image(
+                tex.id(),
+                rect,
+                egui::Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
+                egui::Color32::WHITE,
+            );
         });
-    }
-
-    fn draw_floating_preview(&mut self, ctx: &egui::Context) {
-        if !self.preview_popped_out { return; }
-
-        let mut open = true;
-        let mut put_back = false;
-        let theme = self.theme.clone();
-
-        let win_width = self.preview_window_width;
-        let avail_w = (win_width - 20.0).max(10.0);
-
-        let pw_size = if self.project.is_tiled() { self.project.tile_w } else { self.project.canvas_width };
-        let ph_size = if self.project.is_tiled() { self.project.tile_h } else { self.project.canvas_height };
-        let cw = pw_size as f32;
-        let ch = ph_size as f32;
-        let aspect = if ch > 0.0 { cw / ch } else { 1.0 };
-
-        let ph = if aspect >= 1.0 {
-            avail_w / aspect
-        } else {
-            avail_w
-        };
-
-        let total_h = ph + 42.0;
-
-        let win_resp = egui::Window::new("##floating_preview_win")
-            .id(egui::Id::new("floating_preview_win"))
-            .open(&mut open)
-            .resizable(true)
-            .title_bar(false)
-            .default_width(176.0)
-            .min_height(total_h)
-            .max_height(total_h)
-            .frame(
-                Frame::new()
-                    .fill(theme.panel)
-                    .stroke(egui::Stroke::NONE)
-                    .corner_radius(egui::CornerRadius::ZERO)
-                    .shadow(egui::Shadow {
-                        offset: [0, 14],
-                        blur: 36,
-                        spread: 0,
-                        color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
-                    })
-                    .inner_margin(Margin::ZERO),
-            )
-            .show(ctx, |ui| {
-                ui.spacing_mut().item_spacing = Vec2::ZERO;
-
-                // 1. Custom Title Bar/Header
-                Frame::new().fill(theme.panel).inner_margin(egui::Margin::symmetric(10, 3)).show(ui, |ui| {
-                    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), egui::Sense::hover());
-
-                    // Left: visibility eye icon
-                    let icon_size = Vec2::splat(16.0);
-                    let icon_rect = egui::Rect::from_center_size(
-                        egui::Pos2::new(rect.left() + 8.0, rect.center().y),
-                        icon_size,
-                    );
-                    let icon_tint = theme.fg_desc;
-                    ui.put(
-                        icon_rect,
-                        egui::Image::new(egui::include_image!("../assets/icons/visibility.svg"))
-                            .tint(icon_tint)
-                            .fit_to_exact_size(icon_size),
-                    );
-
-                    // Right: Pin button (to dock it back)
-                    let pin_size = Vec2::splat(14.0);
-                    let pin_rect = egui::Rect::from_center_size(
-                        egui::Pos2::new(rect.right() - 8.0, rect.center().y),
-                        pin_size,
-                    );
-                    let pin_resp = ui.interact(pin_rect, ui.id().with("floating_preview_pin"), egui::Sense::click());
-                    let pin_tint = if pin_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
-                    ui.put(
-                        pin_rect,
-                        egui::Image::new(egui::include_image!("../assets/icons/pin.svg"))
-                            .tint(pin_tint)
-                            .fit_to_exact_size(pin_size),
-                    );
-                    if pin_resp.clicked() {
-                        put_back = true;
-                    }
-                });
-
-                // 2. Content
-                Frame::new()
-                    .fill(theme.panel)
-                    .inner_margin(Margin { left: 10, right: 10, top: 0, bottom: 8 })
-                    .show(ui, |ui| {
-                        self.draw_preview_content(ui);
-                    });
-            });
-
-        if let Some(resp) = win_resp {
-            self.preview_window_width = resp.response.rect.width();
-        }
-
-        if !open || put_back {
-            self.preview_popped_out = false;
-        }
     }
 
     fn handle_zoom_tool_input(&mut self, response: &egui::Response, canvas_rect: egui::Rect) {
@@ -5674,20 +5346,9 @@ print("FAIL")
                     && i.pointer.hover_pos().map(|p| canvas_rect.contains(p)).unwrap_or(false)
             });
             if right_clicked && !self.palette_browser.open && !self.any_modal_open() {
-                let non_canvas_menu = self.top_menu_open.is_some()
-                    || self.export_menu_open.is_some()
-                    || self.frame_menu.is_some()
-                    || self.layer_ctx_menu.is_some()
-                    || self.anim_tile_menu.is_some()
-                    || self.tab_resize_menu.is_some()
-                    || self.open_tool_submenu.is_some()
-                    || self.tile_browser.open
-                    || self.show_shortcuts_window;
-                if !non_canvas_menu {
-                    let pos = response.ctx.input(|i| i.pointer.hover_pos().unwrap_or(canvas_rect.center()));
-                    self.canvas_ctx_menu = Some(ContextMenuState::new(pos, response.ctx.input(|i| i.time)));
-                    return;
-                }
+                let pos = response.ctx.input(|i| i.pointer.hover_pos().unwrap_or(canvas_rect.center()));
+                self.canvas_ctx_menu = Some(ContextMenuState::new(pos, response.ctx.input(|i| i.time)));
+                return;
             }
         }
 
@@ -5842,7 +5503,7 @@ print("FAIL")
 
         let is_shape_tool = matches!(self.active_tool,
             ActiveTool::Rectangle { .. } | ActiveTool::Ellipse { .. } | ActiveTool::Line);
-        let is_select_tool = matches!(self.active_tool, ActiveTool::RectSelect | ActiveTool::MagicWand);
+        let is_select_tool = matches!(self.active_tool, ActiveTool::RectSelect);
 
         // Floating selection: if active, the RectSelect tool routes input to the
         // transform handler. Returns true if input was consumed by a handle/move/rotate.
@@ -6067,7 +5728,7 @@ print("FAIL")
             self.mirror_y_sequence.clear();
             self.mirror_xy_sequence.clear();
             // RectSelect: lift selected pixels into a floating buffer.
-            if matches!(self.active_tool, ActiveTool::RectSelect) {
+            if is_select_tool {
                 if let Some(rect) = self.select_state.rect {
                     if rect.2 > 0 && rect.3 > 0 {
                         self.lift_selection_to_float(rect);
@@ -6177,44 +5838,6 @@ print("FAIL")
                 (px, py)
             };
             self.drag_start = Some(start);
-
-            // If we have a selection mask and the user clicked inside it, lift it to float!
-            if is_select_tool && !self.select_state.has_float() {
-                if let Some(ref mask) = self.select_state.mask {
-                    if mask.get(px, py) {
-                        self.lift_mask_to_float();
-                        self.select_state.interaction = SelectInteraction::Moving;
-                        let latest = response.ctx.input(|i| i.pointer.latest_pos()).unwrap_or(pos);
-                        let (cx, cy) = self.canvas.screen_to_canvas_f32(latest, canvas_rect, w as f32, h as f32);
-                        self.select_state.drag_anchor = Some(crate::tools::DragAnchor {
-                            mouse_x: cx,
-                            mouse_y: cy,
-                            offset: self.select_state.offset,
-                            scale: self.select_state.scale,
-                            rotation: self.select_state.rotation,
-                        });
-                        return;
-                    }
-                }
-            }
-
-            if matches!(self.active_tool, ActiveTool::MagicWand) {
-                let ref_layer = if self.project.is_tiled() {
-                    self.stitch_temp_layer(ai, li)
-                } else {
-                    self.project.animations[ai].frames[fi].layers[li].clone()
-                };
-                let new_mask = crate::tools::magic_wand_select(&ref_layer, px, py, self.select_state.wand_eight_way);
-                let combined = if let Some(ref current_mask) = self.select_state.mask {
-                    current_mask.combine(&new_mask, self.select_state.wand_mode)
-                } else {
-                    new_mask
-                };
-                self.select_state.mask = Some(combined);
-                self.drag_start = None; // disable marquee drag
-                self.canvas_dirty = true;
-            }
-
             // Ctrl held during Rectangle drag start → isometric box mode
             if matches!(self.active_tool, ActiveTool::Rectangle { .. }) && response.ctx.input(|i| i.modifiers.ctrl) {
                 self.iso_box_dragging = true;
@@ -6233,9 +5856,6 @@ print("FAIL")
             self.mirror_xy_sequence.clear();
             if is_select_tool {
                 self.select_state.rect = None; // clear previous selection on new drag
-                if matches!(self.active_tool, ActiveTool::RectSelect) {
-                    self.select_state.mask = None; // clear wand mask on starting rect marquee
-                }
             }
         }
 
@@ -6499,7 +6119,7 @@ print("FAIL")
         }
 
         // Selection rect: update live during drag.
-        if matches!(self.active_tool, ActiveTool::RectSelect) && self.drag_start.is_some() && primary_down {
+        if is_select_tool && self.drag_start.is_some() && primary_down {
             response.ctx.request_repaint();
             if let Some((x0, y0)) = self.drag_start {
                 let ex = shape_px.clamp(0, w as i32 - 1) as u32;
@@ -6572,75 +6192,6 @@ print("FAIL")
             self.active_modified = true;
         }
         self.select_state.begin_float(FloatBuffer { w: rw, h: rh, pixels }, rect);
-        self.canvas_dirty = true;
-    }
-
-    fn lift_mask_to_float(&mut self) {
-        let Some(mask) = self.select_state.mask.clone() else { return; };
-        let Some((rx, ry, rw, rh)) = mask.bounding_box() else { return; };
-        if rw == 0 || rh == 0 { return; }
-        
-        let ai = self.project.active_animation;
-        let fi = self.project.active_frame;
-        let li = self.project.active_layer;
-        if self.project.animations[ai].frames[fi].layers[li].locked { return; }
-        if self.project.animations[ai].frames[fi].layers[li].is_group { return; }
-
-        let ref_layer = if self.project.is_tiled() {
-            self.stitch_temp_layer(ai, li)
-        } else {
-            self.project.animations[ai].frames[fi].layers[li].clone()
-        };
-        let mut pixels: Vec<Rgba> = Vec::with_capacity((rw * rh) as usize);
-        let mut edits: Vec<crate::tools::PixelEdit> = Vec::new();
-        for y in 0..rh {
-            for x in 0..rw {
-                let cx = rx + x;
-                let cy = ry + y;
-                if mask.get(cx, cy) {
-                    let old = ref_layer.get_pixel(cx, cy);
-                    pixels.push(old);
-                    if old[3] != 0 {
-                        edits.push((cx, cy, old, [0, 0, 0, 0]));
-                    }
-                } else {
-                    pixels.push([0, 0, 0, 0]);
-                }
-            }
-        }
-        // Apply the clear
-        if self.project.is_tiled() {
-            let tile_w = self.project.tile_w;
-            let tile_h = self.project.tile_h;
-            let tiles_w = self.project.tiles_w;
-            let tiles_h = self.project.tiles_h;
-            for &(x, y, _o, n) in &edits {
-                let tx = x / tile_w;
-                let ty = y / tile_h;
-                let ox = x % tile_w;
-                let oy = y % tile_h;
-                if tx < tiles_w && ty < tiles_h {
-                    let t_fi = (ty * tiles_w + tx) as usize;
-                    if t_fi < self.project.animations[ai].frames.len() {
-                        self.project.animations[ai].frames[t_fi].layers[li].set_pixel(ox, oy, n);
-                        self.project.animations[ai].frames[t_fi].dirty = true;
-                        if ai < self.thumbnails.len() && t_fi < self.thumbnails[ai].len() {
-                            self.thumbnails[ai][t_fi].dirty = true;
-                        }
-                    }
-                }
-            }
-        } else {
-            for &(x, y, _o, n) in &edits {
-                self.project.animations[ai].frames[fi].layers[li].set_pixel(x, y, n);
-            }
-        }
-        if !edits.is_empty() {
-            self.undo_stack.push(Command::PaintPixels { animation_id: ai, frame_id: fi, layer_id: li, edits });
-            self.active_modified = true;
-        }
-        self.select_state.begin_float(FloatBuffer { w: rw, h: rh, pixels }, (rx, ry, rw, rh));
-        self.select_state.mask = None;
         self.canvas_dirty = true;
     }
 
@@ -7434,6 +6985,13 @@ print("FAIL")
                                         self.open_in_new_tab(new_proj, None);
                                     }
                                     self.show_new_dialog = false;
+                                    // First project created — reveal full UI and expand default panels
+                                    if self.startup_blank {
+                                        self.startup_blank = false;
+                                        self.ui_state.collapse_color = false;
+                                        self.ui_state.collapse_palette = false;
+                                        self.ui_state.collapse_layers = false;
+                                    }
                                 }
 
                                 // Cancel
@@ -7453,8 +7011,11 @@ print("FAIL")
                                     cancel_col,
                                 );
                                 if cancel_resp.clicked() {
-                                    self.replace_project_pending = false;
-                                    self.show_new_dialog = false;
+                                    // In startup mode, cancel is not allowed — nothing to go back to.
+                                    if !self.startup_blank {
+                                        self.replace_project_pending = false;
+                                        self.show_new_dialog = false;
+                                    }
                                 }
                             });
                             });
@@ -7462,8 +7023,11 @@ print("FAIL")
             });
 
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.replace_project_pending = false;
-            self.show_new_dialog = false;
+            // In startup mode, Escape should not close the dialog — there's nothing behind it.
+            if !self.startup_blank {
+                self.replace_project_pending = false;
+                self.show_new_dialog = false;
+            }
         }
     }
 
@@ -7486,16 +7050,14 @@ print("FAIL")
                 ui.put(icon_rect, Image::new(egui::include_image!("../assets/logo.png")).fit_to_exact_size(Vec2::splat(20.0)));
 
                 // Draw logo text
-                ui.painter().text(
-                    Pos2::new(rect.min.x + 28.0, rect.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    "SQUAREZ",
-                    FontId::new(MENU_FONT_SIZE, FontFamily::Name("bold".into())),
-                    Color32::WHITE,
-                );
+                let text = RichText::new("SQUAREZ")
+                    .color(if response.hovered() { theme.fg } else { theme.fg_desc })
+                    .font(FontId::new(MENU_FONT_SIZE, FontFamily::Name("bold".into())));
+                let text_rect = egui::Rect::from_min_size(rect.min + Vec2::new(27.0, 0.0), Vec2::new(rect.width() - 27.0, 20.0));
+                ui.put(text_rect, egui::Label::new(text));
 
                 let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-                if response.clicked() && !self.menu_was_open_at_frame_start {
+                if response.clicked() {
                     self.show_shortcuts_window = !self.show_shortcuts_window;
                 }
             },
@@ -8362,7 +7924,6 @@ impl eframe::App for App {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.menu_was_open_at_frame_start = self.any_menu_open();
         self.theme.apply(ctx);
 
         if cfg!(debug_assertions) {
@@ -8415,8 +7976,8 @@ impl eframe::App for App {
                 self.mark_all_thumbnails_dirty();
             }
         }
-        // If the user switches away from the selection tools, commit any float.
-        if self.select_state.has_float() && !matches!(self.active_tool, ActiveTool::RectSelect | ActiveTool::MagicWand) {
+        // If the user switches away from the RectSelect tool, commit any float.
+        if self.select_state.has_float() && !matches!(self.active_tool, ActiveTool::RectSelect) {
             self.commit_float_to_layer();
         }
         // If the user switches away from the Rectangle tool, cancel any in-progress iso box.
@@ -8523,20 +8084,24 @@ impl eframe::App for App {
         if file_open {
             if let Some(path) = rfd_open() {
                 if let Ok(p) = load_sqr(&path) {
-                    self.open_in_new_tab(p, Some(path));
-                }
-            }
-        }
-
-        // Handle drag and drop of .sqr files
-        let dropped_files = ctx.input(|i| i.raw.dropped_files.clone());
-        for file in dropped_files {
-            if let Some(path) = file.path {
-                if let Some(ext) = path.extension() {
-                    if ext.eq_ignore_ascii_case("sqr") {
-                        if let Ok(p) = load_sqr(&path) {
-                            self.open_in_new_tab(p, Some(path));
-                        }
+                    if self.startup_blank {
+                        // Replace the blank placeholder project with the loaded file
+                        self.startup_blank = false;
+                        self.show_new_dialog = false;
+                        self.replace_project_pending = false;
+                        self.project = p;
+                        self.current_path = Some(path);
+                        self.undo_stack = UndoStack::new();
+                        self.thumbnails = Self::thumbnails_for(&self.project);
+                        self.active_modified = false;
+                        self.clear_transient_state();
+                        self.canvas_dirty = true;
+                        self.pending_zoom_fit = true;
+                        self.ui_state.collapse_color = false;
+                        self.ui_state.collapse_palette = false;
+                        self.ui_state.collapse_layers = false;
+                    } else {
+                        self.open_in_new_tab(p, Some(path));
                     }
                 }
             }
@@ -8555,18 +8120,24 @@ impl eframe::App for App {
             self.export_menu_frame = ctx.cumulative_pass_nr();
         }
 
-        self.draw_top_bar(ctx);
-        self.draw_right_sidebar(ctx); // full height — right edge
-        self.draw_timeline(ctx);      // gets x=0..W-176, frames start at left edge
-        self.draw_left_toolbar(ctx);  // occupies left strip above timeline only
-        self.draw_tool_submenu(ctx);  // floating tool group submenu (right of toolbar)
-        self.draw_workspace(ctx);
-        self.draw_layer_context_menu(ctx);
-        self.draw_canvas_context_menu(ctx);
+        if !self.startup_blank {
+            self.draw_top_bar(ctx);
+            self.draw_right_sidebar(ctx); // full height — right edge
+            self.draw_timeline(ctx);      // gets x=0..W-176, frames start at left edge
+            self.draw_left_toolbar(ctx);  // occupies left strip above timeline only
+            self.draw_tool_submenu(ctx);  // floating tool group submenu (right of toolbar)
+            self.draw_workspace(ctx);
+            self.draw_layer_context_menu(ctx);
+            self.draw_canvas_context_menu(ctx);
+        } else {
+            // Startup blank state: fill background and show only the new project dialog.
+            egui::CentralPanel::default()
+                .frame(egui::Frame::new().fill(self.theme.bg))
+                .show(ctx, |_ui| {});
+        }
         self.draw_new_project_dialog(ctx);
         self.draw_shortcuts_dialog(ctx);
         self.draw_ramp_lab(ctx);
-        self.draw_floating_preview(ctx);
         crate::palette_browser::draw_palette_browser(
             &mut self.palette_browser,
             ctx,
@@ -8873,7 +8444,6 @@ fn tool_icon(tool: &ActiveTool) -> ImageSource<'static> {
         ActiveTool::Ellipse { .. }   => egui::include_image!("../assets/icons/ellipse.svg"),
         ActiveTool::Line             => egui::include_image!("../assets/icons/line.svg"),
         ActiveTool::RectSelect       => egui::include_image!("../assets/icons/select.svg"),
-        ActiveTool::MagicWand        => egui::include_image!("../assets/icons/wand.png"),
         ActiveTool::Move             => egui::include_image!("../assets/icons/move.svg"),
         ActiveTool::Zoom             => egui::include_image!("../assets/icons/zoom.svg"),
     }
@@ -8904,15 +8474,10 @@ fn rfd_open() -> Option<std::path::PathBuf> {
         .pick_file()
 }
 
-fn rfd_save_as(default_name: &str) -> Option<std::path::PathBuf> {
-    let filename = if default_name.to_lowercase().ends_with(".sqr") {
-        default_name.to_string()
-    } else {
-        format!("{}.sqr", default_name)
-    };
+fn rfd_save_as() -> Option<std::path::PathBuf> {
     rfd::FileDialog::new()
         .add_filter("Squarez Project", &["sqr"])
-        .set_file_name(&filename)
+        .set_file_name("untitled.sqr")
         .save_file()
 }
 

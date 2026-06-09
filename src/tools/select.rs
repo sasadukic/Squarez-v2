@@ -16,7 +16,151 @@
 //   - scale 1.0 = unchanged size; negative = mirrored
 //   - rotation is around the center of the (scaled) rect
 
-use crate::project::Rgba;
+use crate::project::{Rgba, Layer};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SelectionMode {
+    #[default]
+    Replace,
+    Add,
+    Subtract,
+    Intersect,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelectionMask {
+    pub width: u32,
+    pub height: u32,
+    pub mask: Vec<bool>, // row-major
+}
+
+impl SelectionMask {
+    pub fn new(width: u32, height: u32) -> Self {
+        Self {
+            width,
+            height,
+            mask: vec![false; (width * height) as usize],
+        }
+    }
+
+    pub fn get(&self, x: u32, y: u32) -> bool {
+        if x >= self.width || y >= self.height {
+            return false;
+        }
+        self.mask[(y * self.width + x) as usize]
+    }
+
+    pub fn set(&mut self, x: u32, y: u32, val: bool) {
+        if x < self.width && y < self.height {
+            self.mask[(y * self.width + x) as usize] = val;
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        !self.mask.iter().any(|&b| b)
+    }
+
+    pub fn bounding_box(&self) -> Option<(u32, u32, u32, u32)> {
+        let mut min_x = self.width;
+        let mut max_x = 0;
+        let mut min_y = self.height;
+        let mut max_y = 0;
+        let mut found = false;
+
+        for y in 0..self.height {
+            for x in 0..self.width {
+                if self.mask[(y * self.width + x) as usize] {
+                    min_x = min_x.min(x);
+                    max_x = max_x.max(x);
+                    min_y = min_y.min(y);
+                    max_y = max_y.max(y);
+                    found = true;
+                }
+            }
+        }
+
+        if found {
+            Some((min_x, min_y, max_x - min_x + 1, max_y - min_y + 1))
+        } else {
+            None
+        }
+    }
+
+    pub fn combine(&self, other: &Self, mode: SelectionMode) -> Self {
+        if self.width != other.width || self.height != other.height {
+            return self.clone();
+        }
+        let mut result = self.clone();
+        for i in 0..self.mask.len() {
+            match mode {
+                SelectionMode::Replace => {
+                    result.mask[i] = other.mask[i];
+                }
+                SelectionMode::Add => {
+                    result.mask[i] = self.mask[i] || other.mask[i];
+                }
+                SelectionMode::Subtract => {
+                    result.mask[i] = self.mask[i] && !other.mask[i];
+                }
+                SelectionMode::Intersect => {
+                    result.mask[i] = self.mask[i] && other.mask[i];
+                }
+            }
+        }
+        result
+    }
+}
+
+pub fn magic_wand_select(layer: &Layer, start_x: u32, start_y: u32, eight_way: bool) -> SelectionMask {
+    let w = layer.width;
+    let h = layer.height;
+    let mut selected = vec![false; (w * h) as usize];
+    let mut visited = vec![false; (w * h) as usize];
+
+    let target = layer.get_pixel(start_x, start_y);
+    let mut stack = Vec::new();
+    stack.push((start_x, start_y));
+
+    while let Some((x, y)) = stack.pop() {
+        if x >= w || y >= h {
+            continue;
+        }
+        let idx = (y * w + x) as usize;
+        if visited[idx] {
+            continue;
+        }
+        visited[idx] = true;
+
+        let current = layer.get_pixel(x, y);
+        if current[0] == target[0]
+            && current[1] == target[1]
+            && current[2] == target[2]
+            && current[3] == target[3]
+        {
+            selected[idx] = true;
+
+            // 4-way neighbors
+            if x > 0 { stack.push((x - 1, y)); }
+            if x + 1 < w { stack.push((x + 1, y)); }
+            if y > 0 { stack.push((x, y - 1)); }
+            if y + 1 < h { stack.push((x, y + 1)); }
+
+            if eight_way {
+                // Diagonal neighbors
+                if x > 0 && y > 0 { stack.push((x - 1, y - 1)); }
+                if x > 0 && y + 1 < h { stack.push((x - 1, y + 1)); }
+                if x + 1 < w && y > 0 { stack.push((x + 1, y - 1)); }
+                if x + 1 < w && y + 1 < h { stack.push((x + 1, y + 1)); }
+            }
+        }
+    }
+
+    SelectionMask {
+        width: w,
+        height: h,
+        mask: selected,
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Handle {
@@ -58,6 +202,11 @@ impl FloatBuffer {
 pub struct SelectState {
     /// Marquee rect (during initial drag, before lift).
     pub rect: Option<(u32, u32, u32, u32)>, // (x, y, w, h)
+
+    /// Magic Wand selection mask (arbitrary boolean mask)
+    pub mask: Option<SelectionMask>,
+    pub wand_mode: SelectionMode,
+    pub wand_eight_way: bool,
 
     /// Lifted pixel buffer (Some after first drag release on a non-empty rect).
     pub float_pixels: Option<FloatBuffer>,
