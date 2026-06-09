@@ -4216,6 +4216,8 @@ impl App {
         if !self.select_state.has_float() {
             if let Some(rect) = self.select_state.rect {
                 self.lift_selection_to_float(rect);
+            } else if self.select_state.mask.is_some() {
+                self.lift_mask_to_float();
             } else {
                 return;
             }
@@ -4229,6 +4231,8 @@ impl App {
         if !self.select_state.has_float() {
             if let Some(rect) = self.select_state.rect {
                 self.lift_selection_to_float(rect);
+            } else if self.select_state.mask.is_some() {
+                self.lift_mask_to_float();
             } else {
                 return;
             }
@@ -4321,7 +4325,7 @@ impl App {
 
                 // ── Row 2: Flip ──
                 let row2_y = row1_y + btn_h + pad;
-                let can_flip = self.select_state.has_float() || self.select_state.rect.is_some();
+                let can_flip = self.select_state.has_float() || self.select_state.rect.is_some() || self.select_state.mask.is_some();
                 let label_r2 = egui::Rect::from_min_size(egui::Pos2::new(base.x, row2_y), Vec2::new(label_w, btn_h));
                 ui.painter().text(egui::Pos2::new(label_r2.min.x + 4.0, label_r2.center().y), egui::Align2::LEFT_CENTER, "Flip", FontId::new(11.0, FontFamily::Proportional), theme.fg_desc);
 
@@ -4901,37 +4905,38 @@ impl App {
                         painter.rect_stroke(sel_rect, 0.0, egui::Stroke::new(2.0, egui::Color32::from_black_alpha(120)), egui::StrokeKind::Outside);
                         painter.rect_stroke(sel_rect, 0.0, egui::Stroke::new(1.0, egui::Color32::WHITE), egui::StrokeKind::Outside);
                     }
+                }
 
-                    // Floating selection overlay: corners + handles + rotation stem.
-                    if self.select_state.has_float() {
-                        let zoom = self.canvas.zoom;
-                        let to_screen = |(x, y): (f32, f32)| egui::Pos2::new(
-                            art_rect.min.x + x * zoom,
-                            art_rect.min.y + y * zoom,
-                        );
-                        if let Some(corners) = self.select_state.rotated_corners() {
-                            let pts: Vec<egui::Pos2> = corners.iter().map(|&c| to_screen(c)).collect();
-                            // Outline (shadow + white)
-                            for i in 0..4 {
-                                let a = pts[i];
-                                let b = pts[(i + 1) % 4];
+                // Floating selection overlay: corners + handles + rotation stem.
+                if matches!(self.active_tool, ActiveTool::RectSelect | ActiveTool::MagicWand) && self.select_state.has_float() {
+                    let zoom = self.canvas.zoom;
+                    let to_screen = |(x, y): (f32, f32)| egui::Pos2::new(
+                        art_rect.min.x + x * zoom,
+                        art_rect.min.y + y * zoom,
+                    );
+                    if let Some(corners) = self.select_state.rotated_corners() {
+                        let pts: Vec<egui::Pos2> = corners.iter().map(|&c| to_screen(c)).collect();
+                        // Outline (shadow + white)
+                        for i in 0..4 {
+                            let a = pts[i];
+                            let b = pts[(i + 1) % 4];
+                            painter.line_segment([a, b], egui::Stroke::new(2.0, egui::Color32::from_black_alpha(120)));
+                            painter.line_segment([a, b], egui::Stroke::new(1.0, egui::Color32::WHITE));
+                        }
+                    }
+                    if let Some(handles) = self.selection_handle_positions() {
+                        // Helper: find a handle's screen position by variant.
+                        let find = |target: Handle| handles.iter()
+                            .find(|(h, _)| *h == target)
+                            .map(|(_, p)| to_screen(*p));
+
+                        // Stems: N→Rotate, W→FlipH, S→FlipV
+                        for (from, to) in [(Handle::N, Handle::Rotate), (Handle::W, Handle::FlipH), (Handle::S, Handle::FlipV)] {
+                            if let (Some(a), Some(b)) = (find(from), find(to)) {
                                 painter.line_segment([a, b], egui::Stroke::new(2.0, egui::Color32::from_black_alpha(120)));
                                 painter.line_segment([a, b], egui::Stroke::new(1.0, egui::Color32::WHITE));
                             }
                         }
-                        if let Some(handles) = self.selection_handle_positions() {
-                            // Helper: find a handle's screen position by variant.
-                            let find = |target: Handle| handles.iter()
-                                .find(|(h, _)| *h == target)
-                                .map(|(_, p)| to_screen(*p));
-
-                            // Stems: N→Rotate, W→FlipH, S→FlipV
-                            for (from, to) in [(Handle::N, Handle::Rotate), (Handle::W, Handle::FlipH), (Handle::S, Handle::FlipV)] {
-                                if let (Some(a), Some(b)) = (find(from), find(to)) {
-                                    painter.line_segment([a, b], egui::Stroke::new(2.0, egui::Color32::from_black_alpha(120)));
-                                    painter.line_segment([a, b], egui::Stroke::new(1.0, egui::Color32::WHITE));
-                                }
-                            }
 
                             // Handles
                             for (h, p) in handles {
