@@ -6166,7 +6166,8 @@ print("FAIL")
             if self.project.animations[ai].frames[fi].layers[li].is_group { return; }
         }
 
-        if response.drag_started() {
+        let press_started = response.drag_started() || (response.ctx.input(|i| i.pointer.primary_pressed()) && response.hovered());
+        if press_started {
             // For select tool, clamp the drag-start to canvas bounds so that
             // starting a marquee outside the canvas still begins from the edge.
             let start = if is_select_tool {
@@ -6199,20 +6200,22 @@ print("FAIL")
             }
 
             if matches!(self.active_tool, ActiveTool::MagicWand) {
-                let ref_layer = if self.project.is_tiled() {
-                    self.stitch_temp_layer(ai, li)
-                } else {
-                    self.project.animations[ai].frames[fi].layers[li].clone()
-                };
-                let new_mask = crate::tools::magic_wand_select(&ref_layer, px, py, self.select_state.wand_eight_way);
-                let combined = if let Some(ref current_mask) = self.select_state.mask {
-                    current_mask.combine(&new_mask, self.select_state.wand_mode)
-                } else {
-                    new_mask
-                };
-                self.select_state.mask = Some(combined);
-                self.drag_start = None; // disable marquee drag
-                self.canvas_dirty = true;
+                if response.ctx.input(|i| i.pointer.primary_pressed()) && response.hovered() {
+                    let ref_layer = if self.project.is_tiled() {
+                        self.stitch_temp_layer(ai, li)
+                    } else {
+                        self.project.animations[ai].frames[fi].layers[li].clone()
+                    };
+                    let new_mask = crate::tools::magic_wand_select(&ref_layer, px, py, self.select_state.wand_eight_way);
+                    let combined = if let Some(ref current_mask) = self.select_state.mask {
+                        current_mask.combine(&new_mask, self.select_state.wand_mode)
+                    } else {
+                        new_mask
+                    };
+                    self.select_state.mask = Some(combined);
+                    self.drag_start = None; // disable marquee drag
+                    self.canvas_dirty = true;
+                }
             }
 
             // Ctrl held during Rectangle drag start → isometric box mode
@@ -6239,8 +6242,8 @@ print("FAIL")
             }
         }
 
-        // Double-click with selection tool → select all
-        if is_select_tool && response.double_clicked() {
+        // Double-click with marquee select tool → select all
+        if matches!(self.active_tool, ActiveTool::RectSelect) && response.double_clicked() {
             let w = self.project.canvas_width;
             let h = self.project.canvas_height;
             self.select_state.rect = Some((0, 0, w, h));
