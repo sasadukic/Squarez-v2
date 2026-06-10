@@ -4248,10 +4248,9 @@ impl App {
         let theme = self.theme.clone();
         let btn_h = 28.0;
         let pad = 4.0;
-        let label_w = 52.0;
         let ctrl_w = 40.0;                       // one control slot
         let controls_w = ctrl_w * 2.0 + pad;     // two controls + gap between them
-        let content_w = label_w + pad + controls_w;
+        let content_w = controls_w;
 
         let is_select_tool = matches!(self.active_tool, ActiveTool::RectSelect | ActiveTool::MagicWand);
         // 5 base rows (Pen Size, Mirroring, Flip, Grid, Tile Mode / Sync Mode)
@@ -4268,13 +4267,14 @@ impl App {
             |ui| {
                 let total = ui.allocate_exact_size(Vec2::new(content_w, content_h), egui::Sense::hover()).0;
                 let base = total.min;
-                let controls_x = base.x + label_w + pad;
+                let controls_x = base.x;
                 let icon_size = egui::Vec2::splat(16.0);
 
                 // ── Row 0: Pen Size ──
                 let row0_y = base.y;
-                let label_r0 = egui::Rect::from_min_size(egui::Pos2::new(base.x, row0_y), Vec2::new(label_w, btn_h));
-                ui.painter().text(egui::Pos2::new(label_r0.min.x + 4.0, label_r0.center().y), egui::Align2::LEFT_CENTER, "Size", FontId::new(11.0, FontFamily::Proportional), theme.fg_desc);
+                let row0_rect = egui::Rect::from_min_size(egui::Pos2::new(base.x, row0_y), Vec2::new(content_w, btn_h));
+                let row0_resp = ui.interact(row0_rect, egui::Id::new("ctx_row0_hover"), egui::Sense::hover());
+                row0_resp.on_hover_text("Pen Size");
 
                 let minus_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row0_y), Vec2::new(ctrl_w, btn_h));
                 let minus_resp = ui.interact(minus_rect, egui::Id::new("ctx_pen_minus"), egui::Sense::click());
@@ -4297,8 +4297,9 @@ impl App {
 
                 // ── Row 1: Grid ──
                 let row1_y = row0_y + btn_h + pad;
-                let label_r3 = egui::Rect::from_min_size(egui::Pos2::new(base.x, row1_y), Vec2::new(label_w, btn_h));
-                ui.painter().text(egui::Pos2::new(label_r3.min.x + 4.0, label_r3.center().y), egui::Align2::LEFT_CENTER, "Grid", FontId::new(11.0, FontFamily::Proportional), theme.fg_desc);
+                let row1_rect = egui::Rect::from_min_size(egui::Pos2::new(base.x, row1_y), Vec2::new(content_w, btn_h));
+                let row1_resp = ui.interact(row1_rect, egui::Id::new("ctx_row1_hover"), egui::Sense::hover());
+                row1_resp.on_hover_text("Grid");
 
                 let onoff_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row1_y), Vec2::new(ctrl_w, btn_h));
                 let onoff_resp = ui.interact(onoff_rect, egui::Id::new("ctx_grid_onoff"), egui::Sense::click());
@@ -4322,9 +4323,11 @@ impl App {
 
                 // ── Row 2: Flip ──
                 let row2_y = row1_y + btn_h + pad;
+                let row2_rect = egui::Rect::from_min_size(egui::Pos2::new(base.x, row2_y), Vec2::new(content_w, btn_h));
+                let row2_resp = ui.interact(row2_rect, egui::Id::new("ctx_row2_hover"), egui::Sense::hover());
+                row2_resp.on_hover_text("Flip Selection");
+
                 let can_flip = self.select_state.has_float() || self.select_state.rect.is_some() || self.select_state.mask.is_some();
-                let label_r2 = egui::Rect::from_min_size(egui::Pos2::new(base.x, row2_y), Vec2::new(label_w, btn_h));
-                ui.painter().text(egui::Pos2::new(label_r2.min.x + 4.0, label_r2.center().y), egui::Align2::LEFT_CENTER, "Flip", FontId::new(11.0, FontFamily::Proportional), theme.fg_desc);
 
                 let h_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row2_y), Vec2::new(ctrl_w, btn_h));
                 let h_resp = ui.interact(h_rect, egui::Id::new("ctx_flip_h"), if can_flip { egui::Sense::click() } else { egui::Sense::hover() });
@@ -4356,8 +4359,9 @@ impl App {
 
                 // ── Row 3: Mirroring ──
                 let row3_y = row2_y + btn_h + pad;
-                let label_r1 = egui::Rect::from_min_size(egui::Pos2::new(base.x, row3_y), Vec2::new(label_w, btn_h));
-                ui.painter().text(egui::Pos2::new(label_r1.min.x + 4.0, label_r1.center().y), egui::Align2::LEFT_CENTER, "Mirroring", FontId::new(11.0, FontFamily::Proportional), theme.fg_desc);
+                let row3_rect = egui::Rect::from_min_size(egui::Pos2::new(base.x, row3_y), Vec2::new(content_w, btn_h));
+                let row3_resp = ui.interact(row3_rect, egui::Id::new("ctx_row3_hover"), egui::Sense::hover());
+                row3_resp.on_hover_text("Mirroring");
 
                 let x_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row3_y), Vec2::new(ctrl_w, btn_h));
                 let x_resp = ui.interact(x_rect, egui::Id::new("ctx_x"), egui::Sense::click());
@@ -4397,10 +4401,11 @@ impl App {
 
                 // ── Row 4: Tile Mode or Sync Mode ──
                 let row4_y = row3_y + btn_h + pad;
+                let row4_rect = egui::Rect::from_min_size(egui::Pos2::new(base.x, row4_y), Vec2::new(content_w, btn_h));
+                let row4_resp = ui.interact(row4_rect, egui::Id::new("ctx_row4_hover"), egui::Sense::hover());
 
                 if self.wang_blob.mode == crate::wang_blob::WangBlobMode::None {
-                    let label_r4 = egui::Rect::from_min_size(egui::Pos2::new(base.x, row4_y), Vec2::new(label_w, btn_h));
-                    ui.painter().text(egui::Pos2::new(label_r4.min.x + 4.0, label_r4.center().y), egui::Align2::LEFT_CENTER, "Tile Mode", FontId::new(11.0, FontFamily::Proportional), theme.fg_desc);
+                    row4_resp.on_hover_text("Tile Mode");
 
                     // Wang button
                     let wang_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row4_y), Vec2::new(ctrl_w, btn_h));
@@ -4448,10 +4453,9 @@ impl App {
                         }
                     }
                 } else {
-                    // Sync Mode (only shown when WangBlob active)
-                    let label_r5 = egui::Rect::from_min_size(egui::Pos2::new(base.x, row4_y), Vec2::new(label_w, btn_h));
-                    ui.painter().text(egui::Pos2::new(label_r5.min.x + 4.0, label_r5.center().y), egui::Align2::LEFT_CENTER, "Sync", FontId::new(11.0, FontFamily::Proportional), theme.fg_desc);
+                    row4_resp.on_hover_text("Sync Mode");
 
+                    // Sync Mode (only shown when WangBlob active)
                     let bi_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row4_y), Vec2::new(ctrl_w, btn_h));
                     let bi_resp = ui.interact(bi_rect, egui::Id::new("ctx_sync_bi"), egui::Sense::click());
                     let bi_bg = if bi_resp.hovered() { theme.accent } else if self.wang_blob.sync_mode == crate::wang_blob::SyncMode::Bidirectional { theme.surface } else { Color32::TRANSPARENT };
@@ -4472,8 +4476,9 @@ impl App {
                 // ── Rows for selection settings (Wand Mode & Connect) ──
                 if is_select_tool {
                     let sel_row1_y = row4_y + btn_h + pad;
-                    let label_sel1 = egui::Rect::from_min_size(egui::Pos2::new(base.x, sel_row1_y), Vec2::new(label_w, btn_h));
-                    ui.painter().text(egui::Pos2::new(label_sel1.min.x + 4.0, label_sel1.center().y), egui::Align2::LEFT_CENTER, "Wand Mode", FontId::new(10.0, FontFamily::Proportional), theme.fg_desc);
+                    let row5_rect = egui::Rect::from_min_size(egui::Pos2::new(base.x, sel_row1_y), Vec2::new(content_w, btn_h));
+                    let row5_resp = ui.interact(row5_rect, egui::Id::new("ctx_row5_hover"), egui::Sense::hover());
+                    row5_resp.on_hover_text("Wand Mode");
 
                     let mode_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, sel_row1_y), Vec2::new(controls_w, btn_h));
                     let mode_resp = ui.interact(mode_rect, egui::Id::new("ctx_wand_mode"), egui::Sense::click());
@@ -4497,8 +4502,9 @@ impl App {
                     }
 
                     let sel_row2_y = sel_row1_y + btn_h + pad;
-                    let label_sel2 = egui::Rect::from_min_size(egui::Pos2::new(base.x, sel_row2_y), Vec2::new(label_w, btn_h));
-                    ui.painter().text(egui::Pos2::new(label_sel2.min.x + 4.0, label_sel2.center().y), egui::Align2::LEFT_CENTER, "Connect", FontId::new(10.0, FontFamily::Proportional), theme.fg_desc);
+                    let row6_rect = egui::Rect::from_min_size(egui::Pos2::new(base.x, sel_row2_y), Vec2::new(content_w, btn_h));
+                    let row6_resp = ui.interact(row6_rect, egui::Id::new("ctx_row6_hover"), egui::Sense::hover());
+                    row6_resp.on_hover_text("Connect");
 
                     let conn_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, sel_row2_y), Vec2::new(controls_w, btn_h));
                     let conn_resp = ui.interact(conn_rect, egui::Id::new("ctx_wand_conn"), egui::Sense::click());
