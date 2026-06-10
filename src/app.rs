@@ -4294,47 +4294,30 @@ impl App {
                 ui.painter().text(plus_rect.center(), egui::Align2::CENTER_CENTER, "+", FontId::new(13.0, FontFamily::Proportional), plus_fg);
                 if plus_resp.clicked() && self.pen_size < 8 { self.pen_size += 1; }
 
-                // ── Row 1: Mirroring ──
+                // ── Row 1: Grid ──
                 let row1_y = row0_y + btn_h + pad;
-                let label_r1 = egui::Rect::from_min_size(egui::Pos2::new(base.x, row1_y), Vec2::new(label_w, btn_h));
-                ui.painter().text(egui::Pos2::new(label_r1.min.x + 4.0, label_r1.center().y), egui::Align2::LEFT_CENTER, "Mirroring", FontId::new(11.0, FontFamily::Proportional), theme.fg_desc);
+                let label_r3 = egui::Rect::from_min_size(egui::Pos2::new(base.x, row1_y), Vec2::new(label_w, btn_h));
+                ui.painter().text(egui::Pos2::new(label_r3.min.x + 4.0, label_r3.center().y), egui::Align2::LEFT_CENTER, "Grid", FontId::new(11.0, FontFamily::Proportional), theme.fg_desc);
 
-                let x_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row1_y), Vec2::new(ctrl_w, btn_h));
-                let x_resp = ui.interact(x_rect, egui::Id::new("ctx_x"), egui::Sense::click());
-                let x_bg = if x_resp.hovered() { theme.accent } else if self.mirror_x { theme.surface } else { Color32::TRANSPARENT };
-                ui.painter().rect_filled(x_rect, 0.0, x_bg);
-                let x_fg = if x_resp.hovered() || self.mirror_x { theme.fg } else { theme.fg_muted };
-                let icon_size = Vec2::splat(16.0);
-                let x_icon_rect = egui::Rect::from_center_size(x_rect.center(), icon_size);
-                ui.put(
-                    x_icon_rect,
-                    egui::Image::new(egui::include_image!("../assets/icons/mirror_h.svg"))
-                        .tint(x_fg)
-                        .fit_to_exact_size(icon_size),
-                );
-                if x_resp.clicked() { self.mirror_x = !self.mirror_x; }
+                let onoff_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row1_y), Vec2::new(ctrl_w, btn_h));
+                let onoff_resp = ui.interact(onoff_rect, egui::Id::new("ctx_grid_onoff"), egui::Sense::click());
+                let onoff_bg = if onoff_resp.hovered() { theme.accent } else if self.grid_visible { theme.surface } else { Color32::TRANSPARENT };
+                ui.painter().rect_filled(onoff_rect, 0.0, onoff_bg);
+                let onoff_fg = if onoff_resp.hovered() || self.grid_visible { theme.fg } else { theme.fg_muted };
+                ui.painter().text(onoff_rect.center(), egui::Align2::CENTER_CENTER, if self.grid_visible { "ON" } else { "OFF" }, FontId::new(11.0, FontFamily::Proportional), onoff_fg);
+                if onoff_resp.clicked() { self.grid_visible = !self.grid_visible; }
 
-                if self.mirror_x && self.mirror_y {
-                    let div_x = controls_x + ctrl_w + pad / 2.0;
-                    ui.painter().line_segment(
-                        [egui::Pos2::new(div_x, row1_y + 6.0), egui::Pos2::new(div_x, row1_y + btn_h - 6.0)],
-                        egui::Stroke::new(1.0, theme.accent),
-                    );
+                let size_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x + ctrl_w + pad, row1_y), Vec2::new(ctrl_w, btn_h));
+                let size_resp = ui.interact(size_rect, egui::Id::new("ctx_grid"), egui::Sense::click());
+                let size_bg = if size_resp.hovered() { theme.accent } else { theme.surface };
+                ui.painter().rect_filled(size_rect, 0.0, size_bg);
+                let size_fg = if size_resp.hovered() { theme.fg } else { theme.fg_muted };
+                ui.painter().text(size_rect.center(), egui::Align2::CENTER_CENTER, format!("{}px", self.grid_size), FontId::new(11.0, FontFamily::Proportional), size_fg);
+                if size_resp.clicked() {
+                    const SIZES: [u32; 8] = [1, 2, 4, 8, 16, 32, 64, 128];
+                    let idx = SIZES.iter().position(|&s| s == self.grid_size).unwrap_or(0);
+                    self.grid_size = SIZES[(idx + 1) % SIZES.len()];
                 }
-
-                let y_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x + ctrl_w + pad, row1_y), Vec2::new(ctrl_w, btn_h));
-                let y_resp = ui.interact(y_rect, egui::Id::new("ctx_y"), egui::Sense::click());
-                let y_bg = if y_resp.hovered() { theme.accent } else if self.mirror_y { theme.surface } else { Color32::TRANSPARENT };
-                ui.painter().rect_filled(y_rect, 0.0, y_bg);
-                let y_fg = if y_resp.hovered() || self.mirror_y { theme.fg } else { theme.fg_muted };
-                let y_icon_rect = egui::Rect::from_center_size(y_rect.center(), icon_size);
-                ui.put(
-                    y_icon_rect,
-                    egui::Image::new(egui::include_image!("../assets/icons/mirror_v.svg"))
-                        .tint(y_fg)
-                        .fit_to_exact_size(icon_size),
-                );
-                if y_resp.clicked() { self.mirror_y = !self.mirror_y; }
 
                 // ── Row 2: Flip ──
                 let row2_y = row1_y + btn_h + pad;
@@ -4370,30 +4353,46 @@ impl App {
                 );
                 if can_flip && v_resp.clicked() { self.flip_selection_vertical(); }
 
-                // ── Row 3: Grid ──
+                // ── Row 3: Mirroring ──
                 let row3_y = row2_y + btn_h + pad;
-                let label_r3 = egui::Rect::from_min_size(egui::Pos2::new(base.x, row3_y), Vec2::new(label_w, btn_h));
-                ui.painter().text(egui::Pos2::new(label_r3.min.x + 4.0, label_r3.center().y), egui::Align2::LEFT_CENTER, "Grid", FontId::new(11.0, FontFamily::Proportional), theme.fg_desc);
+                let label_r1 = egui::Rect::from_min_size(egui::Pos2::new(base.x, row3_y), Vec2::new(label_w, btn_h));
+                ui.painter().text(egui::Pos2::new(label_r1.min.x + 4.0, label_r1.center().y), egui::Align2::LEFT_CENTER, "Mirroring", FontId::new(11.0, FontFamily::Proportional), theme.fg_desc);
 
-                let onoff_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row3_y), Vec2::new(ctrl_w, btn_h));
-                let onoff_resp = ui.interact(onoff_rect, egui::Id::new("ctx_grid_onoff"), egui::Sense::click());
-                let onoff_bg = if onoff_resp.hovered() { theme.accent } else if self.grid_visible { theme.surface } else { Color32::TRANSPARENT };
-                ui.painter().rect_filled(onoff_rect, 0.0, onoff_bg);
-                let onoff_fg = if onoff_resp.hovered() || self.grid_visible { theme.fg } else { theme.fg_muted };
-                ui.painter().text(onoff_rect.center(), egui::Align2::CENTER_CENTER, if self.grid_visible { "ON" } else { "OFF" }, FontId::new(11.0, FontFamily::Proportional), onoff_fg);
-                if onoff_resp.clicked() { self.grid_visible = !self.grid_visible; }
+                let x_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row3_y), Vec2::new(ctrl_w, btn_h));
+                let x_resp = ui.interact(x_rect, egui::Id::new("ctx_x"), egui::Sense::click());
+                let x_bg = if x_resp.hovered() { theme.accent } else if self.mirror_x { theme.surface } else { Color32::TRANSPARENT };
+                ui.painter().rect_filled(x_rect, 0.0, x_bg);
+                let x_fg = if x_resp.hovered() || self.mirror_x { theme.fg } else { theme.fg_muted };
+                let x_icon_rect = egui::Rect::from_center_size(x_rect.center(), icon_size);
+                ui.put(
+                    x_icon_rect,
+                    egui::Image::new(egui::include_image!("../assets/icons/mirror_h.svg"))
+                        .tint(x_fg)
+                        .fit_to_exact_size(icon_size),
+                );
+                if x_resp.clicked() { self.mirror_x = !self.mirror_x; }
 
-                let size_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x + ctrl_w + pad, row3_y), Vec2::new(ctrl_w, btn_h));
-                let size_resp = ui.interact(size_rect, egui::Id::new("ctx_grid"), egui::Sense::click());
-                let size_bg = if size_resp.hovered() { theme.accent } else { theme.surface };
-                ui.painter().rect_filled(size_rect, 0.0, size_bg);
-                let size_fg = if size_resp.hovered() { theme.fg } else { theme.fg_muted };
-                ui.painter().text(size_rect.center(), egui::Align2::CENTER_CENTER, format!("{}px", self.grid_size), FontId::new(11.0, FontFamily::Proportional), size_fg);
-                if size_resp.clicked() {
-                    const SIZES: [u32; 8] = [1, 2, 4, 8, 16, 32, 64, 128];
-                    let idx = SIZES.iter().position(|&s| s == self.grid_size).unwrap_or(0);
-                    self.grid_size = SIZES[(idx + 1) % SIZES.len()];
+                if self.mirror_x && self.mirror_y {
+                    let div_x = controls_x + ctrl_w + pad / 2.0;
+                    ui.painter().line_segment(
+                        [egui::Pos2::new(div_x, row3_y + 6.0), egui::Pos2::new(div_x, row3_y + btn_h - 6.0)],
+                        egui::Stroke::new(1.0, theme.accent),
+                    );
                 }
+
+                let y_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x + ctrl_w + pad, row3_y), Vec2::new(ctrl_w, btn_h));
+                let y_resp = ui.interact(y_rect, egui::Id::new("ctx_y"), egui::Sense::click());
+                let y_bg = if y_resp.hovered() { theme.accent } else if self.mirror_y { theme.surface } else { Color32::TRANSPARENT };
+                ui.painter().rect_filled(y_rect, 0.0, y_bg);
+                let y_fg = if y_resp.hovered() || self.mirror_y { theme.fg } else { theme.fg_muted };
+                let y_icon_rect = egui::Rect::from_center_size(y_rect.center(), icon_size);
+                ui.put(
+                    y_icon_rect,
+                    egui::Image::new(egui::include_image!("../assets/icons/mirror_v.svg"))
+                        .tint(y_fg)
+                        .fit_to_exact_size(icon_size),
+                );
+                if y_resp.clicked() { self.mirror_y = !self.mirror_y; }
 
                 // ── Row 4: Tile Mode or Sync Mode ──
                 let row4_y = row3_y + btn_h + pad;
