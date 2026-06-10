@@ -4415,11 +4415,12 @@ impl App {
 
                     // Wang button
                     let wang_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row4_y), Vec2::new(ctrl_w, btn_h));
-                    let wang_resp = ui.interact(wang_rect, egui::Id::new("ctx_wang"), egui::Sense::click());
-                    let wang_bg = if wang_resp.hovered() { theme.accent } else { theme.surface };
+                    let wang_resp = ui.interact(wang_rect, egui::Id::new("ctx_wang"), egui::Sense::hover());
+                    let wang_bg = theme.surface.linear_multiply(0.5);
                     ui.painter().rect_filled(wang_rect, 0.0, wang_bg);
-                    let wang_fg = if wang_resp.hovered() { theme.fg } else { theme.fg_muted };
+                    let wang_fg = theme.fg_muted;
                     ui.painter().text(wang_rect.center(), egui::Align2::CENTER_CENTER, "Wang", FontId::new(10.0, FontFamily::Proportional), wang_fg);
+                    /*
                     if wang_resp.clicked() {
                         let dialog_resp = rfd::MessageDialog::new()
                             .set_title("Enable Tile Mode")
@@ -4435,14 +4436,16 @@ impl App {
                             self.enable_wang_blob(crate::wang_blob::WangBlobMode::Wang);
                         }
                     }
+                    */
 
                     // Blob button
                     let blob_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x + ctrl_w + pad, row4_y), Vec2::new(ctrl_w, btn_h));
-                    let blob_resp = ui.interact(blob_rect, egui::Id::new("ctx_blob"), egui::Sense::click());
-                    let blob_bg = if blob_resp.hovered() { theme.accent } else { theme.surface };
+                    let blob_resp = ui.interact(blob_rect, egui::Id::new("ctx_blob"), egui::Sense::hover());
+                    let blob_bg = theme.surface.linear_multiply(0.5);
                     ui.painter().rect_filled(blob_rect, 0.0, blob_bg);
-                    let blob_fg = if blob_resp.hovered() { theme.fg } else { theme.fg_muted };
+                    let blob_fg = theme.fg_muted;
                     ui.painter().text(blob_rect.center(), egui::Align2::CENTER_CENTER, "Blob", FontId::new(10.0, FontFamily::Proportional), blob_fg);
+                    /*
                     if blob_resp.clicked() {
                         let dialog_resp = rfd::MessageDialog::new()
                             .set_title("Enable Tile Mode")
@@ -4458,6 +4461,7 @@ impl App {
                             self.enable_wang_blob(crate::wang_blob::WangBlobMode::Blob);
                         }
                     }
+                    */
                 } else {
                     row4_resp.on_hover_text("Sync Mode");
 
