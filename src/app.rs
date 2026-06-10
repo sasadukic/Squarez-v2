@@ -1161,41 +1161,70 @@ impl App {
     }
 
     fn draw_export_popup(&mut self, ctx: &egui::Context) {
-        let Some(pos) = self.export_menu_open else { return; };
+        let Some(_pos) = self.export_menu_open else { return; };
 
         let theme = self.theme.clone();
         let mut close_popup = false;
 
         egui::Area::new("export_popup".into())
-            .fixed_pos(pos)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 Frame::new()
                     .fill(theme.panel)
-                    .stroke(egui::Stroke::new(1.0, theme.surface))
-                    .corner_radius(0)
+                    .stroke(egui::Stroke::NONE)
+                    .corner_radius(egui::CornerRadius::same(6))
                     .shadow(egui::Shadow {
-                        offset: [0, 6], blur: 18, spread: 0,
-                        color: Color32::from_black_alpha(80),
+                        offset: [0, 14],
+                        blur: 36,
+                        spread: 0,
+                        color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
                     })
-                    .inner_margin(Margin::symmetric(0, 4))
+                    .inner_margin(Margin { left: 8, right: 8, top: 0, bottom: 8 })
                     .show(ui, |ui| {
-                        ui.set_min_width(180.0);
+                        ui.set_width(200.0);
+                        let row_w = 200.0;
+                        let row_h = 24.0;
 
-                        let row_h = 30.0;
+                        // ── Header Title ──
+                        ui.add_space(8.0);
+                        let title_text_h = 18.0;
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(row_w, title_text_h),
+                            egui::Layout::top_down(egui::Align::Center),
+                            |ui| {
+                                let (rect, _) = ui.allocate_exact_size(Vec2::new(row_w, title_text_h), egui::Sense::hover());
+                                ui.painter().text(
+                                    rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    "Export Options",
+                                    FontId::new(FONT_SIZE_SM, FontFamily::Name("bold".into())),
+                                    theme.fg,
+                                );
+
+                                // Horizontal divider line
+                                let line_y = rect.bottom() + 4.0;
+                                let p1 = egui::Pos2::new(rect.left(), line_y);
+                                let p2 = egui::Pos2::new(rect.right(), line_y);
+                                ui.painter().line_segment([p1, p2], egui::Stroke::new(1.0, theme.border));
+                            },
+                        );
+
+                        ui.add_space(12.0);
+
                         let items: [(&str, crate::io::export::ExportFormat); 3] = [
-                            ("Export frame as PNG",    crate::io::export::ExportFormat::Png),
-                            ("Export as GIF",          crate::io::export::ExportFormat::Gif),
-                            ("Export as spritesheet",  crate::io::export::ExportFormat::Spritesheet),
+                            ("Export frame as PNG…",    crate::io::export::ExportFormat::Png),
+                            ("Export as GIF…",          crate::io::export::ExportFormat::Gif),
+                            ("Export as spritesheet…",  crate::io::export::ExportFormat::Spritesheet),
                         ];
                         for (label, fmt) in items {
-                            let (r, resp) = ui.allocate_exact_size(Vec2::new(180.0, row_h), egui::Sense::click());
+                            let (r, resp) = ui.allocate_exact_size(Vec2::new(row_w, row_h), egui::Sense::click());
                             let bg = if resp.hovered() { theme.surface } else { Color32::TRANSPARENT };
                             if bg != Color32::TRANSPARENT {
                                 ui.painter().rect_filled(r, 0.0, bg);
                             }
                             ui.painter().text(
-                                r.center(), egui::Align2::LEFT_CENTER, label,
+                                r.center(), egui::Align2::CENTER_CENTER, label,
                                 FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
                                 if resp.hovered() { theme.fg } else { theme.fg_desc },
                             );
@@ -1223,6 +1252,36 @@ impl App {
                                 }
                                 close_popup = true;
                             }
+                            ui.add_space(4.0);
+                        }
+
+                        ui.add_space(8.0);
+
+                        // Divider line before Cancel
+                        let (sep_rect, _) = ui.allocate_exact_size(Vec2::new(row_w, 1.0), egui::Sense::hover());
+                        ui.painter().line_segment(
+                            [sep_rect.left(), sep_rect.top()],
+                            [sep_rect.right(), sep_rect.top()],
+                            egui::Stroke::new(1.0, theme.border),
+                        );
+
+                        ui.add_space(8.0);
+
+                        // Cancel button
+                        let (cancel_rect, cancel_resp) = ui.allocate_exact_size(Vec2::new(row_w, row_h), egui::Sense::click());
+                        let cancel_bg = if cancel_resp.hovered() { theme.surface } else { Color32::TRANSPARENT };
+                        if cancel_bg != Color32::TRANSPARENT {
+                            ui.painter().rect_filled(cancel_rect, 0.0, cancel_bg);
+                        }
+                        ui.painter().text(
+                            cancel_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "Cancel",
+                            FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
+                            if cancel_resp.hovered() { theme.fg } else { theme.fg_desc },
+                        );
+                        if cancel_resp.clicked() {
+                            close_popup = true;
                         }
                     });
             });
@@ -1234,7 +1293,7 @@ impl App {
             let any_click = ctx.input(|i| i.pointer.any_click());
             if any_click && !close_popup {
                 if let Some(p) = ctx.input(|i| i.pointer.latest_pos()) {
-                    let menu_rect = egui::Rect::from_min_size(pos, Vec2::new(180.0, 90.0 + 8.0));
+                    let menu_rect = egui::Rect::from_center_size(ctx.screen_rect().center(), Vec2::new(200.0, 180.0));
                     if !menu_rect.contains(p) {
                         close_popup = true;
                     }
