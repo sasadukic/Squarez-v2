@@ -4253,8 +4253,9 @@ impl App {
         let content_w = controls_w;
 
         let is_select_tool = matches!(self.active_tool, ActiveTool::RectSelect | ActiveTool::MagicWand);
-        // 5 base rows (Pen Size, Mirroring, Flip, Grid, Tile Mode / Sync Mode)
-        let base_rows = 5;
+        // Base rows (Pen Size, Grid, Flip, Mirroring). Add 1 row if Sync Mode is active.
+        let show_tile_row = self.wang_blob.mode != crate::wang_blob::WangBlobMode::None;
+        let base_rows = if show_tile_row { 5 } else { 4 };
         let num_rows = if is_select_tool { base_rows + 2 } else { base_rows };
         let content_h = btn_h * (num_rows as f32) + pad * ((num_rows - 1) as f32);
 
@@ -4406,63 +4407,10 @@ impl App {
                 if y_resp.clicked() { self.mirror_y = !self.mirror_y; }
 
                 // ── Row 4: Tile Mode or Sync Mode ──
-                let row4_y = row3_y + btn_h + pad;
-                let row4_rect = egui::Rect::from_min_size(egui::Pos2::new(base.x, row4_y), Vec2::new(content_w, btn_h));
-                let row4_resp = ui.interact(row4_rect, egui::Id::new("ctx_row4_hover"), egui::Sense::hover());
-
-                if self.wang_blob.mode == crate::wang_blob::WangBlobMode::None {
-                    row4_resp.on_hover_text("Tile Mode");
-
-                    // Wang button
-                    let wang_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row4_y), Vec2::new(ctrl_w, btn_h));
-                    let wang_resp = ui.interact(wang_rect, egui::Id::new("ctx_wang"), egui::Sense::hover());
-                    let wang_bg = theme.surface.linear_multiply(0.5);
-                    ui.painter().rect_filled(wang_rect, 0.0, wang_bg);
-                    let wang_fg = theme.fg_muted;
-                    ui.painter().text(wang_rect.center(), egui::Align2::CENTER_CENTER, "Wang", FontId::new(10.0, FontFamily::Proportional), wang_fg);
-                    /*
-                    if wang_resp.clicked() {
-                        let dialog_resp = rfd::MessageDialog::new()
-                            .set_title("Enable Tile Mode")
-                            .set_description(&format!(
-                                "This will expand the canvas to show all tiles.\n\
-                                 This cannot be undone.\n\n\
-                                 {}x{} → 4×4 grid (16 tiles)",
-                                self.project.canvas_width, self.project.canvas_height
-                            ))
-                            .set_buttons(rfd::MessageButtons::YesNoCancel)
-                            .show();
-                        if dialog_resp == rfd::MessageDialogResult::Yes {
-                            self.enable_wang_blob(crate::wang_blob::WangBlobMode::Wang);
-                        }
-                    }
-                    */
-
-                    // Blob button
-                    let blob_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x + ctrl_w + pad, row4_y), Vec2::new(ctrl_w, btn_h));
-                    let blob_resp = ui.interact(blob_rect, egui::Id::new("ctx_blob"), egui::Sense::hover());
-                    let blob_bg = theme.surface.linear_multiply(0.5);
-                    ui.painter().rect_filled(blob_rect, 0.0, blob_bg);
-                    let blob_fg = theme.fg_muted;
-                    ui.painter().text(blob_rect.center(), egui::Align2::CENTER_CENTER, "Blob", FontId::new(10.0, FontFamily::Proportional), blob_fg);
-                    /*
-                    if blob_resp.clicked() {
-                        let dialog_resp = rfd::MessageDialog::new()
-                            .set_title("Enable Tile Mode")
-                            .set_description(&format!(
-                                "This will expand the canvas to show all tiles.\n\
-                                 This cannot be undone.\n\n\
-                                 {}x{} → 12×4 grid (48 tiles, 1 gap)",
-                                self.project.canvas_width, self.project.canvas_height
-                            ))
-                            .set_buttons(rfd::MessageButtons::YesNoCancel)
-                            .show();
-                        if dialog_resp == rfd::MessageDialogResult::Yes {
-                            self.enable_wang_blob(crate::wang_blob::WangBlobMode::Blob);
-                        }
-                    }
-                    */
-                } else {
+                let next_y = if show_tile_row {
+                    let row4_y = row3_y + btn_h + pad;
+                    let row4_rect = egui::Rect::from_min_size(egui::Pos2::new(base.x, row4_y), Vec2::new(content_w, btn_h));
+                    let row4_resp = ui.interact(row4_rect, egui::Id::new("ctx_row4_hover"), egui::Sense::hover());
                     row4_resp.on_hover_text("Sync Mode");
 
                     // Sync Mode (only shown when WangBlob active)
@@ -4481,11 +4429,15 @@ impl App {
                     let uni_fg = if uni_resp.hovered() || self.wang_blob.sync_mode == crate::wang_blob::SyncMode::Unidirectional { theme.fg } else { theme.fg_muted };
                     ui.painter().text(uni_rect.center(), egui::Align2::CENTER_CENTER, "Uni", FontId::new(10.0, FontFamily::Proportional), uni_fg);
                     if uni_resp.clicked() { self.wang_blob.sync_mode = crate::wang_blob::SyncMode::Unidirectional; }
-                }
+
+                    row4_y + btn_h + pad
+                } else {
+                    row3_y + btn_h + pad
+                };
 
                 // ── Rows for selection settings (Wand Mode & Connect) ──
                 if is_select_tool {
-                    let sel_row1_y = row4_y + btn_h + pad;
+                    let sel_row1_y = next_y;
                     let row5_rect = egui::Rect::from_min_size(egui::Pos2::new(base.x, sel_row1_y), Vec2::new(content_w, btn_h));
                     let row5_resp = ui.interact(row5_rect, egui::Id::new("ctx_row5_hover"), egui::Sense::hover());
                     row5_resp.on_hover_text("Wand Mode");
