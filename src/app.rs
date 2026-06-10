@@ -4254,8 +4254,8 @@ impl App {
         let content_w = label_w + pad + controls_w;
 
         let is_select_tool = matches!(self.active_tool, ActiveTool::RectSelect | ActiveTool::MagicWand);
-        // 6 rows when Wang/Blob active, 4 otherwise. Plus 2 rows for selection tools.
-        let base_rows = if self.wang_blob.mode != WangBlobMode::None { 6 } else { 4 };
+        // 5 base rows (Pen Size, Mirroring, Flip, Grid, Tile Mode / Sync Mode)
+        let base_rows = 5;
         let num_rows = if is_select_tool { base_rows + 2 } else { base_rows };
         let content_h = btn_h * (num_rows as f32) + pad * ((num_rows - 1) as f32);
 
@@ -4395,9 +4395,10 @@ impl App {
                     self.grid_size = SIZES[(idx + 1) % SIZES.len()];
                 }
 
-                // ── Row 4: Tile Mode (Wang/Blob) — only when not in WangBlob mode ──
+                // ── Row 4: Tile Mode or Sync Mode ──
+                let row4_y = row3_y + btn_h + pad;
+
                 if self.wang_blob.mode == crate::wang_blob::WangBlobMode::None {
-                    let row4_y = row3_y + btn_h + pad;
                     let label_r4 = egui::Rect::from_min_size(egui::Pos2::new(base.x, row4_y), Vec2::new(label_w, btn_h));
                     ui.painter().text(egui::Pos2::new(label_r4.min.x + 4.0, label_r4.center().y), egui::Align2::LEFT_CENTER, "Tile Mode", FontId::new(11.0, FontFamily::Proportional), theme.fg_desc);
 
@@ -4446,15 +4447,12 @@ impl App {
                             self.enable_wang_blob(crate::wang_blob::WangBlobMode::Blob);
                         }
                     }
-                }
-
-                // ── Row 5: Sync Mode (only shown when WangBlob active) ──
-                if self.wang_blob.mode != crate::wang_blob::WangBlobMode::None {
-                    let row5_y = row3_y + btn_h + pad;
-                    let label_r5 = egui::Rect::from_min_size(egui::Pos2::new(base.x, row5_y), Vec2::new(label_w, btn_h));
+                } else {
+                    // Sync Mode (only shown when WangBlob active)
+                    let label_r5 = egui::Rect::from_min_size(egui::Pos2::new(base.x, row4_y), Vec2::new(label_w, btn_h));
                     ui.painter().text(egui::Pos2::new(label_r5.min.x + 4.0, label_r5.center().y), egui::Align2::LEFT_CENTER, "Sync", FontId::new(11.0, FontFamily::Proportional), theme.fg_desc);
 
-                    let bi_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row5_y), Vec2::new(ctrl_w, btn_h));
+                    let bi_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row4_y), Vec2::new(ctrl_w, btn_h));
                     let bi_resp = ui.interact(bi_rect, egui::Id::new("ctx_sync_bi"), egui::Sense::click());
                     let bi_bg = if bi_resp.hovered() { theme.accent } else if self.wang_blob.sync_mode == crate::wang_blob::SyncMode::Bidirectional { theme.surface } else { Color32::TRANSPARENT };
                     ui.painter().rect_filled(bi_rect, 0.0, bi_bg);
@@ -4462,7 +4460,7 @@ impl App {
                     ui.painter().text(bi_rect.center(), egui::Align2::CENTER_CENTER, "Bi", FontId::new(10.0, FontFamily::Proportional), bi_fg);
                     if bi_resp.clicked() { self.wang_blob.sync_mode = crate::wang_blob::SyncMode::Bidirectional; }
 
-                    let uni_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x + ctrl_w + pad, row5_y), Vec2::new(ctrl_w, btn_h));
+                    let uni_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x + ctrl_w + pad, row4_y), Vec2::new(ctrl_w, btn_h));
                     let uni_resp = ui.interact(uni_rect, egui::Id::new("ctx_sync_uni"), egui::Sense::click());
                     let uni_bg = if uni_resp.hovered() { theme.accent } else if self.wang_blob.sync_mode == crate::wang_blob::SyncMode::Unidirectional { theme.surface } else { Color32::TRANSPARENT };
                     ui.painter().rect_filled(uni_rect, 0.0, uni_bg);
@@ -4473,7 +4471,7 @@ impl App {
 
                 // ── Rows for selection settings (Wand Mode & Connect) ──
                 if is_select_tool {
-                    let sel_row1_y = row3_y + btn_h + pad + btn_h + pad;
+                    let sel_row1_y = row4_y + btn_h + pad;
                     let label_sel1 = egui::Rect::from_min_size(egui::Pos2::new(base.x, sel_row1_y), Vec2::new(label_w, btn_h));
                     ui.painter().text(egui::Pos2::new(label_sel1.min.x + 4.0, label_sel1.center().y), egui::Align2::LEFT_CENTER, "Wand Mode", FontId::new(10.0, FontFamily::Proportional), theme.fg_desc);
 
