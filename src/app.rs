@@ -4306,7 +4306,13 @@ impl App {
                 let onoff_bg = if onoff_resp.hovered() { theme.accent } else if self.grid_visible { theme.surface } else { Color32::TRANSPARENT };
                 ui.painter().rect_filled(onoff_rect, 0.0, onoff_bg);
                 let onoff_fg = if onoff_resp.hovered() || self.grid_visible { theme.fg } else { theme.fg_muted };
-                ui.painter().text(onoff_rect.center(), egui::Align2::CENTER_CENTER, if self.grid_visible { "ON" } else { "OFF" }, FontId::new(11.0, FontFamily::Proportional), onoff_fg);
+                let grid_icon_rect = egui::Rect::from_center_size(onoff_rect.center(), icon_size);
+                ui.put(
+                    grid_icon_rect,
+                    egui::Image::new(egui::include_image!("../assets/icons/grid.svg"))
+                        .tint(onoff_fg)
+                        .fit_to_exact_size(icon_size),
+                );
                 if onoff_resp.clicked() { self.grid_visible = !self.grid_visible; }
 
                 let size_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x + ctrl_w + pad, row1_y), Vec2::new(ctrl_w, btn_h));
