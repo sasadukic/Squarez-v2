@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" height="40px" viewBox="0 -960 960 960" width="40px" fill="#e3e3e3">
+  <!-- Central axis -->
+  <path d="M448-40v-880h66.67v880H448Z"/>
+  <!-- Left filled block -->
+  <path d="M352.67-120h-166q-27.5 0-47.09-19.58Q120-159.17 120-186.67v-586.66q0-27.5 19.58-47.09Q159.17-840 186.67-840h166v720Z"/>
+  <!-- Right empty outline bracket -->
+  <path transform="translate(960, 0) scale(-1, 1)" d="M352.67-120h-166q-27.5 0-47.09-19.58Q120-159.17 120-186.67v-586.66q0-27.5 19.58-47.09Q159.17-840 186.67-840h166v66.67h-166v586.66h166V-120Z"/>
+</svg>

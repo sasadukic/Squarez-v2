@@ -4304,7 +4304,14 @@ impl App {
                 let x_bg = if x_resp.hovered() { theme.accent } else if self.mirror_x { theme.surface } else { Color32::TRANSPARENT };
                 ui.painter().rect_filled(x_rect, 0.0, x_bg);
                 let x_fg = if x_resp.hovered() || self.mirror_x { theme.fg } else { theme.fg_muted };
-                ui.painter().text(x_rect.center(), egui::Align2::CENTER_CENTER, "X", FontId::new(13.0, FontFamily::Proportional), x_fg);
+                let icon_size = Vec2::splat(16.0);
+                let x_icon_rect = egui::Rect::from_center_size(x_rect.center(), icon_size);
+                ui.put(
+                    x_icon_rect,
+                    egui::Image::new(egui::include_image!("../assets/icons/mirror_h.svg"))
+                        .tint(x_fg)
+                        .fit_to_exact_size(icon_size),
+                );
                 if x_resp.clicked() { self.mirror_x = !self.mirror_x; }
 
                 if self.mirror_x && self.mirror_y {
@@ -4320,7 +4327,13 @@ impl App {
                 let y_bg = if y_resp.hovered() { theme.accent } else if self.mirror_y { theme.surface } else { Color32::TRANSPARENT };
                 ui.painter().rect_filled(y_rect, 0.0, y_bg);
                 let y_fg = if y_resp.hovered() || self.mirror_y { theme.fg } else { theme.fg_muted };
-                ui.painter().text(y_rect.center(), egui::Align2::CENTER_CENTER, "Y", FontId::new(13.0, FontFamily::Proportional), y_fg);
+                let y_icon_rect = egui::Rect::from_center_size(y_rect.center(), icon_size);
+                ui.put(
+                    y_icon_rect,
+                    egui::Image::new(egui::include_image!("../assets/icons/mirror_v.svg"))
+                        .tint(y_fg)
+                        .fit_to_exact_size(icon_size),
+                );
                 if y_resp.clicked() { self.mirror_y = !self.mirror_y; }
 
                 // ── Row 2: Flip ──
@@ -4334,7 +4347,13 @@ impl App {
                 let h_bg = if !can_flip { Color32::TRANSPARENT } else if h_resp.hovered() { theme.accent } else { theme.surface };
                 ui.painter().rect_filled(h_rect, 0.0, h_bg);
                 let h_fg = if !can_flip { theme.fg_muted } else if h_resp.hovered() { theme.fg } else { theme.fg_muted };
-                ui.painter().text(h_rect.center(), egui::Align2::CENTER_CENTER, "H", FontId::new(13.0, FontFamily::Proportional), h_fg);
+                let h_icon_rect = egui::Rect::from_center_size(h_rect.center(), icon_size);
+                ui.put(
+                    h_icon_rect,
+                    egui::Image::new(egui::include_image!("../assets/icons/flip_h.svg"))
+                        .tint(h_fg)
+                        .fit_to_exact_size(icon_size),
+                );
                 if can_flip && h_resp.clicked() { self.flip_selection_horizontal(); }
 
                 let v_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x + ctrl_w + pad, row2_y), Vec2::new(ctrl_w, btn_h));
@@ -4342,7 +4361,13 @@ impl App {
                 let v_bg = if !can_flip { Color32::TRANSPARENT } else if v_resp.hovered() { theme.accent } else { theme.surface };
                 ui.painter().rect_filled(v_rect, 0.0, v_bg);
                 let v_fg = if !can_flip { theme.fg_muted } else if v_resp.hovered() { theme.fg } else { theme.fg_muted };
-                ui.painter().text(v_rect.center(), egui::Align2::CENTER_CENTER, "V", FontId::new(13.0, FontFamily::Proportional), v_fg);
+                let v_icon_rect = egui::Rect::from_center_size(v_rect.center(), icon_size);
+                ui.put(
+                    v_icon_rect,
+                    egui::Image::new(egui::include_image!("../assets/icons/flip_v.svg"))
+                        .tint(v_fg)
+                        .fit_to_exact_size(icon_size),
+                );
                 if can_flip && v_resp.clicked() { self.flip_selection_vertical(); }
 
                 // ── Row 3: Grid ──
