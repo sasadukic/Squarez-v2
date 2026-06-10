@@ -4279,10 +4279,17 @@ impl App {
 
                 let minus_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row0_y), Vec2::new(ctrl_w, btn_h));
                 let minus_resp = ui.interact(minus_rect, egui::Id::new("ctx_pen_minus"), egui::Sense::click());
-                let minus_bg = if minus_resp.hovered() { theme.accent } else { theme.surface };
+                let minus_bg = if minus_resp.hovered() { theme.accent } else { Color32::TRANSPARENT };
                 ui.painter().rect_filled(minus_rect, 0.0, minus_bg);
                 let minus_fg = if minus_resp.hovered() { theme.fg } else { theme.fg_muted };
-                ui.painter().text(minus_rect.center(), egui::Align2::CENTER_CENTER, "-", FontId::new(13.0, FontFamily::Proportional), minus_fg);
+                let minus_icon_size = egui::Vec2::splat(11.0);
+                let minus_icon_rect = egui::Rect::from_center_size(minus_rect.center(), minus_icon_size);
+                ui.put(
+                    minus_icon_rect,
+                    egui::Image::new(egui::include_image!("../assets/icons/pencil.svg"))
+                        .tint(minus_fg)
+                        .fit_to_exact_size(minus_icon_size),
+                );
                 if minus_resp.clicked() && self.pen_size > 1 { self.pen_size -= 1; }
 
                 let size_val_x = controls_x + ctrl_w + pad / 2.0;
@@ -4290,10 +4297,17 @@ impl App {
 
                 let plus_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x + ctrl_w + pad, row0_y), Vec2::new(ctrl_w, btn_h));
                 let plus_resp = ui.interact(plus_rect, egui::Id::new("ctx_pen_plus"), egui::Sense::click());
-                let plus_bg = if plus_resp.hovered() { theme.accent } else { theme.surface };
+                let plus_bg = if plus_resp.hovered() { theme.accent } else { Color32::TRANSPARENT };
                 ui.painter().rect_filled(plus_rect, 0.0, plus_bg);
                 let plus_fg = if plus_resp.hovered() { theme.fg } else { theme.fg_muted };
-                ui.painter().text(plus_rect.center(), egui::Align2::CENTER_CENTER, "+", FontId::new(13.0, FontFamily::Proportional), plus_fg);
+                let plus_icon_size = egui::Vec2::splat(16.0);
+                let plus_icon_rect = egui::Rect::from_center_size(plus_rect.center(), plus_icon_size);
+                ui.put(
+                    plus_icon_rect,
+                    egui::Image::new(egui::include_image!("../assets/icons/pencil.svg"))
+                        .tint(plus_fg)
+                        .fit_to_exact_size(plus_icon_size),
+                );
                 if plus_resp.clicked() && self.pen_size < 8 { self.pen_size += 1; }
 
                 // ── Row 1: Grid ──
