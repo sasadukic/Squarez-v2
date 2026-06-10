@@ -1260,8 +1260,10 @@ impl App {
                         // Divider line before Cancel
                         let (sep_rect, _) = ui.allocate_exact_size(Vec2::new(row_w, 1.0), egui::Sense::hover());
                         ui.painter().line_segment(
-                            [sep_rect.left(), sep_rect.top()],
-                            [sep_rect.right(), sep_rect.top()],
+                            [
+                                egui::Pos2::new(sep_rect.left(), sep_rect.top()),
+                                egui::Pos2::new(sep_rect.right(), sep_rect.top()),
+                            ],
                             egui::Stroke::new(1.0, theme.border),
                         );
 
