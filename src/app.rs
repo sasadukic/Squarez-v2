@@ -5201,10 +5201,9 @@ print("FAIL")
 
         let ai = self.project.active_animation;
         let tiles_count = self.project.animations[ai].frames.len();
-        if tiles_count == 0 { return; }
 
-        let cols = if tiles_count <= 4 { tiles_count.max(1) } else { 4 };
-        let rows = (tiles_count + cols - 1) / cols;
+        let cols = if tiles_count <= 16 { 4 } else { 5 };
+        let rows = if tiles_count <= 16 { 4 } else { (tiles_count + cols - 1) / cols };
 
         let grid_width = 176.0;
         let size = grid_width / cols as f32;
@@ -5212,6 +5211,8 @@ print("FAIL")
 
         let visible_rows = rows.min(16);
         let max_height = visible_rows as f32 * row_height;
+
+        let total_slots = cols * rows;
 
         Frame::new().fill(theme.panel).inner_margin(Margin::same(0)).show(ui, |ui| {
             egui::ScrollArea::vertical()
@@ -5226,7 +5227,7 @@ print("FAIL")
                     );
                     let painter = ui.painter_at(grid_rect);
 
-                    for i in 0..tiles_count {
+                    for i in 0..total_slots {
                         let col = i % cols;
                         let row = i / cols;
                         let rect = egui::Rect::from_min_size(
@@ -5234,67 +5235,72 @@ print("FAIL")
                             Vec2::new(size, size),
                         );
 
-                        let needs_gen = ai < self.thumbnails.len()
-                            && i < self.thumbnails[ai].len()
-                            && self.thumbnails[ai][i].dirty;
-                        if needs_gen {
-                            let (thumb_pixels, thumb_w, thumb_h) = if self.project.is_tiled() {
-                                let w = self.project.canvas_width;
-                                let tile_w = self.project.tile_w;
-                                let tile_h = self.project.tile_h;
-                                (crate::layers::composite_frame_tile(
-                                    &self.project.animations[ai].frames[i],
-                                    w, tile_w, tile_h,
-                                ), tile_w, tile_h)
-                            } else {
-                                let w = self.project.canvas_width;
-                                let h = self.project.canvas_height;
-                                (composite_frame(
-                                    &self.project.animations[ai].frames[i],
-                                    w, h,
-                                ), w, h)
-                            };
-                            let img = egui::ColorImage::from_rgba_unmultiplied(
-                                [thumb_w as usize, thumb_h as usize], &thumb_pixels,
-                            );
-                            let handle = ui.ctx().load_texture(
-                                format!("thumb_{}_{}", ai, i),
-                                img,
-                                egui::TextureOptions::NEAREST,
-                            );
-                            self.thumbnails[ai][i].handle = Some(handle);
-                            self.thumbnails[ai][i].dirty = false;
-                        }
-
-                        let is_active = self.project.active_frame == i;
-
-                        let checker_dark = theme.checker_dark;
-                        let checker_light = theme.checker_light;
-                        let cell = (size / 4.0).max(1.0);
-                        for r_row in 0..4 {
-                            for r_col in 0..4 {
-                                let color = if (r_row + r_col) % 2 == 0 { checker_dark } else { checker_light };
-                                let cell_rect = egui::Rect::from_min_size(
-                                    rect.min + Vec2::new(r_col as f32 * cell, r_row as f32 * cell),
-                                    Vec2::splat(cell),
+                        if i < tiles_count {
+                            let needs_gen = ai < self.thumbnails.len()
+                                && i < self.thumbnails[ai].len()
+                                && self.thumbnails[ai][i].dirty;
+                            if needs_gen {
+                                let (thumb_pixels, thumb_w, thumb_h) = if self.project.is_tiled() {
+                                    let w = self.project.canvas_width;
+                                    let tile_w = self.project.tile_w;
+                                    let tile_h = self.project.tile_h;
+                                    (crate::layers::composite_frame_tile(
+                                        &self.project.animations[ai].frames[i],
+                                        w, tile_w, tile_h,
+                                    ), tile_w, tile_h)
+                                } else {
+                                    let w = self.project.canvas_width;
+                                    let h = self.project.canvas_height;
+                                    (composite_frame(
+                                        &self.project.animations[ai].frames[i],
+                                        w, h,
+                                    ), w, h)
+                                };
+                                let img = egui::ColorImage::from_rgba_unmultiplied(
+                                    [thumb_w as usize, thumb_h as usize], &thumb_pixels,
                                 );
-                                painter.rect_filled(cell_rect, 0.0, color);
+                                let handle = ui.ctx().load_texture(
+                                    format!("thumb_{}_{}", ai, i),
+                                    img,
+                                    egui::TextureOptions::NEAREST,
+                                );
+                                self.thumbnails[ai][i].handle = Some(handle);
+                                self.thumbnails[ai][i].dirty = false;
                             }
-                        }
 
-                        if let Some(h) = self.thumbnails[ai].get(i).and_then(|t| t.handle.as_ref()) {
-                            painter.image(h.id(), rect, egui::Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
-                        }
+                            let is_active = self.project.active_frame == i;
 
-                        let border_color = if is_active { theme.accent } else { theme.surface };
-                        let border_width = if is_active { 2.0 } else { 1.0 };
-                        painter.rect_stroke(rect, 0.0, egui::Stroke::new(border_width, border_color), egui::StrokeKind::Inside);
+                            let checker_dark = theme.checker_dark;
+                            let checker_light = theme.checker_light;
+                            let cell = (size / 4.0).max(1.0);
+                            for r_row in 0..4 {
+                                for r_col in 0..4 {
+                                    let color = if (r_row + r_col) % 2 == 0 { checker_dark } else { checker_light };
+                                    let cell_rect = egui::Rect::from_min_size(
+                                        rect.min + Vec2::new(r_col as f32 * cell, r_row as f32 * cell),
+                                        Vec2::splat(cell),
+                                    );
+                                    painter.rect_filled(cell_rect, 0.0, color);
+                                }
+                            }
 
-                        let resp = ui.interact(rect, ui.id().with(("tile_item", i)), egui::Sense::click());
-                        let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
-                        if resp.clicked() {
-                            self.project.active_frame = i;
-                            self.canvas_dirty = true;
+                            if let Some(h) = self.thumbnails[ai].get(i).and_then(|t| t.handle.as_ref()) {
+                                painter.image(h.id(), rect, egui::Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                            }
+
+                            let border_color = if is_active { theme.accent } else { theme.surface };
+                            let border_width = if is_active { 2.0 } else { 1.0 };
+                            painter.rect_stroke(rect, 0.0, egui::Stroke::new(border_width, border_color), egui::StrokeKind::Inside);
+
+                            let resp = ui.interact(rect, ui.id().with(("tile_item", i)), egui::Sense::click());
+                            let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+                            if resp.clicked() {
+                                self.project.active_frame = i;
+                                self.canvas_dirty = true;
+                            }
+                        } else {
+                            // Draw empty slot indicator box
+                            painter.rect_stroke(rect, 0.0, egui::Stroke::new(1.0, theme.surface), egui::StrokeKind::Inside);
                         }
                     }
                 });
