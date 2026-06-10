@@ -612,6 +612,7 @@ impl App {
             || self.close_tab_pending.is_some()
             || self.ramp_lab.open
             || self.tab_resize_menu.is_some()
+            || self.export_menu_open.is_some()
     }
 
     fn any_menu_open(&self) -> bool {
@@ -1973,7 +1974,7 @@ impl App {
                 let pen_icon = tool_icon(&self.pen_group_current);
                 let pen_resp = tool_btn_raw(ui, &self.theme, self.is_group_selected(0), pen_icon);
                 let pen_rect = pen_resp.rect;
-                if pen_resp.clicked() {
+                if pen_resp.clicked() && !self.any_modal_open() {
                     if self.is_group_selected(0) {
                         if self.open_tool_submenu == Some(0) {
                             self.open_tool_submenu = None;
@@ -1990,7 +1991,7 @@ impl App {
                 let bucket_icon = tool_icon(&self.bucket_group_current);
                 let bucket_resp = tool_btn_raw(ui, &self.theme, self.is_group_selected(1), bucket_icon);
                 let bucket_rect = bucket_resp.rect;
-                if bucket_resp.clicked() {
+                if bucket_resp.clicked() && !self.any_modal_open() {
                     if self.is_group_selected(1) {
                         if self.open_tool_submenu == Some(1) {
                             self.open_tool_submenu = None;
@@ -2007,7 +2008,7 @@ impl App {
                 let shape_icon = tool_icon(&self.shape_group_current);
                 let shape_resp = tool_btn_raw(ui, &self.theme, self.is_group_selected(2), shape_icon);
                 let shape_rect = shape_resp.rect;
-                if shape_resp.clicked() {
+                if shape_resp.clicked() && !self.any_modal_open() {
                     if self.is_group_selected(2) {
                         if self.open_tool_submenu == Some(2) {
                             self.open_tool_submenu = None;
@@ -2024,7 +2025,7 @@ impl App {
                 let select_icon = tool_icon(&self.select_group_current);
                 let select_resp = tool_btn_raw(ui, &self.theme, self.is_group_selected(3), select_icon);
                 let select_rect = select_resp.rect;
-                if select_resp.clicked() {
+                if select_resp.clicked() && !self.any_modal_open() {
                     if self.is_group_selected(3) {
                         if self.open_tool_submenu == Some(3) {
                             self.open_tool_submenu = None;
@@ -2039,7 +2040,7 @@ impl App {
 
                 // Slot 4: Zoom (ungrouped)
                 let zoom_resp = tool_btn(ui, &mut self.active_tool, &self.theme, ActiveTool::Zoom, egui::include_image!("../assets/icons/zoom.svg"));
-                if zoom_resp.clicked() {
+                if zoom_resp.clicked() && !self.any_modal_open() {
                     let now = ctx.input(|i| i.time);
                     if now - self.last_zoom_tool_btn_click < 0.4 {
                         self.pending_zoom_fit = true;
@@ -3107,7 +3108,7 @@ impl App {
                     .tint(icon_fg)
                     .fit_to_exact_size(icon_size);
                 ui.put(icon_rect, palette_icon);
-                if resp.clicked() {
+                if resp.clicked() && !self.any_modal_open() {
                     self.palette_browser.open = !self.palette_browser.open;
                     if self.palette_browser.open {
                         self.palette_browser.opened_at = ui.input(|i| i.time);
@@ -7577,7 +7578,7 @@ print("FAIL")
                 );
 
                 let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-                if response.clicked() && !self.menu_was_open_at_frame_start {
+                if response.clicked() && !self.menu_was_open_at_frame_start && !self.any_modal_open() {
                     self.show_shortcuts_window = !self.show_shortcuts_window;
                 }
             },
@@ -8605,7 +8606,7 @@ impl eframe::App for App {
         if edit_paste && !ctx.wants_keyboard_input() { self.paste_from_clipboard(); }
 
         if file_new  { self.open_new_dialog(false); }
-        if file_open {
+        if file_open && !self.any_modal_open() {
             if let Some(path) = rfd_open() {
                 if let Ok(p) = load_sqr(&path) {
                     self.open_in_new_tab(p, Some(path));
@@ -8635,9 +8636,28 @@ impl eframe::App for App {
             }
         }
         if file_export {
-            let pos = Pos2::new(120.0, TOP_BAR_HEIGHT);
-            self.export_menu_open = if self.export_menu_open.is_some() { None } else { Some(pos) };
-            self.export_menu_frame = ctx.cumulative_pass_nr();
+            if self.export_menu_open.is_some() {
+                self.export_menu_open = None;
+            } else if !self.any_modal_open() {
+                // Close all other menus when opening export menu
+                self.top_menu_open = None;
+                self.canvas_ctx_menu = None;
+                self.layer_ctx_menu = None;
+                self.frame_menu = None;
+                self.anim_tile_menu = None;
+                self.tab_resize_menu = None;
+                self.open_tool_submenu = None;
+                self.palette_browser.open = false;
+                self.tile_browser.open = false;
+                self.show_new_dialog = false;
+                self.close_tab_pending = None;
+                self.ramp_lab.open = false;
+                self.show_shortcuts_window = false;
+
+                let pos = Pos2::new(120.0, TOP_BAR_HEIGHT);
+                self.export_menu_open = Some(pos);
+                self.export_menu_frame = ctx.cumulative_pass_nr();
+            }
         }
 
         self.draw_top_bar(ctx);
