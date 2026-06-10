@@ -4269,6 +4269,7 @@ impl App {
                 let total = ui.allocate_exact_size(Vec2::new(content_w, content_h), egui::Sense::hover()).0;
                 let base = total.min;
                 let controls_x = base.x + label_w + pad;
+                let icon_size = egui::Vec2::splat(16.0);
 
                 // ── Row 0: Pen Size ──
                 let row0_y = base.y;
