@@ -6405,19 +6405,6 @@ print("FAIL")
                 };
                 for pos in positions {
                     let streamed = self.mirror_positions_with_streams(pos.0, pos.1, w, h);
-                    // Track center positions for L-shape removal (only if pen size is 1)
-                    if self.pen_size == 1 {
-                        for &((mx, my), stream) in &streamed {
-                            if !self.stroke_painted.contains(&(mx, my)) {
-                                match stream {
-                                    MirrorStream::Original => self.stroke_pixel_sequence.push((mx, my)),
-                                    MirrorStream::X => self.mirror_x_sequence.push((mx, my)),
-                                    MirrorStream::Y => self.mirror_y_sequence.push((mx, my)),
-                                    MirrorStream::XY => self.mirror_xy_sequence.push((mx, my)),
-                                }
-                            }
-                        }
-                    }
                     for &((mx, my), _) in &streamed {
                         for (sx, sy) in self.pen_square(mx, my, w, h) {
                             if self.stroke_painted.contains(&(sx, sy)) { continue; }
@@ -6452,9 +6439,6 @@ print("FAIL")
                             }
                             self.stroke_painted.insert((sx, sy));
                         }
-                    }
-                    if self.pen_size == 1 {
-                        self.check_and_remove_l_shape_all_streams(ai, fi, li);
                     }
                 }
                 self.last_pencil_pos = Some((px, py));
