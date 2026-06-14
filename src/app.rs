@@ -6145,16 +6145,20 @@ print("FAIL")
             self.mirror_xy_sequence.clear();
             // RectSelect / MagicWand: lift selected pixels into a floating buffer.
             if matches!(self.active_tool, ActiveTool::RectSelect) {
-                if let Some(rect) = self.select_state.rect {
-                    if rect.2 > 0 && rect.3 > 0 {
-                        self.lift_selection_to_float(rect);
-                    } else {
-                        self.select_state.clear();
+                if !self.select_state.has_float() {
+                    if let Some(rect) = self.select_state.rect {
+                        if rect.2 > 0 && rect.3 > 0 {
+                            self.lift_selection_to_float(rect);
+                        } else {
+                            self.select_state.clear();
+                        }
                     }
                 }
             } else if matches!(self.active_tool, ActiveTool::MagicWand) {
-                if self.select_state.mask.is_some() {
-                    self.lift_mask_to_float();
+                if !self.select_state.has_float() {
+                    if self.select_state.mask.is_some() {
+                        self.lift_mask_to_float();
+                    }
                 }
             }
             self.drag_start = None;
@@ -6249,6 +6253,13 @@ print("FAIL")
 
         let press_started = response.drag_started() || (response.ctx.input(|i| i.pointer.primary_pressed()) && response.hovered());
         if press_started {
+            if is_select_tool && self.select_state.has_float() {
+                let (cx_px, cy_px) = self.canvas.screen_to_canvas_f32(pos, canvas_rect, w, h);
+                if self.hit_test_selection(cx_px, cy_px).is_none() {
+                    self.commit_float_to_layer();
+                }
+            }
+
             // For select tool, clamp the drag-start to canvas bounds so that
             // starting a marquee outside the canvas still begins from the edge.
             let start = if is_select_tool {
@@ -6314,7 +6325,7 @@ print("FAIL")
             self.mirror_x_sequence.clear();
             self.mirror_y_sequence.clear();
             self.mirror_xy_sequence.clear();
-            if is_select_tool {
+            if is_select_tool && !self.select_state.has_float() {
                 self.select_state.rect = None; // clear previous selection on new drag
                 if matches!(self.active_tool, ActiveTool::RectSelect) {
                     self.select_state.mask = None; // clear wand mask on starting rect marquee
