@@ -24,48 +24,89 @@ pub fn apply_rect(layer: &Layer, x0: i32, y0: i32, x1: i32, y1: i32, color: Rgba
 /// Draw a filled or outlined ellipse.  All coordinates are unconstrained i32.
 pub fn apply_ellipse(layer: &Layer, x0: i32, y0: i32, x1: i32, y1: i32, color: Rgba, filled: bool) -> Vec<PixelEdit> {
     let mut edits = Vec::new();
-    let left = x0.min(x1);
-    let right = x0.max(x1);
-    let top = y0.min(y1);
-    let bottom = y0.max(y1);
+    let mut x0 = x0;
+    let mut y0 = y0;
+    let mut x1 = x1;
+    let mut y1 = y1;
     
-    let w = right - left + 1;
-    let h = bottom - top + 1;
+    let mut a = (x1 - x0).abs();
+    let mut b = (y1 - y0).abs();
+    let mut b1 = b & 1; /* diameter value sign */
     
-    if w <= 0 || h <= 0 {
-        return edits;
+    let mut dx = 4 * (1 - a) * b * b;
+    let mut dy = 4 * (1 + b1) * a * a; /* error increment */
+    let mut err = dx + dy + b1 * a * a; /* error of 1st step */
+    
+    if x0 > x1 {
+        x0 = x1;
+        x1 += a;
     }
-    
-    let cx = left as f32 + (w - 1) as f32 / 2.0;
-    let cy = top as f32 + (h - 1) as f32 / 2.0;
-    let rx = w as f32 / 2.0;
-    let ry = h as f32 / 2.0;
-    
-    let is_inside = |x: i32, y: i32| -> bool {
-        if x < left || x > right || y < top || y > bottom {
-            return false;
+    if y0 > y1 {
+        y0 = y1;
+        y1 += b;
+    }
+    y0 += (b + 1) / 2;
+    y1 = y0 - b1; /* starting pixel */
+    a *= 8 * a;
+    b1 = 8 * b * b;
+
+    let mut points = std::collections::HashSet::new();
+
+    let mut draw_pixel = |x: i32, y: i32| {
+        if x >= 0 && y >= 0 {
+            points.insert((x as u32, y as u32));
         }
-        let dx = (x as f32 + 0.5) - cx;
-        let dy = (y as f32 + 0.5) - cy;
-        (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) <= 1.0
     };
-    
-    for y in top..=bottom {
-        for x in left..=right {
-            if is_inside(x, y) {
-                let on_border = !is_inside(x - 1, y)
-                    || !is_inside(x + 1, y)
-                    || !is_inside(x, y - 1)
-                    || !is_inside(x, y + 1);
-                
-                if filled || on_border {
-                    if x >= 0 && y >= 0 {
-                        edits.extend(apply_pencil(layer, x as u32, y as u32, color));
-                    }
-                }
-            }
+
+    let mut draw_span = |x_start: i32, x_end: i32, y: i32| {
+        for x in x_start..=x_end {
+            draw_pixel(x, y);
+        }
+    };
+
+    loop {
+        if filled {
+            draw_span(x0, x1, y0);
+            draw_span(x0, x1, y1);
+        } else {
+            draw_pixel(x1, y0);
+            draw_pixel(x0, y0);
+            draw_pixel(x0, y1);
+            draw_pixel(x1, y1);
+        }
+        
+        let e2 = 2 * err;
+        if e2 >= dx {
+            x0 += 1;
+            x1 -= 1;
+            dx += b1;
+            err += dx;
+        }
+        if e2 <= dy {
+            y0 += 1;
+            y1 -= 1;
+            dy += a;
+            err += dy;
+        }
+        
+        if x0 > x1 {
+            break;
         }
     }
+    
+    while y0 - y1 < b {
+        draw_pixel(x0 - 1, y0);
+        draw_pixel(x1 + 1, y0);
+        y0 += 1;
+        draw_pixel(x0 - 1, y1);
+        draw_pixel(x1 + 1, y1);
+        y1 -= 1;
+    }
+
+    for (px, py) in points {
+        edits.extend(apply_pencil(layer, px, py, color));
+    }
+    
     edits
 }
 
