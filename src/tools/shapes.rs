@@ -179,55 +179,77 @@ pub fn iso_box_preview(x0: u32, y0: u32, x1: u32, y1: u32, height: i32, color: R
 
     // Fit the largest 2:1 rhombus inside: rw = 2·rh
     let rh = half_h.min(half_w / 2).max(0);
-    let rw = rh * 2;
 
     if rh == 0 {
         return vec![];
     }
 
-    let ry0 = cy - rh;
-    let ry1 = cy + rh;
+    let mut result = Vec::new();
+    let mut seen = std::collections::HashSet::new();
 
-    // Near rhombus vertices
-    let t = (cx, ry0);
-    let r = (cx + rw, cy);
-    let b = (cx, ry1);
-    let l = (cx - rw, cy);
-
-    // Far rhombus vertices (offset by height)
-    let t2 = (cx, ry0 + height);
-    let r2 = (cx + rw, cy + height);
-    let b2 = (cx, ry1 + height);
-    let l2 = (cx - rw, cy + height);
-
-    let mut draw_edge = |a: (i32, i32), b: (i32, i32)| {
-        for (x, y) in bresenham_positions(a.0, a.1, b.0, b.1) {
-            if x < w && y < h {
-                let key = (x, y);
-                if seen.insert(key) {
-                    result.push((x, y, color));
-                }
+    let mut draw_pixel = |x: i32, y: i32| {
+        if x >= 0 && y >= 0 && (x as u32) < w && (y as u32) < h {
+            let key = (x as u32, y as u32);
+            if seen.insert(key) {
+                result.push((x as u32, y as u32, color));
             }
         }
     };
 
-    // ── Near rhombus (always visible) ──
-    draw_edge(t, r);
-    draw_edge(r, b);
-    draw_edge(b, l);
-    draw_edge(l, t);
+    let mut draw_rhombus = |cy_center: i32| {
+        // Top half
+        for i in 0..=rh {
+            let y = cy_center - rh + i;
+            if i == 0 {
+                draw_pixel(cx, y);
+                draw_pixel(cx + 1, y);
+            } else if i < rh {
+                draw_pixel(cx + 2 * i, y);
+                draw_pixel(cx + 2 * i + 1, y);
+                draw_pixel(cx - 2 * i, y);
+                draw_pixel(cx - 2 * i + 1, y);
+            } else {
+                draw_pixel(cx + 2 * rh, y);
+                draw_pixel(cx - 2 * rh, y);
+            }
+        }
+        // Bottom half
+        for i in 0..rh {
+            let y = cy_center + rh - i;
+            if i == 0 {
+                draw_pixel(cx, y);
+                draw_pixel(cx + 1, y);
+            } else {
+                draw_pixel(cx + 2 * i, y);
+                draw_pixel(cx + 2 * i + 1, y);
+                draw_pixel(cx - 2 * i, y);
+                draw_pixel(cx - 2 * i + 1, y);
+            }
+        }
+    };
 
-    // ── Far rhombus (the "end" of the extrusion) ──
-    draw_edge(t2, r2);
-    draw_edge(r2, b2);
-    draw_edge(b2, l2);
-    draw_edge(l2, t2);
+    // Draw near rhombus (always visible)
+    draw_rhombus(cy);
 
-    // ── Connecting edges between the two rhombuses ──
-    draw_edge(t, t2);
-    draw_edge(r, r2);
-    draw_edge(b, b2);
-    draw_edge(l, l2);
+    // Draw far rhombus (extruded end)
+    draw_rhombus(cy + height);
+
+    // Connecting vertical edges
+    let (y_min_t, y_max_t) = if height > 0 { (cy - rh, cy - rh + height) } else { (cy - rh + height, cy - rh) };
+    for y in y_min_t..=y_max_t {
+        draw_pixel(cx, y);
+    }
+
+    let (y_min_b, y_max_b) = if height > 0 { (cy + rh, cy + rh + height) } else { (cy + rh + height, cy + rh) };
+    for y in y_min_b..=y_max_b {
+        draw_pixel(cx, y);
+    }
+
+    let (y_min_l, y_max_l) = if height > 0 { (cy, cy + height) } else { (cy + height, cy) };
+    for y in y_min_l..=y_max_l {
+        draw_pixel(cx - 2 * rh, y);
+        draw_pixel(cx + 2 * rh, y);
+    }
 
     result
 }
