@@ -868,6 +868,11 @@ impl App {
             _ => {}
         }
         self.active_tool = t;
+        if matches!(self.active_tool, ActiveTool::Ellipse { .. }) {
+            if matches!(self.iso_mode, crate::tools::IsoMode::TopDown | crate::tools::IsoMode::TopDownFill) {
+                self.iso_mode = crate::tools::IsoMode::Off;
+            }
+        }
     }
 
     fn rebuild_canvas_texture(&mut self, ctx: &egui::Context) {
@@ -4381,13 +4386,20 @@ impl App {
                     );
 
                     if left_resp.clicked() {
-                        self.iso_mode = match self.iso_mode {
-                            crate::tools::IsoMode::Off => crate::tools::IsoMode::Isometric,
-                            crate::tools::IsoMode::Isometric | crate::tools::IsoMode::IsometricHidden => {
-                                crate::tools::IsoMode::TopDown
+                        self.iso_mode = if matches!(self.active_tool, ActiveTool::Ellipse { .. }) {
+                            match self.iso_mode {
+                                crate::tools::IsoMode::Off => crate::tools::IsoMode::Isometric,
+                                _ => crate::tools::IsoMode::Off,
                             }
-                            crate::tools::IsoMode::IsometricFill => crate::tools::IsoMode::TopDownFill,
-                            crate::tools::IsoMode::TopDown | crate::tools::IsoMode::TopDownFill => crate::tools::IsoMode::Off,
+                        } else {
+                            match self.iso_mode {
+                                crate::tools::IsoMode::Off => crate::tools::IsoMode::Isometric,
+                                crate::tools::IsoMode::Isometric | crate::tools::IsoMode::IsometricHidden => {
+                                    crate::tools::IsoMode::TopDown
+                                }
+                                crate::tools::IsoMode::IsometricFill => crate::tools::IsoMode::TopDownFill,
+                                crate::tools::IsoMode::TopDown | crate::tools::IsoMode::TopDownFill => crate::tools::IsoMode::Off,
+                            }
                         };
                     }
 
