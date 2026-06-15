@@ -6266,7 +6266,7 @@ print("FAIL")
          // Also handles quick clicks where egui fires clicked() but not drag_stopped() —
          // last_pencil_pos stays set across clicks and causes Bresenham to connect them.
          let should_commit = response.drag_stopped()
-             || ((is_shape_tool || is_select_tool) && self.drag_start.is_some() && !primary_down)
+             || ((is_shape_tool || is_select_tool) && self.drag_start.is_some() && !primary_down && !self.iso_box_dragging && !self.iso_cylinder_dragging)
              || (self.last_pencil_pos.is_some() && !primary_down);
          if should_commit {
              if self.iso_box_dragging || self.iso_cylinder_dragging {
