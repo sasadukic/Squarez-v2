@@ -4341,30 +4341,70 @@ impl App {
                 if is_shape_mode_tool {
                     let row0_rect = egui::Rect::from_min_size(egui::Pos2::new(base.x, row0_y), Vec2::new(content_w, btn_h));
                     let row0_resp = ui.interact(row0_rect, egui::Id::new("ctx_row0_hover"), egui::Sense::hover());
-                    row0_resp.on_hover_text("Projection Mode");
+                    row0_resp.on_hover_text("Projection & Style");
 
-                    let toggle_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row0_y), Vec2::new(controls_w, btn_h));
-                    let toggle_resp = ui.interact(toggle_rect, egui::Id::new("ctx_shape_mode_toggle"), egui::Sense::click());
-                    let toggle_bg = if toggle_resp.hovered() { theme.accent } else { theme.surface };
-                    ui.painter().rect_filled(toggle_rect, 0.0, toggle_bg);
-                    let toggle_fg = if toggle_resp.hovered() { theme.fg } else { theme.fg_muted };
+                    // Left button: Projection type (Iso vs TopDown)
+                    let left_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row0_y), Vec2::new(ctrl_w, btn_h));
+                    let left_resp = ui.interact(left_rect, egui::Id::new("ctx_shape_proj_toggle"), egui::Sense::click());
+                    let left_bg = if left_resp.hovered() { theme.accent } else { theme.surface };
+                    ui.painter().rect_filled(left_rect, 0.0, left_bg);
+                    let left_fg = if left_resp.hovered() { theme.fg } else { theme.fg_muted };
 
-                    let mode_str = match self.iso_mode {
-                        crate::tools::IsoMode::Isometric => "Isometric",
-                        crate::tools::IsoMode::IsometricHidden => "Iso Hidden",
-                        crate::tools::IsoMode::IsometricFill => "Iso Fill",
-                        crate::tools::IsoMode::TopDown => "TopDown",
-                        crate::tools::IsoMode::TopDownFill => "TopDown Fill",
+                    let is_iso = matches!(
+                        self.iso_mode,
+                        crate::tools::IsoMode::Isometric
+                            | crate::tools::IsoMode::IsometricHidden
+                            | crate::tools::IsoMode::IsometricFill
+                    );
+                    let proj_str = if is_iso { "Iso" } else { "Top" };
+                    ui.painter().text(
+                        left_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        proj_str,
+                        FontId::new(10.0, FontFamily::Proportional),
+                        left_fg,
+                    );
+
+                    if left_resp.clicked() {
+                        self.iso_mode = match self.iso_mode {
+                            crate::tools::IsoMode::Isometric | crate::tools::IsoMode::IsometricHidden => {
+                                crate::tools::IsoMode::TopDown
+                            }
+                            crate::tools::IsoMode::IsometricFill => crate::tools::IsoMode::TopDownFill,
+                            crate::tools::IsoMode::TopDown => crate::tools::IsoMode::Isometric,
+                            crate::tools::IsoMode::TopDownFill => crate::tools::IsoMode::IsometricFill,
+                        };
+                    }
+
+                    // Right button: Style option (Wire, Hide, Fill)
+                    let right_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x + ctrl_w + pad, row0_y), Vec2::new(ctrl_w, btn_h));
+                    let right_resp = ui.interact(right_rect, egui::Id::new("ctx_shape_style_toggle"), egui::Sense::click());
+                    let right_bg = if right_resp.hovered() { theme.accent } else { theme.surface };
+                    ui.painter().rect_filled(right_rect, 0.0, right_bg);
+                    let right_fg = if right_resp.hovered() { theme.fg } else { theme.fg_muted };
+
+                    let style_str = match self.iso_mode {
+                        crate::tools::IsoMode::Isometric => "Wire",
+                        crate::tools::IsoMode::IsometricHidden => "Hide",
+                        crate::tools::IsoMode::IsometricFill => "Fill",
+                        crate::tools::IsoMode::TopDown => "Wire",
+                        crate::tools::IsoMode::TopDownFill => "Fill",
                     };
-                    ui.painter().text(toggle_rect.center(), egui::Align2::CENTER_CENTER, mode_str, FontId::new(10.0, FontFamily::Proportional), toggle_fg);
+                    ui.painter().text(
+                        right_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        style_str,
+                        FontId::new(10.0, FontFamily::Proportional),
+                        right_fg,
+                    );
 
-                    if toggle_resp.clicked() {
+                    if right_resp.clicked() {
                         self.iso_mode = match self.iso_mode {
                             crate::tools::IsoMode::Isometric => crate::tools::IsoMode::IsometricHidden,
                             crate::tools::IsoMode::IsometricHidden => crate::tools::IsoMode::IsometricFill,
-                            crate::tools::IsoMode::IsometricFill => crate::tools::IsoMode::TopDown,
+                            crate::tools::IsoMode::IsometricFill => crate::tools::IsoMode::Isometric,
                             crate::tools::IsoMode::TopDown => crate::tools::IsoMode::TopDownFill,
-                            crate::tools::IsoMode::TopDownFill => crate::tools::IsoMode::Isometric,
+                            crate::tools::IsoMode::TopDownFill => crate::tools::IsoMode::TopDown,
                         };
                     }
                 } else {
