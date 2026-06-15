@@ -202,15 +202,11 @@ pub fn iso_box_preview(x0: u32, y0: u32, x1: u32, y1: u32, height: i32, color: R
             let y = cy_center - rh + i;
             if i == 0 {
                 draw_pixel(cx, y);
-                draw_pixel(cx + 1, y);
-            } else if i < rh {
+            } else {
+                draw_pixel(cx + 2 * i - 1, y);
                 draw_pixel(cx + 2 * i, y);
-                draw_pixel(cx + 2 * i + 1, y);
                 draw_pixel(cx - 2 * i, y);
                 draw_pixel(cx - 2 * i + 1, y);
-            } else {
-                draw_pixel(cx + 2 * rh, y);
-                draw_pixel(cx - 2 * rh, y);
             }
         }
         // Bottom half
@@ -218,10 +214,9 @@ pub fn iso_box_preview(x0: u32, y0: u32, x1: u32, y1: u32, height: i32, color: R
             let y = cy_center + rh - i;
             if i == 0 {
                 draw_pixel(cx, y);
-                draw_pixel(cx + 1, y);
             } else {
+                draw_pixel(cx + 2 * i - 1, y);
                 draw_pixel(cx + 2 * i, y);
-                draw_pixel(cx + 2 * i + 1, y);
                 draw_pixel(cx - 2 * i, y);
                 draw_pixel(cx - 2 * i + 1, y);
             }
