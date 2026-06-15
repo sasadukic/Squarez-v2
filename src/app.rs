@@ -451,7 +451,7 @@ impl App {
             view_show_open: false,
             view_show_pos: None,
             sidebar_order: {
-                let mut order = layout.map(|l| l.sidebar_order).unwrap_or_else(|| {
+                let mut order = layout.as_ref().map(|l| l.sidebar_order.clone()).unwrap_or_else(|| {
                     vec![Panel::Palette, Panel::Color, Panel::Layers, Panel::Animations, Panel::Preview, Panel::Tiles, Panel::Brushes]
                 });
                 if !order.contains(&Panel::Tiles) {
