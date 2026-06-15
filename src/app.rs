@@ -6916,7 +6916,7 @@ print("FAIL")
         // Shape tools: recompute preview every frame while button is held and drag is active.
         // Use primary_down (global button state) instead of response.dragged() so the
         // preview keeps updating even when the cursor moves outside the central panel.
-        if is_shape_tool && self.drag_start.is_some() && primary_down {
+        if is_shape_tool && self.drag_start.is_some() && (primary_down || self.iso_box_dragging || self.iso_cylinder_dragging) {
             response.ctx.request_repaint();
             if let Some((x0, y0)) = self.drag_start {
                 // Isometric box Phase 1 preview: show top-face diamond only
