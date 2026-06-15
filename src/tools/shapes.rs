@@ -123,6 +123,11 @@ pub fn apply_line(layer: &Layer, x0: i32, y0: i32, x1: i32, y1: i32, color: Rgba
 /// Draws **both** the near and far rhombus outlines plus the 4 connecting edges,
 /// so the extruded end is always visible.
 pub fn iso_box_preview(x0: u32, y0: u32, x1: u32, y1: u32, height: i32, color: Rgba, w: u32, h: u32, top_down: bool) -> Vec<(u32, u32, Rgba)> {
+    let orig_x0 = x0;
+    let orig_y0 = y0;
+    let orig_x1 = x1;
+    let orig_y1 = y1;
+
     // Normalise drag rect
     let (x0, x1) = (x0.min(x1), x0.max(x1));
     let (y0, y1) = (y0.min(y1), y0.max(y1));
@@ -171,14 +176,9 @@ pub fn iso_box_preview(x0: u32, y0: u32, x1: u32, y1: u32, height: i32, color: R
         return result;
     }
 
-    let cx = ((x0 + x1) / 2) as i32;
-    let cy = ((y0 + y1) / 2) as i32;
-
-    let half_w = ((x1 - x0) / 2) as i32;
-    let half_h = ((y1 - y0) / 2) as i32;
-
-    // Fit the largest 2:1 rhombus inside: rw = 2·rh
-    let rh = half_h.min(half_w / 2).max(0);
+    let rh = (orig_y1 as i32 - orig_y0 as i32).abs().max((orig_x1 as i32 - orig_x0 as i32).abs() / 2);
+    let cx = orig_x0 as i32;
+    let cy = if orig_y1 >= orig_y0 { orig_y0 as i32 + rh } else { orig_y0 as i32 - rh };
 
     if rh == 0 {
         return vec![];
@@ -347,6 +347,11 @@ fn ellipse_outline(cx: i32, cy: i32, rx: i32, ry: i32) -> Vec<(i32, i32)> {
 ///   • The face that is LOWER on screen only shows its front arc (y ≥ cy_of_that_face).
 ///   • Two vertical-ish connecting edges join the leftmost / rightmost tangent points.
 pub fn iso_cylinder_preview(x0: u32, y0: u32, x1: u32, y1: u32, height: i32, color: Rgba, w: u32, h: u32, top_down: bool) -> Vec<(u32, u32, Rgba)> {
+    let orig_x0 = x0;
+    let orig_y0 = y0;
+    let orig_x1 = x1;
+    let orig_y1 = y1;
+
     let (x0, x1) = (x0.min(x1), x0.max(x1));
     let (y0, y1) = (y0.min(y1), y0.max(y1));
 
@@ -436,14 +441,9 @@ pub fn iso_cylinder_preview(x0: u32, y0: u32, x1: u32, y1: u32, height: i32, col
         return result;
     }
 
-    let cx = ((x0 + x1) / 2) as i32;
-    let cy = ((y0 + y1) / 2) as i32;
-
-    let half_w = ((x1 - x0) / 2) as i32;
-    let half_h = ((y1 - y0) / 2) as i32;
-
-    // Fit the largest 2:1 rhombus inside: rw = 2·rh
-    let rh = half_h.min(half_w / 2).max(0);
+    let rh = (orig_y1 as i32 - orig_y0 as i32).abs().max((orig_x1 as i32 - orig_x0 as i32).abs() / 2);
+    let cx = orig_x0 as i32;
+    let cy = if orig_y1 >= orig_y0 { orig_y0 as i32 + rh } else { orig_y0 as i32 - rh };
     let rw = rh * 2;
 
     if rh == 0 {
