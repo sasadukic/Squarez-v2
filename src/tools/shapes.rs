@@ -149,18 +149,18 @@ pub fn iso_box_preview(
     };
 
     let top_color = color;
-    let left_color = Rgba([
+    let left_color = [
         (color[0] as f32 * 0.8) as u8,
         (color[1] as f32 * 0.8) as u8,
         (color[2] as f32 * 0.8) as u8,
         color[3],
-    ]);
-    let right_color = Rgba([
+    ];
+    let right_color = [
         (color[0] as f32 * 0.6) as u8,
         (color[1] as f32 * 0.6) as u8,
         (color[2] as f32 * 0.6) as u8,
         color[3],
-    ]);
+    ];
 
     if iso_mode == IsoMode::TopDown || iso_mode == IsoMode::TopDownFill {
         let y_bot = y1 as i32 + height;
@@ -479,18 +479,18 @@ pub fn iso_cylinder_preview(
     };
 
     let top_color = color;
-    let left_color = Rgba([
+    let left_color = [
         (color[0] as f32 * 0.8) as u8,
         (color[1] as f32 * 0.8) as u8,
         (color[2] as f32 * 0.8) as u8,
         color[3],
-    ]);
-    let right_color = Rgba([
+    ];
+    let right_color = [
         (color[0] as f32 * 0.6) as u8,
         (color[1] as f32 * 0.6) as u8,
         (color[2] as f32 * 0.6) as u8,
         color[3],
-    ]);
+    ];
 
     if iso_mode == IsoMode::TopDown || iso_mode == IsoMode::TopDownFill {
         let local_outline = |left: i32, top: i32, right: i32, bottom: i32| -> Vec<(i32, i32)> {
