@@ -232,11 +232,12 @@ pub fn iso_box_preview(
                 let y = $cy_center - rh + i;
                 if i == 0 {
                     draw_pixel(cx, y, color);
+                    draw_pixel(cx + 1, y, color);
                 } else {
-                    draw_pixel(cx + 2 * i - 1, y, color);
-                    draw_pixel(cx + 2 * i, y, color);
                     draw_pixel(cx - 2 * i, y, color);
                     draw_pixel(cx - 2 * i + 1, y, color);
+                    draw_pixel(cx + 2 * i, y, color);
+                    draw_pixel(cx + 2 * i + 1, y, color);
                 }
             }
             // Bottom half
@@ -244,11 +245,12 @@ pub fn iso_box_preview(
                 let y = $cy_center + rh - i;
                 if i == 0 {
                     draw_pixel(cx, y, color);
+                    draw_pixel(cx + 1, y, color);
                 } else {
-                    draw_pixel(cx + 2 * i - 1, y, color);
-                    draw_pixel(cx + 2 * i, y, color);
                     draw_pixel(cx - 2 * i, y, color);
                     draw_pixel(cx - 2 * i + 1, y, color);
+                    draw_pixel(cx + 2 * i, y, color);
+                    draw_pixel(cx + 2 * i + 1, y, color);
                 }
             }
         };
@@ -259,7 +261,7 @@ pub fn iso_box_preview(
             // Top half
             for i in 0..=rh {
                 let y = $cy_center - rh + i;
-                let (x_start, x_end) = if i == 0 { (cx, cx) } else { (cx - 2 * i, cx + 2 * i) };
+                let (x_start, x_end) = if i == 0 { (cx, cx + 1) } else { (cx - 2 * i, cx + 2 * i + 1) };
                 for x in x_start..=x_end {
                     draw_pixel(x, y, $fill_col);
                 }
@@ -267,7 +269,7 @@ pub fn iso_box_preview(
             // Bottom half
             for i in 0..rh {
                 let y = $cy_center + rh - i;
-                let (x_start, x_end) = if i == 0 { (cx, cx) } else { (cx - 2 * i, cx + 2 * i) };
+                let (x_start, x_end) = if i == 0 { (cx, cx + 1) } else { (cx - 2 * i, cx + 2 * i + 1) };
                 for x in x_start..=x_end {
                     draw_pixel(x, y, $fill_col);
                 }
@@ -286,8 +288,8 @@ pub fn iso_box_preview(
                     draw_pixel(x, y, left_color);
                 }
             }
-            // Right face: x from cx to cx + 2 * rh
-            for x in cx..=(cx + 2 * rh) {
+            // Right face: x from cx to cx + 2 * rh + 1
+            for x in cx..=(cx + 2 * rh + 1) {
                 let y_top_x = cy_top + rh - (x - cx) / 2;
                 let y_bot_x = y_top_x + height.abs();
                 for y in y_top_x..=y_bot_x {
@@ -308,15 +310,17 @@ pub fn iso_box_preview(
         let (y_min_t, y_max_t) = if height > 0 { (cy - rh, cy - rh + height) } else { (cy - rh + height, cy - rh) };
         for y in y_min_t..=y_max_t {
             draw_pixel(cx, y, color);
+            draw_pixel(cx + 1, y, color);
         }
         let (y_min_b, y_max_b) = if height > 0 { (cy + rh, cy + rh + height) } else { (cy + rh + height, cy + rh) };
         for y in y_min_b..=y_max_b {
             draw_pixel(cx, y, color);
+            draw_pixel(cx + 1, y, color);
         }
         let (y_min_l, y_max_l) = if height > 0 { (cy, cy + height) } else { (cy + height, cy) };
         for y in y_min_l..=y_max_l {
             draw_pixel(cx - 2 * rh, y, color);
-            draw_pixel(cx + 2 * rh, y, color);
+            draw_pixel(cx + 2 * rh + 1, y, color);
         }
     } else {
         // IsometricHidden or IsometricFill outlines
@@ -328,11 +332,12 @@ pub fn iso_box_preview(
             let y = cy_bottom + rh - i;
             if i == 0 {
                 draw_pixel(cx, y, color);
+                draw_pixel(cx + 1, y, color);
             } else {
-                draw_pixel(cx + 2 * i - 1, y, color);
-                draw_pixel(cx + 2 * i, y, color);
                 draw_pixel(cx - 2 * i, y, color);
                 draw_pixel(cx - 2 * i + 1, y, color);
+                draw_pixel(cx + 2 * i, y, color);
+                draw_pixel(cx + 2 * i + 1, y, color);
             }
         }
 
@@ -340,11 +345,12 @@ pub fn iso_box_preview(
         let (y_min_l, y_max_l) = (cy_top, cy_bottom);
         for y in y_min_l..=y_max_l {
             draw_pixel(cx - 2 * rh, y, color);
-            draw_pixel(cx + 2 * rh, y, color);
+            draw_pixel(cx + 2 * rh + 1, y, color);
         }
         let (y_min_f, y_max_f) = (cy_top + rh, cy_bottom + rh);
         for y in y_min_f..=y_max_f {
             draw_pixel(cx, y, color);
+            draw_pixel(cx + 1, y, color);
         }
     }
 
