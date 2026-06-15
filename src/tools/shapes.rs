@@ -225,51 +225,55 @@ pub fn iso_box_preview(
     let cy_top = cy.min(cy + height);
     let cy_bottom = cy.max(cy + height);
 
-    let mut draw_rhombus_outline = |cy_center: i32| {
-        // Top half
-        for i in 0..=rh {
-            let y = cy_center - rh + i;
-            if i == 0 {
-                draw_pixel(cx, y, color);
-            } else {
-                draw_pixel(cx + 2 * i - 1, y, color);
-                draw_pixel(cx + 2 * i, y, color);
-                draw_pixel(cx - 2 * i, y, color);
-                draw_pixel(cx - 2 * i + 1, y, color);
+    macro_rules! draw_rhombus_outline {
+        ($cy_center:expr) => {
+            // Top half
+            for i in 0..=rh {
+                let y = $cy_center - rh + i;
+                if i == 0 {
+                    draw_pixel(cx, y, color);
+                } else {
+                    draw_pixel(cx + 2 * i - 1, y, color);
+                    draw_pixel(cx + 2 * i, y, color);
+                    draw_pixel(cx - 2 * i, y, color);
+                    draw_pixel(cx - 2 * i + 1, y, color);
+                }
             }
-        }
-        // Bottom half
-        for i in 0..rh {
-            let y = cy_center + rh - i;
-            if i == 0 {
-                draw_pixel(cx, y, color);
-            } else {
-                draw_pixel(cx + 2 * i - 1, y, color);
-                draw_pixel(cx + 2 * i, y, color);
-                draw_pixel(cx - 2 * i, y, color);
-                draw_pixel(cx - 2 * i + 1, y, color);
+            // Bottom half
+            for i in 0..rh {
+                let y = $cy_center + rh - i;
+                if i == 0 {
+                    draw_pixel(cx, y, color);
+                } else {
+                    draw_pixel(cx + 2 * i - 1, y, color);
+                    draw_pixel(cx + 2 * i, y, color);
+                    draw_pixel(cx - 2 * i, y, color);
+                    draw_pixel(cx - 2 * i + 1, y, color);
+                }
             }
-        }
-    };
+        };
+    }
 
-    let mut draw_rhombus_fill = |cy_center: i32, fill_col: Rgba| {
-        // Top half
-        for i in 0..=rh {
-            let y = cy_center - rh + i;
-            let (x_start, x_end) = if i == 0 { (cx, cx) } else { (cx - 2 * i, cx + 2 * i) };
-            for x in x_start..=x_end {
-                draw_pixel(x, y, fill_col);
+    macro_rules! draw_rhombus_fill {
+        ($cy_center:expr, $fill_col:expr) => {
+            // Top half
+            for i in 0..=rh {
+                let y = $cy_center - rh + i;
+                let (x_start, x_end) = if i == 0 { (cx, cx) } else { (cx - 2 * i, cx + 2 * i) };
+                for x in x_start..=x_end {
+                    draw_pixel(x, y, $fill_col);
+                }
             }
-        }
-        // Bottom half
-        for i in 0..rh {
-            let y = cy_center + rh - i;
-            let (x_start, x_end) = if i == 0 { (cx, cx) } else { (cx - 2 * i, cx + 2 * i) };
-            for x in x_start..=x_end {
-                draw_pixel(x, y, fill_col);
+            // Bottom half
+            for i in 0..rh {
+                let y = $cy_center + rh - i;
+                let (x_start, x_end) = if i == 0 { (cx, cx) } else { (cx - 2 * i, cx + 2 * i) };
+                for x in x_start..=x_end {
+                    draw_pixel(x, y, $fill_col);
+                }
             }
-        }
-    };
+        };
+    }
 
     if iso_mode == IsoMode::IsometricFill {
         // 1. Fill body first (left and right faces if height != 0)
@@ -292,13 +296,13 @@ pub fn iso_box_preview(
             }
         }
         // 2. Fill top face
-        draw_rhombus_fill(cy_top, top_color);
+        draw_rhombus_fill!(cy_top, top_color);
     }
 
     // Draw outlines on top
     if iso_mode == IsoMode::Isometric {
-        draw_rhombus_outline(cy);
-        draw_rhombus_outline(cy + height);
+        draw_rhombus_outline!(cy);
+        draw_rhombus_outline!(cy + height);
 
         // Draw all 4 connecting vertical lines
         let (y_min_t, y_max_t) = if height > 0 { (cy - rh, cy - rh + height) } else { (cy - rh + height, cy - rh) };
@@ -317,7 +321,7 @@ pub fn iso_box_preview(
     } else {
         // IsometricHidden or IsometricFill outlines
         // Draw top face fully
-        draw_rhombus_outline(cy_top);
+        draw_rhombus_outline!(cy_top);
 
         // Draw bottom face front arc only
         for i in 0..rh {
