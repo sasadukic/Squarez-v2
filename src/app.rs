@@ -190,6 +190,7 @@ pub struct App {
     // Double-click on zoom tool button → fit canvas on next canvas render
     last_zoom_tool_btn_click: f64,
     pending_zoom_fit: bool,
+    startup_frames: u32,
     // Manual double-click detection for layer rename: (layer_idx, click_time)
     last_layer_click: Option<(usize, f64)>,
     // Manual double-click detection for tab rename: (tab_idx, click_time)
@@ -426,6 +427,7 @@ impl App {
             last_okl_tab_click_time: -1.0,
             last_zoom_tool_btn_click: -1.0,
             pending_zoom_fit: true,
+            startup_frames: 0,
             last_layer_click: None,
             last_tab_click: None,
             shape_preview: Vec::new(),
@@ -4858,6 +4860,11 @@ impl App {
                     self.rebuild_canvas_texture(ctx);
                 }
                 let canvas_rect = ui.available_rect_before_wrap();
+                if self.startup_frames < 15 {
+                    self.pending_zoom_fit = true;
+                    self.startup_frames += 1;
+                    ctx.request_repaint();
+                }
                 if self.pending_zoom_fit {
                     let fit_rect = egui::Rect::from_min_max(
                         Pos2::new(canvas_rect.min.x, canvas_rect.min.y + TOP_BAR_HEIGHT),
