@@ -124,6 +124,7 @@ pub struct App {
     alt_was_down: bool,
     iso_box_dragging: bool,
     iso_cylinder_dragging: bool,
+    iso_top_down: bool,
     iso_box_phase: Option<IsoBoxHeightPhase>,
     iso_cylinder_phase: Option<IsoCylinderPhase>,
     mirror_x: bool,
@@ -373,6 +374,7 @@ impl App {
             alt_was_down: false,
             iso_box_dragging: false,
             iso_cylinder_dragging: false,
+            iso_top_down: false,
             iso_box_phase: None,
             iso_cylinder_phase: None,
             mirror_x: false,
@@ -6010,7 +6012,7 @@ print("FAIL")
             } else {
                 0
             };
-            let preview = iso_box_preview(phase.x0, phase.y0, phase.x1, phase.y1, height, color, w, h);
+            let preview = iso_box_preview(phase.x0, phase.y0, phase.x1, phase.y1, height, color, w, h, self.iso_top_down);
             if self.shape_preview != preview.iter().map(|&(x,y,c)|(x,y,c)).collect::<Vec<_>>() {
                 self.shape_preview = preview;
                 self.canvas_dirty = true;
@@ -6026,6 +6028,7 @@ print("FAIL")
                 let edits = iso_box_pixels(
                     &ref_layer,
                     phase.x0, phase.y0, phase.x1, phase.y1, height, color,
+                    self.iso_top_down,
                 );
                 let edits: Vec<_> = edits.into_iter().filter(|&(x, y, _, _)| {
                     self.select_state.is_pixel_selected(x, y)
@@ -6078,7 +6081,7 @@ print("FAIL")
             } else {
                 0
             };
-            let preview = iso_cylinder_preview(phase.x0, phase.y0, phase.x1, phase.y1, height, color, w, h);
+            let preview = iso_cylinder_preview(phase.x0, phase.y0, phase.x1, phase.y1, height, color, w, h, self.iso_top_down);
             if self.shape_preview != preview.iter().map(|&(x,y,c)|(x,y,c)).collect::<Vec<_>>() {
                 self.shape_preview = preview;
                 self.canvas_dirty = true;
@@ -6093,6 +6096,7 @@ print("FAIL")
                 let edits = iso_cylinder_pixels(
                     &ref_layer,
                     phase.x0, phase.y0, phase.x1, phase.y1, height, color,
+                    self.iso_top_down,
                 );
                 let edits: Vec<_> = edits.into_iter().filter(|&(x, y, _, _)| {
                     self.select_state.is_pixel_selected(x, y)
@@ -6603,10 +6607,12 @@ print("FAIL")
             // Ctrl held during Rectangle drag start → isometric box mode
             if matches!(self.active_tool, ActiveTool::Rectangle { .. }) && response.ctx.input(|i| i.modifiers.ctrl) {
                 self.iso_box_dragging = true;
+                self.iso_top_down = response.ctx.input(|i| i.modifiers.alt);
             }
             // Ctrl held during Ellipse drag start → isometric cylinder mode
             if matches!(self.active_tool, ActiveTool::Ellipse { .. }) && response.ctx.input(|i| i.modifiers.ctrl) {
                 self.iso_cylinder_dragging = true;
+                self.iso_top_down = response.ctx.input(|i| i.modifiers.alt);
             }
             self.stroke_edits.clear();
             self.shape_preview.clear();
@@ -6849,13 +6855,13 @@ print("FAIL")
                 if self.iso_box_dragging {
                     let x1 = shape_px.clamp(0, w as i32 - 1) as u32;
                     let y1 = shape_py.clamp(0, h as i32 - 1) as u32;
-                    let preview = iso_box_preview(x0, y0, x1, y1, 0_i32, color, w, h);
+                    let preview = iso_box_preview(x0, y0, x1, y1, 0_i32, color, w, h, self.iso_top_down);
                     self.shape_preview = preview;
                     self.canvas_dirty = true;
                 } else if self.iso_cylinder_dragging {
                     let x1 = shape_px.clamp(0, w as i32 - 1) as u32;
                     let y1 = shape_py.clamp(0, h as i32 - 1) as u32;
-                    let preview = iso_cylinder_preview(x0, y0, x1, y1, 0_i32, color, w, h);
+                    let preview = iso_cylinder_preview(x0, y0, x1, y1, 0_i32, color, w, h, self.iso_top_down);
                     self.shape_preview = preview;
                     self.canvas_dirty = true;
                 } else {
