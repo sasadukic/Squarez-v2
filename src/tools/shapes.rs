@@ -22,30 +22,46 @@ pub fn apply_rect(layer: &Layer, x0: i32, y0: i32, x1: i32, y1: i32, color: Rgba
 }
 
 /// Draw a filled or outlined ellipse.  All coordinates are unconstrained i32.
-pub fn apply_ellipse(layer: &Layer, cx: i32, cy: i32, rx: i32, ry: i32, color: Rgba, filled: bool) -> Vec<PixelEdit> {
+pub fn apply_ellipse(layer: &Layer, x0: i32, y0: i32, x1: i32, y1: i32, color: Rgba, filled: bool) -> Vec<PixelEdit> {
     let mut edits = Vec::new();
-    if rx == 0 && ry == 0 {
-        if cx >= 0 && cy >= 0 {
-            edits.extend(apply_pencil(layer, cx as u32, cy as u32, color));
-        }
+    let left = x0.min(x1);
+    let right = x0.max(x1);
+    let top = y0.min(y1);
+    let bottom = y0.max(y1);
+    
+    let w = right - left + 1;
+    let h = bottom - top + 1;
+    
+    if w <= 0 || h <= 0 {
         return edits;
     }
-    for dy in -ry..=ry {
-        for dx in -rx..=rx {
-            let inside = (dx * dx) as f32 / (rx * rx) as f32 + (dy * dy) as f32 / (ry * ry) as f32 <= 1.0;
-            let on_border = {
-                let outer = inside;
-                let inner_x = (rx - 1).max(0);
-                let inner_y = (ry - 1).max(0);
-                let inner = if inner_x == 0 || inner_y == 0 { false }
-                    else { (dx * dx) as f32 / (inner_x * inner_x) as f32 + (dy * dy) as f32 / (inner_y * inner_y) as f32 <= 1.0 };
-                outer && !inner
-            };
-            if (filled && inside) || (!filled && on_border) {
-                let px = cx + dx;
-                let py = cy + dy;
-                if px >= 0 && py >= 0 {
-                    edits.extend(apply_pencil(layer, px as u32, py as u32, color));
+    
+    let cx = left as f32 + (w - 1) as f32 / 2.0;
+    let cy = top as f32 + (h - 1) as f32 / 2.0;
+    let rx = w as f32 / 2.0;
+    let ry = h as f32 / 2.0;
+    
+    let is_inside = |x: i32, y: i32| -> bool {
+        if x < left || x > right || y < top || y > bottom {
+            return false;
+        }
+        let dx = (x as f32 + 0.5) - cx;
+        let dy = (y as f32 + 0.5) - cy;
+        (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) <= 1.0
+    };
+    
+    for y in top..=bottom {
+        for x in left..=right {
+            if is_inside(x, y) {
+                let on_border = !is_inside(x - 1, y)
+                    || !is_inside(x + 1, y)
+                    || !is_inside(x, y - 1)
+                    || !is_inside(x, y + 1);
+                
+                if filled || on_border {
+                    if x >= 0 && y >= 0 {
+                        edits.extend(apply_pencil(layer, x as u32, y as u32, color));
+                    }
                 }
             }
         }

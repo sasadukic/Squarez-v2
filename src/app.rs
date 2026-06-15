@@ -6224,11 +6224,7 @@ print("FAIL")
                             apply_rect(&ref_layer, x0 as i32, y0 as i32, eff_epx, eff_epy, color, *filled || alt_commit)
                         }
                         ActiveTool::Ellipse { filled } => {
-                            let cx = (x0 as i32 + eff_epx) / 2;
-                            let cy = (y0 as i32 + eff_epy) / 2;
-                            let rx = (eff_epx - x0 as i32).abs() / 2;
-                            let ry = (eff_epy - y0 as i32).abs() / 2;
-                            apply_ellipse(&ref_layer, cx, cy, rx, ry, color, *filled || alt_commit)
+                            apply_ellipse(&ref_layer, x0 as i32, y0 as i32, eff_epx, eff_epy, color, *filled || alt_commit)
                         }
                         ActiveTool::Line => {
                             apply_line(&ref_layer, x0 as i32, y0 as i32, eff_epx, eff_epy, color)
@@ -6879,11 +6875,7 @@ print("FAIL")
                             apply_rect(&ref_layer, x0 as i32, y0 as i32, eff_px, eff_py, color, *filled || alt_held)
                         }
                         ActiveTool::Ellipse { filled } => {
-                            let cx = (x0 as i32 + eff_px) / 2;
-                            let cy = (y0 as i32 + eff_py) / 2;
-                            let rx = (eff_px - x0 as i32).abs() / 2;
-                            let ry = (eff_py - y0 as i32).abs() / 2;
-                            apply_ellipse(&ref_layer, cx, cy, rx, ry, color, *filled || alt_held)
+                            apply_ellipse(&ref_layer, x0 as i32, y0 as i32, eff_px, eff_py, color, *filled || alt_held)
                         }
                         ActiveTool::Line => {
                             apply_line(&ref_layer, x0 as i32, y0 as i32, eff_px, eff_py, color)
