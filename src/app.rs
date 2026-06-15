@@ -6574,18 +6574,7 @@ print("FAIL")
                     } else {
                         self.project.animations[ai].frames[fi].layers[li].clone()
                     };
-                    if self.is_empty_space(&ref_layer, px, py) {
-                        let shift_held = response.ctx.input(|i| i.modifiers.shift);
-                        let alt_held = response.ctx.input(|i| i.modifiers.alt);
-                        if !shift_held && !alt_held {
-                            if self.select_state.has_float() {
-                                self.commit_float_to_layer();
-                            }
-                            self.select_state.clear();
-                            self.canvas_dirty = true;
-                        }
-                        return;
-                    }
+
                     let new_mask = crate::tools::magic_wand_select(&ref_layer, px, py, self.select_state.wand_eight_way);
                     let shift_held = response.ctx.input(|i| i.modifiers.shift);
                     let alt_held = response.ctx.input(|i| i.modifiers.alt);
