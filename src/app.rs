@@ -176,6 +176,9 @@ pub struct App {
     // Palette drag-and-drop reorder
     palette_drag_idx: Option<usize>,
     brushes_drag_idx: Option<usize>,
+    active_palette_idx: Option<usize>,
+    copied_color: Option<Rgba>,
+    palette_hovered: bool,
     // Spring-animated selection highlight for layers panel
     layer_sel_y: f32,
     layer_sel_vel: f32,
@@ -432,6 +435,9 @@ impl App {
             renaming_tab_focused: false,
             palette_drag_idx: None,
             brushes_drag_idx: None,
+            active_palette_idx: None,
+            copied_color: None,
+            palette_hovered: false,
             layer_sel_y: 0.0,
             layer_sel_vel: 0.0,
             anim_sel_y: 0.0,
@@ -2908,6 +2914,7 @@ impl App {
                 Vec2::new(GRID_SIZE, GRID_SIZE),
                 egui::Sense::hover(),
             );
+            self.palette_hovered = ui.rect_contains_pointer(grid_rect);
 
             let painter = ui.painter_at(grid_rect);
             let pointer_pos = ui.input(|i| i.pointer.hover_pos());
@@ -2933,7 +2940,8 @@ impl App {
                 painter.rect_filled(rect, 0.0, color);
 
                 let current_fg = self.color_state.foreground;
-                if swatch == current_fg {
+                let is_active = self.active_palette_idx == Some(i) || (self.active_palette_idx.is_none() && swatch == current_fg);
+                if is_active {
                     painter.rect_stroke(rect, 0.0, egui::Stroke::new(2.0, theme.fg), egui::StrokeKind::Inside);
                 }
 
@@ -2942,6 +2950,7 @@ impl App {
                     self.palette_drag_idx = Some(i);
                 }
                 if resp.clicked() {
+                    self.active_palette_idx = Some(i);
                     self.color_state.foreground = swatch;
                     sync_color_caches(&mut self.color_state);
                 }
@@ -9568,8 +9577,32 @@ impl eframe::App for App {
         });
 
         if !ctx.wants_keyboard_input() {
-            if edit_paste { self.paste_from_clipboard(); }
-            if edit_copy  { self.copy_to_clipboard(); }
+            if edit_paste {
+                if self.palette_hovered {
+                    if let Some(color) = self.copied_color {
+                        if let Some(target_idx) = self.active_palette_idx {
+                            if target_idx < self.project.palette.len() {
+                                self.project.palette[target_idx] = color;
+                                self.color_state.foreground = color;
+                                sync_color_caches(&mut self.color_state);
+                            }
+                        }
+                    }
+                } else {
+                    self.paste_from_clipboard();
+                }
+            }
+            if edit_copy  {
+                if self.palette_hovered {
+                    if let Some(idx) = self.active_palette_idx {
+                        if idx < self.project.palette.len() {
+                            self.copied_color = Some(self.project.palette[idx]);
+                        }
+                    }
+                } else {
+                    self.copy_to_clipboard();
+                }
+            }
             if edit_cut   { self.cut_to_clipboard(); }
             if select_all_shortcut {
                 if self.select_state.has_float() {
