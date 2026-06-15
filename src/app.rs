@@ -6456,7 +6456,7 @@ print("FAIL")
                 let alt_held = response.ctx.input(|i| i.modifiers.alt);
                 if !shift_held && !alt_held {
                     if let Some(ref mask) = self.select_state.mask {
-                        if mask.get(px, py) {
+                        if mask.get(start.0, start.1) {
                             self.lift_mask_to_float();
                             self.select_state.interaction = SelectInteraction::Moving;
                             let latest = response.ctx.input(|i| i.pointer.latest_pos()).unwrap_or(pos);
@@ -6526,7 +6526,7 @@ print("FAIL")
             if is_select_tool && !self.select_state.has_float() {
                 let shift_held = response.ctx.input(|i| i.modifiers.shift);
                 let alt_held = response.ctx.input(|i| i.modifiers.alt);
-                let clicked_inside = self.select_state.mask.as_ref().map(|m| m.get(px, py)).unwrap_or(false);
+                let clicked_inside = self.select_state.mask.as_ref().map(|m| m.get(start.0, start.1)).unwrap_or(false);
                 if !shift_held && !alt_held && !clicked_inside {
                     self.select_state.rect = None;
                     if matches!(self.active_tool, ActiveTool::RectSelect) {
