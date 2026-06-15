@@ -6134,8 +6134,14 @@ print("FAIL")
                 0
             };
             let preview = iso_box_preview(phase.x0, phase.y0, phase.x1, phase.y1, height, color, w, h, self.iso_mode);
-            if self.shape_preview != preview.iter().map(|&(x,y,c)|(x,y,c)).collect::<Vec<_>>() {
-                self.shape_preview = preview;
+            let mut mirrored_preview = Vec::new();
+            for (x, y, c) in preview {
+                for (mx, my) in self.mirror_positions(x, y, w, h) {
+                    mirrored_preview.push((mx, my, c));
+                }
+            }
+            if self.shape_preview != mirrored_preview {
+                self.shape_preview = mirrored_preview;
                 self.canvas_dirty = true;
             }
             response.ctx.request_repaint();
@@ -6151,8 +6157,18 @@ print("FAIL")
                     phase.x0, phase.y0, phase.x1, phase.y1, height, color,
                     self.iso_mode,
                 );
-                let edits: Vec<_> = edits.into_iter().filter(|&(x, y, _, _)| {
-                    self.select_state.is_pixel_selected(x, y)
+                let mut all_edits = edits.clone();
+                for &(x, y, _, new) in &edits {
+                    for &(mx, my) in &self.mirror_positions(x, y, w, h) {
+                        if mx != x || my != y {
+                            let old = ref_layer.get_pixel(mx, my);
+                            all_edits.push((mx, my, old, new));
+                        }
+                    }
+                }
+                let mut seen = std::collections::HashSet::new();
+                let edits: Vec<_> = all_edits.into_iter().filter(|&(x, y, _, _)| {
+                    self.select_state.is_pixel_selected(x, y) && seen.insert((x, y))
                 }).collect();
                 if !edits.is_empty() {
                     if self.project.is_tiled() {
@@ -6203,8 +6219,14 @@ print("FAIL")
                 0
             };
             let preview = iso_cylinder_preview(phase.x0, phase.y0, phase.x1, phase.y1, height, color, w, h, self.iso_mode);
-            if self.shape_preview != preview.iter().map(|&(x,y,c)|(x,y,c)).collect::<Vec<_>>() {
-                self.shape_preview = preview;
+            let mut mirrored_preview = Vec::new();
+            for (x, y, c) in preview {
+                for (mx, my) in self.mirror_positions(x, y, w, h) {
+                    mirrored_preview.push((mx, my, c));
+                }
+            }
+            if self.shape_preview != mirrored_preview {
+                self.shape_preview = mirrored_preview;
                 self.canvas_dirty = true;
             }
             response.ctx.request_repaint();
@@ -6219,8 +6241,18 @@ print("FAIL")
                     phase.x0, phase.y0, phase.x1, phase.y1, height, color,
                     self.iso_mode,
                 );
-                let edits: Vec<_> = edits.into_iter().filter(|&(x, y, _, _)| {
-                    self.select_state.is_pixel_selected(x, y)
+                let mut all_edits = edits.clone();
+                for &(x, y, _, new) in &edits {
+                    for &(mx, my) in &self.mirror_positions(x, y, w, h) {
+                        if mx != x || my != y {
+                            let old = ref_layer.get_pixel(mx, my);
+                            all_edits.push((mx, my, old, new));
+                        }
+                    }
+                }
+                let mut seen = std::collections::HashSet::new();
+                let edits: Vec<_> = all_edits.into_iter().filter(|&(x, y, _, _)| {
+                    self.select_state.is_pixel_selected(x, y) && seen.insert((x, y))
                 }).collect();
                 if !edits.is_empty() {
                     if self.project.is_tiled() {
@@ -6971,13 +7003,25 @@ print("FAIL")
                     let x1 = shape_px.clamp(0, w as i32 - 1) as u32;
                     let y1 = shape_py.clamp(0, h as i32 - 1) as u32;
                     let preview = iso_box_preview(x0, y0, x1, y1, 0_i32, color, w, h, self.iso_mode);
-                    self.shape_preview = preview;
+                    let mut mirrored = Vec::new();
+                    for (x, y, c) in preview {
+                        for (mx, my) in self.mirror_positions(x, y, w, h) {
+                            mirrored.push((mx, my, c));
+                        }
+                    }
+                    self.shape_preview = mirrored;
                     self.canvas_dirty = true;
                 } else if self.iso_cylinder_dragging {
                     let x1 = shape_px.clamp(0, w as i32 - 1) as u32;
                     let y1 = shape_py.clamp(0, h as i32 - 1) as u32;
                     let preview = iso_cylinder_preview(x0, y0, x1, y1, 0_i32, color, w, h, self.iso_mode);
-                    self.shape_preview = preview;
+                    let mut mirrored = Vec::new();
+                    for (x, y, c) in preview {
+                        for (mx, my) in self.mirror_positions(x, y, w, h) {
+                            mirrored.push((mx, my, c));
+                        }
+                    }
+                    self.shape_preview = mirrored;
                     self.canvas_dirty = true;
                 } else {
                     let active_tool = self.active_tool.clone();
@@ -7003,7 +7047,13 @@ print("FAIL")
                         }
                         _ => vec![],
                     };
-                    self.shape_preview = preview_edits.into_iter().map(|(x, y, _old, new)| (x, y, new)).collect();
+                    let mut mirrored = Vec::new();
+                    for (x, y, _old, new) in preview_edits {
+                        for (mx, my) in self.mirror_positions(x, y, w, h) {
+                            mirrored.push((mx, my, new));
+                        }
+                    }
+                    self.shape_preview = mirrored;
                     self.canvas_dirty = true;
                 }
             }
