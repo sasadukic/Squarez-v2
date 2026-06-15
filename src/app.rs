@@ -425,7 +425,7 @@ impl App {
             last_zoom_click_time: -1.0,
             last_okl_tab_click_time: -1.0,
             last_zoom_tool_btn_click: -1.0,
-            pending_zoom_fit: false,
+            pending_zoom_fit: true,
             last_layer_click: None,
             last_tab_click: None,
             shape_preview: Vec::new(),

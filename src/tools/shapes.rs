@@ -294,8 +294,8 @@ pub fn iso_box_preview(
                     draw_pixel(x, y, left_color);
                 }
             }
-            // Right face: x from cx to cx + 2 * rh + 1
-            for x in cx..=(cx + 2 * rh + 1) {
+            // Right face: x from cx + 1 to cx + 2 * rh + 1
+            for x in (cx + 1)..=(cx + 2 * rh + 1) {
                 let y_top_x = cy_top + rh - (x - cx) / 2;
                 let y_bot_x = y_top_x + height.abs();
                 for y in y_top_x..=y_bot_x {

@@ -26,6 +26,7 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_title("Squarez")
             .with_inner_size([1280.0, 800.0])
+            .with_maximized(true)
             .with_icon(std::sync::Arc::new(load_icon())),
         ..Default::default()
     };
