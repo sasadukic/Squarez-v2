@@ -5727,9 +5727,9 @@ print("FAIL")
                         } else {
                             // Draw empty slot indicator box
                             painter.rect_stroke(rect, 0.0, egui::Stroke::new(1.0, theme.surface), egui::StrokeKind::Inside);
-                        }
                     }
                 });
+        });
     }
 
     fn add_brush_from_selection(&mut self) {
