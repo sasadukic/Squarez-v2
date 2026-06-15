@@ -6524,9 +6524,14 @@ print("FAIL")
             self.mirror_y_sequence.clear();
             self.mirror_xy_sequence.clear();
             if is_select_tool && !self.select_state.has_float() {
-                self.select_state.rect = None; // clear previous selection on new drag
-                if matches!(self.active_tool, ActiveTool::RectSelect) {
-                    self.select_state.mask = None; // clear wand mask on starting rect marquee
+                let shift_held = response.ctx.input(|i| i.modifiers.shift);
+                let alt_held = response.ctx.input(|i| i.modifiers.alt);
+                let clicked_inside = self.select_state.mask.as_ref().map(|m| m.get(px, py)).unwrap_or(false);
+                if !shift_held && !alt_held && !clicked_inside {
+                    self.select_state.rect = None;
+                    if matches!(self.active_tool, ActiveTool::RectSelect) {
+                        self.select_state.mask = None;
+                    }
                 }
             }
         }
