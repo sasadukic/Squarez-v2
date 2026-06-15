@@ -6236,6 +6236,30 @@ print("FAIL")
             response.interact_pointer_pos()
         };
 
+        if (self.iso_box_dragging || self.iso_cylinder_dragging)
+            && self.drag_start.is_some()
+            && response.ctx.input(|i| i.pointer.primary_pressed())
+            && response.hovered()
+        {
+            if let (Some((x0, y0)), Some(pos)) = (self.drag_start, pos_opt) {
+                let (epx, epy) = self.canvas.screen_to_canvas_i32(pos, canvas_rect, w, h);
+                let x1 = epx.clamp(0, w as i32 - 1) as u32;
+                let y1 = epy.clamp(0, h as i32 - 1) as u32;
+                let (bx0, bx1) = (x0.min(x1), x0.max(x1));
+                let (by0, by1) = (y0.min(y1), y0.max(y1));
+                if self.iso_box_dragging {
+                    self.iso_box_phase = Some(IsoBoxHeightPhase { x0: bx0, y0: by0, x1: bx1, y1: by1 });
+                    self.iso_box_dragging = false;
+                } else {
+                    self.iso_cylinder_phase = Some(IsoCylinderPhase { x0: bx0, y0: by0, x1: bx1, y1: by1 });
+                    self.iso_cylinder_dragging = false;
+                }
+                self.drag_start = None;
+                self.shape_preview.clear();
+                return;
+            }
+        }
+
          // --- drag_stopped must run even when pos is None (release outside window) ---
          // Also trigger commit when primary button is released globally but drag_stopped
          // didn't fire because the cursor left the central panel.
@@ -6245,40 +6269,14 @@ print("FAIL")
              || ((is_shape_tool || is_select_tool) && self.drag_start.is_some() && !primary_down)
              || (self.last_pencil_pos.is_some() && !primary_down);
          if should_commit {
-            // Intercept isometric box drag → enter height phase instead of committing rect
-            if self.iso_box_dragging {
-                if let (Some((x0, y0)), Some(pos)) = (self.drag_start, pos_opt) {
-                    let (epx, epy) = self.canvas.screen_to_canvas_i32(pos, canvas_rect, w, h);
-                    let x1 = epx.clamp(0, w as i32 - 1) as u32;
-                    let y1 = epy.clamp(0, h as i32 - 1) as u32;
-                    let (bx0, bx1) = (x0.min(x1), x0.max(x1));
-                    let (by0, by1) = (y0.min(y1), y0.max(y1));
-                    self.iso_box_phase = Some(IsoBoxHeightPhase { x0: bx0, y0: by0, x1: bx1, y1: by1 });
-                }
-                self.iso_box_dragging = false;
-                self.drag_start = None;
-                self.shape_preview.clear();
-                return;
-            }
-            // Intercept isometric cylinder drag → enter height phase instead of committing
-            if self.iso_cylinder_dragging {
-                if let (Some((x0, y0)), Some(pos)) = (self.drag_start, pos_opt) {
-                    let (epx, epy) = self.canvas.screen_to_canvas_i32(pos, canvas_rect, w, h);
-                    let x1 = epx.clamp(0, w as i32 - 1) as u32;
-                    let y1 = epy.clamp(0, h as i32 - 1) as u32;
-                    let (bx0, bx1) = (x0.min(x1), x0.max(x1));
-                    let (by0, by1) = (y0.min(y1), y0.max(y1));
-                    self.iso_cylinder_phase = Some(IsoCylinderPhase { x0: bx0, y0: by0, x1: bx1, y1: by1 });
-                }
-                self.iso_cylinder_dragging = false;
-                self.drag_start = None;
-                self.shape_preview.clear();
-                return;
-            }
-            let color = self.color_state.foreground;
-            self.shape_preview.clear();
-            if !self.project.animations[ai].frames[fi].layers[li].locked
-                && !self.project.animations[ai].frames[fi].layers[li].is_group
+             if self.iso_box_dragging || self.iso_cylinder_dragging {
+                 // Ignore first release, let them continue resizing the base.
+                 return;
+             }
+             let color = self.color_state.foreground;
+             self.shape_preview.clear();
+             if !self.project.animations[ai].frames[fi].layers[li].locked
+                 && !self.project.animations[ai].frames[fi].layers[li].is_group
             {
                 if let (Some((x0, y0)), Some(pos)) = (self.drag_start, pos_opt) {
                     let (epx, epy) = self.canvas.screen_to_canvas_i32(pos, canvas_rect, w, h);
@@ -8917,6 +8915,13 @@ impl eframe::App for App {
         // If the user switches away from the selection tools, commit any float.
         if self.select_state.has_float() && !matches!(self.active_tool, ActiveTool::RectSelect | ActiveTool::MagicWand) {
             self.commit_float_to_layer();
+        }
+        // If the user switches away from the Rectangle tool, cancel any in-progress iso box dragging.
+        if self.iso_box_dragging && !matches!(self.active_tool, ActiveTool::Rectangle { .. }) {
+            self.iso_box_dragging = false;
+            self.drag_start = None;
+            self.shape_preview.clear();
+            self.canvas_dirty = true;
         }
         // If the user switches away from the Rectangle tool, cancel any in-progress iso box.
         if self.iso_box_phase.is_some() && !matches!(self.active_tool, ActiveTool::Rectangle { .. }) {
