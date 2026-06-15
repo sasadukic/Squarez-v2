@@ -6341,11 +6341,6 @@ print("FAIL")
                         let alt_held = response.ctx.input(|i| i.modifiers.alt);
                         if rect.2 > 0 && rect.3 > 0 {
                             let (rx, ry, rw, rh) = rect;
-                            let ref_layer = if self.project.is_tiled() {
-                                self.stitch_temp_layer(ai, li)
-                            } else {
-                                self.project.animations[ai].frames[fi].layers[li].clone()
-                            };
                             if rw == 1 && rh == 1 {
                                 if !shift_held && !alt_held {
                                     self.select_state.clear();
