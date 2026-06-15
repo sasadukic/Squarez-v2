@@ -459,19 +459,20 @@ fn ellipse_outline(cx: i32, cy: i32, rx: i32, ry: i32) -> Vec<(i32, i32)> {
 }
 
 fn ellipse_fill(cx: i32, cy: i32, rx: i32, ry: i32) -> Vec<(i32, i32)> {
-    let mut points = Vec::new();
     if rx <= 0 || ry <= 0 {
         return vec![(cx, cy)];
     }
-    for y_offset in -ry..=ry {
-        let term = 1.0 - (y_offset as f32 / ry as f32).powi(2);
-        let half_w = if term > 0.0 {
-            (rx as f32 * term.sqrt()).round() as i32
-        } else {
-            0
-        };
-        for x_offset in -half_w..=half_w {
-            points.push((cx + x_offset, cy + y_offset));
+    let outline = ellipse_outline(cx, cy, rx, ry);
+    let mut y_ranges = std::collections::HashMap::new();
+    for (x, y) in outline {
+        let entry = y_ranges.entry(y).or_insert((x, x));
+        entry.0 = entry.0.min(x);
+        entry.1 = entry.1.max(x);
+    }
+    let mut points = Vec::new();
+    for (y, (x_min, x_max)) in y_ranges {
+        for x in x_min..=x_max {
+            points.push((x, y));
         }
     }
     points
