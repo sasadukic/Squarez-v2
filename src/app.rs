@@ -3297,7 +3297,7 @@ impl App {
 
         let layer_count = self.project.animations[ai].frames[fi].layers.len();
         const ROW_H: f32 = 30.0;
-        const MAX_VISIBLE: f32 = 5.0;
+        const MAX_VISIBLE: f32 = 4.0;
 
         // Spring: visual slot of active layer (list drawn in reverse, top = highest index)
         let active_visual_slot = layer_count.saturating_sub(1).saturating_sub(self.project.active_layer);
@@ -3329,11 +3329,11 @@ impl App {
         egui::ScrollArea::vertical()
             .id_salt("layers_scroll")
             .max_height(MAX_VISIBLE * ROW_H)
-            .auto_shrink([false, false])
+            .auto_shrink([false, true])
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing = Vec2::ZERO;
                 let list_width = list_width;
-                let list_height = (visible_count as f32 * ROW_H).max(MAX_VISIBLE * ROW_H);
+                let list_height = visible_count as f32 * ROW_H;
                 let list_origin = ui.next_widget_position();
                 let list_rect = egui::Rect::from_min_size(list_origin, Vec2::new(list_width, list_height));
                 ui.painter().rect_filled(list_rect, 0.0, theme.panel);
@@ -3642,7 +3642,7 @@ impl App {
 
         let anim_count = self.project.animations.len();
         const ROW_H: f32 = 30.0;
-        const MAX_VISIBLE: f32 = 5.0;
+        const MAX_VISIBLE: f32 = 4.0;
 
         // Spring: target is active_animation * ROW_H
         let target_y = self.project.active_animation as f32 * ROW_H;
@@ -3662,11 +3662,11 @@ impl App {
         egui::ScrollArea::vertical()
             .id_salt("animations_scroll")
             .max_height(MAX_VISIBLE * ROW_H)
-            .auto_shrink([false, false])
+            .auto_shrink([false, true])
             .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
             .show(ui, |ui| {
                 let list_width = list_width;
-                let list_height = (anim_count as f32 * ROW_H).max(MAX_VISIBLE * ROW_H);
+                let list_height = anim_count as f32 * ROW_H;
                 let list_origin = ui.next_widget_position();
                 let list_rect = egui::Rect::from_min_size(list_origin, Vec2::new(list_width, list_height));
                 ui.painter().rect_filled(list_rect, 0.0, theme.panel);
