@@ -6346,7 +6346,7 @@ print("FAIL")
                             } else {
                                 self.project.animations[ai].frames[fi].layers[li].clone()
                             };
-                            if rw == 1 && rh == 1 && self.is_empty_space(&ref_layer, rx, ry) {
+                            if rw == 1 && rh == 1 {
                                 if !shift_held && !alt_held {
                                     self.select_state.clear();
                                 }
@@ -8782,8 +8782,12 @@ impl eframe::App for App {
                 self.iso_cylinder_phase = None;
                 self.shape_preview.clear();
                 self.canvas_dirty = true;
-            } else if self.select_state.has_float() {
-                self.commit_float_to_layer();
+            } else if self.select_state.has_float() || self.select_state.has_selection() {
+                if self.select_state.has_float() {
+                    self.commit_float_to_layer();
+                }
+                self.select_state.clear();
+                self.canvas_dirty = true;
             }
         }
         if (ctx.input(|i| i.key_pressed(egui::Key::Delete)) || ctx.input(|i| i.key_pressed(egui::Key::Backspace)))
