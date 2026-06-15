@@ -631,7 +631,7 @@ pub fn iso_cylinder_preview(
             let top_pts = ellipse_fill(cx, cy_top, rw, rh);
             for &(x, y) in &top_pts {
                 let y_bot = y + height.abs();
-                let body_col = if x < cx { left_color } else { right_color };
+                let body_col = if x <= cx { left_color } else { right_color };
                 for y_body in y..=y_bot {
                     draw_pixel(x, y_body, body_col);
                 }
