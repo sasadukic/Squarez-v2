@@ -5938,22 +5938,18 @@ print("FAIL")
                         let active = self.active_brush_index == Some(i);
                         let hover = ui.rect_contains_pointer(rect);
 
-                        let bg_color = if active {
-                            theme.accent.linear_multiply(0.3)
-                        } else if hover {
-                            theme.surface.linear_multiply(1.2)
+                        if active {
+                            let bg_color = theme.accent.linear_multiply(0.3);
+                            scroll_painter.rect_filled(rect.shrink(1.0), 0.0, bg_color);
+                            scroll_painter.rect_stroke(rect.shrink(1.0), 0.0, egui::Stroke::new(1.0, theme.accent), egui::StrokeKind::Inside);
                         } else {
-                            theme.surface
-                        };
-
-                        scroll_painter.rect_filled(rect.shrink(1.0), 0.0, bg_color);
-
-                        let border_color = if active {
-                            theme.accent
-                        } else {
-                            theme.border
-                        };
-                        scroll_painter.rect_stroke(rect.shrink(1.0), 0.0, egui::Stroke::new(1.0, border_color), egui::StrokeKind::Inside);
+                            let border_color = if hover {
+                                theme.surface.linear_multiply(1.2)
+                            } else {
+                                theme.surface
+                            };
+                            scroll_painter.rect_stroke(rect.shrink(1.0), 0.0, egui::Stroke::new(1.0, border_color), egui::StrokeKind::Inside);
+                        }
 
                         let bw = brush.width as f32;
                         let bh = brush.height as f32;
