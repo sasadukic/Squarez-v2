@@ -5075,7 +5075,7 @@ impl App {
                         }
 
                         // Handles
-                        for (h, p) in handles {
+                        for (_, p) in handles {
                             let center = to_screen(p);
                             let size = zoom;
                             let hr = egui::Rect::from_center_size(center, egui::Vec2::splat(size));
