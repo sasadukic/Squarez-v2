@@ -7305,25 +7305,46 @@ print("FAIL")
                             let mut nw = sw0;
                             let mut nh = sh0;
                             match handle {
-                                Handle::E  => { nw = (sw0 + ldx).max(1.0); }
-                                Handle::W  => { nx = anchor.offset.0 + ldx; nw = (sw0 - ldx).max(1.0); }
-                                Handle::S  => { nh = (sh0 + ldy).max(1.0); }
-                                Handle::N  => { ny = anchor.offset.1 + ldy; nh = (sh0 - ldy).max(1.0); }
-                                Handle::SE => { nw = (sw0 + ldx).max(1.0); nh = (sh0 + ldy).max(1.0); }
-                                Handle::NE => { nw = (sw0 + ldx).max(1.0); ny = anchor.offset.1 + ldy; nh = (sh0 - ldy).max(1.0); }
-                                Handle::SW => { nx = anchor.offset.0 + ldx; nw = (sw0 - ldx).max(1.0); nh = (sh0 + ldy).max(1.0); }
-                                Handle::NW => { nx = anchor.offset.0 + ldx; nw = (sw0 - ldx).max(1.0); ny = anchor.offset.1 + ldy; nh = (sh0 - ldy).max(1.0); }
+                                Handle::E  => { nw = (sw0 + ldx).round().max(1.0); }
+                                Handle::W  => {
+                                    let r_ldx = ldx.round();
+                                    nx = anchor.offset.0 + r_ldx;
+                                    nw = (sw0 - r_ldx).round().max(1.0);
+                                }
+                                Handle::S  => { nh = (sh0 + ldy).round().max(1.0); }
+                                Handle::N  => {
+                                    let r_ldy = ldy.round();
+                                    ny = anchor.offset.1 + r_ldy;
+                                    nh = (sh0 - r_ldy).round().max(1.0);
+                                }
+                                Handle::SE => {
+                                    nw = (sw0 + ldx).round().max(1.0);
+                                    nh = (sh0 + ldy).round().max(1.0);
+                                }
+                                Handle::NE => {
+                                    nw = (sw0 + ldx).round().max(1.0);
+                                    let r_ldy = ldy.round();
+                                    ny = anchor.offset.1 + r_ldy;
+                                    nh = (sh0 - r_ldy).round().max(1.0);
+                                }
+                                Handle::SW => {
+                                    let r_ldx = ldx.round();
+                                    nx = anchor.offset.0 + r_ldx;
+                                    nw = (sw0 - r_ldx).round().max(1.0);
+                                    nh = (sh0 + ldy).round().max(1.0);
+                                }
+                                Handle::NW => {
+                                    let r_ldx = ldx.round();
+                                    nx = anchor.offset.0 + r_ldx;
+                                    nw = (sw0 - r_ldx).round().max(1.0);
+                                    let r_ldy = ldy.round();
+                                    ny = anchor.offset.1 + r_ldy;
+                                    nh = (sh0 - r_ldy).round().max(1.0);
+                                }
                                 _ => {}
                             }
-                            // We're growing/shrinking around the original rotation center
-                            // for axis edges, but our offset is a top-left in unrotated
-                            // space — we need to keep the rotated rect's visual center
-                            // stable for the unchanged-edge corners. We instead just
-                            // apply the deltas directly and let the rotation compose;
-                            // for non-zero rotation this is an approximation that
-                            // matches user expectations from Figma/Photoshop.
                             self.select_state.scale = (nw / w0 as f32, nh / h0 as f32);
-                            self.select_state.offset = (nx, ny);
+                            self.select_state.offset = (nx.round(), ny.round());
                         }
                     }
                     SelectInteraction::Rotating => {
