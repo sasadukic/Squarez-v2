@@ -6275,13 +6275,11 @@ print("FAIL")
                 let (epx, epy) = self.canvas.screen_to_canvas_i32(pos, canvas_rect, w, h);
                 let x1 = epx.clamp(0, w as i32 - 1) as u32;
                 let y1 = epy.clamp(0, h as i32 - 1) as u32;
-                let (bx0, bx1) = (x0.min(x1), x0.max(x1));
-                let (by0, by1) = (y0.min(y1), y0.max(y1));
                 if self.iso_box_dragging {
-                    self.iso_box_phase = Some(IsoBoxHeightPhase { x0: bx0, y0: by0, x1: bx1, y1: by1, start_y: epy });
+                    self.iso_box_phase = Some(IsoBoxHeightPhase { x0, y0, x1, y1, start_y: epy });
                     self.iso_box_dragging = false;
                 } else {
-                    self.iso_cylinder_phase = Some(IsoCylinderPhase { x0: bx0, y0: by0, x1: bx1, y1: by1, start_y: epy });
+                    self.iso_cylinder_phase = Some(IsoCylinderPhase { x0, y0, x1, y1, start_y: epy });
                     self.iso_cylinder_dragging = false;
                 }
                 self.drag_start = None;
