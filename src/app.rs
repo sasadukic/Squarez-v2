@@ -36,6 +36,7 @@ struct IsoBoxHeightPhase {
     y0: u32,
     x1: u32,
     y1: u32,
+    start_y: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -44,6 +45,7 @@ struct IsoCylinderPhase {
     y0: u32,
     x1: u32,
     y1: u32,
+    start_y: i32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -374,7 +376,7 @@ impl App {
             alt_was_down: false,
             iso_box_dragging: false,
             iso_cylinder_dragging: false,
-            iso_mode: crate::tools::IsoMode::Isometric,
+            iso_mode: crate::tools::IsoMode::Off,
             iso_box_phase: None,
             iso_cylinder_phase: None,
             mirror_x: false,
@@ -4343,7 +4345,7 @@ impl App {
                     let row0_resp = ui.interact(row0_rect, egui::Id::new("ctx_row0_hover"), egui::Sense::hover());
                     row0_resp.on_hover_text("Projection & Style");
 
-                    // Left button: Projection type (Iso vs TopDown)
+                    // Left button: Projection type (Off vs Iso vs TopDown)
                     let left_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row0_y), Vec2::new(ctrl_w, btn_h));
                     let left_resp = ui.interact(left_rect, egui::Id::new("ctx_shape_proj_toggle"), egui::Sense::click());
                     let left_bg = if left_resp.hovered() { theme.accent } else { theme.surface };
@@ -4356,7 +4358,18 @@ impl App {
                             | crate::tools::IsoMode::IsometricHidden
                             | crate::tools::IsoMode::IsometricFill
                     );
-                    let proj_str = if is_iso { "Iso" } else { "Top" };
+                    let is_top = matches!(
+                        self.iso_mode,
+                        crate::tools::IsoMode::TopDown
+                            | crate::tools::IsoMode::TopDownFill
+                    );
+                    let proj_str = if is_iso {
+                        "Iso"
+                    } else if is_top {
+                        "Top"
+                    } else {
+                        "Off"
+                    };
                     ui.painter().text(
                         left_rect.center(),
                         egui::Align2::CENTER_CENTER,
@@ -4367,28 +4380,44 @@ impl App {
 
                     if left_resp.clicked() {
                         self.iso_mode = match self.iso_mode {
+                            crate::tools::IsoMode::Off => crate::tools::IsoMode::Isometric,
                             crate::tools::IsoMode::Isometric | crate::tools::IsoMode::IsometricHidden => {
                                 crate::tools::IsoMode::TopDown
                             }
                             crate::tools::IsoMode::IsometricFill => crate::tools::IsoMode::TopDownFill,
-                            crate::tools::IsoMode::TopDown => crate::tools::IsoMode::Isometric,
-                            crate::tools::IsoMode::TopDownFill => crate::tools::IsoMode::IsometricFill,
+                            crate::tools::IsoMode::TopDown | crate::tools::IsoMode::TopDownFill => crate::tools::IsoMode::Off,
                         };
                     }
 
-                    // Right button: Style option (Wire, Hide, Fill)
+                    // Right button: Style option (Wire, Hide, Fill), disabled if projection is Off
+                    let is_off = self.iso_mode == crate::tools::IsoMode::Off;
                     let right_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x + ctrl_w + pad, row0_y), Vec2::new(ctrl_w, btn_h));
-                    let right_resp = ui.interact(right_rect, egui::Id::new("ctx_shape_style_toggle"), egui::Sense::click());
-                    let right_bg = if right_resp.hovered() { theme.accent } else { theme.surface };
+                    let right_resp = if is_off {
+                        ui.interact(right_rect, egui::Id::new("ctx_shape_style_toggle"), egui::Sense::hover())
+                    } else {
+                        ui.interact(right_rect, egui::Id::new("ctx_shape_style_toggle"), egui::Sense::click())
+                    };
+                    let right_bg = if !is_off && right_resp.hovered() { theme.accent } else { theme.surface };
                     ui.painter().rect_filled(right_rect, 0.0, right_bg);
-                    let right_fg = if right_resp.hovered() { theme.fg } else { theme.fg_muted };
+                    let right_fg = if is_off {
+                        theme.fg_muted.linear_multiply(0.4)
+                    } else if right_resp.hovered() {
+                        theme.fg
+                    } else {
+                        theme.fg_muted
+                    };
 
-                    let style_str = match self.iso_mode {
-                        crate::tools::IsoMode::Isometric => "Wire",
-                        crate::tools::IsoMode::IsometricHidden => "Hide",
-                        crate::tools::IsoMode::IsometricFill => "Fill",
-                        crate::tools::IsoMode::TopDown => "Wire",
-                        crate::tools::IsoMode::TopDownFill => "Fill",
+                    let style_str = if is_off {
+                        "--"
+                    } else {
+                        match self.iso_mode {
+                            crate::tools::IsoMode::Isometric => "Wire",
+                            crate::tools::IsoMode::IsometricHidden => "Hide",
+                            crate::tools::IsoMode::IsometricFill => "Fill",
+                            crate::tools::IsoMode::TopDown => "Wire",
+                            crate::tools::IsoMode::TopDownFill => "Fill",
+                            crate::tools::IsoMode::Off => "--",
+                        }
                     };
                     ui.painter().text(
                         right_rect.center(),
@@ -4398,13 +4427,14 @@ impl App {
                         right_fg,
                     );
 
-                    if right_resp.clicked() {
+                    if !is_off && right_resp.clicked() {
                         self.iso_mode = match self.iso_mode {
                             crate::tools::IsoMode::Isometric => crate::tools::IsoMode::IsometricHidden,
                             crate::tools::IsoMode::IsometricHidden => crate::tools::IsoMode::IsometricFill,
                             crate::tools::IsoMode::IsometricFill => crate::tools::IsoMode::Isometric,
                             crate::tools::IsoMode::TopDown => crate::tools::IsoMode::TopDownFill,
                             crate::tools::IsoMode::TopDownFill => crate::tools::IsoMode::TopDown,
+                            crate::tools::IsoMode::Off => crate::tools::IsoMode::Off,
                         };
                     }
                 } else {
@@ -6080,7 +6110,7 @@ print("FAIL")
                 .or_else(|| response.hover_pos());
             let height = if let Some(pos) = mouse_pos {
                 let (_, my) = self.canvas.screen_to_canvas_i32(pos, canvas_rect, w, h);
-                my - phase.y1 as i32
+                my - phase.start_y
             } else {
                 0
             };
@@ -6149,7 +6179,7 @@ print("FAIL")
                 .or_else(|| response.hover_pos());
             let height = if let Some(pos) = mouse_pos {
                 let (_, my) = self.canvas.screen_to_canvas_i32(pos, canvas_rect, w, h);
-                my - phase.y1 as i32 // positive = down (larger Y), negative = up (smaller Y)
+                my - phase.start_y // positive = down (larger Y), negative = up (smaller Y)
             } else {
                 0
             };
@@ -6248,10 +6278,10 @@ print("FAIL")
                 let (bx0, bx1) = (x0.min(x1), x0.max(x1));
                 let (by0, by1) = (y0.min(y1), y0.max(y1));
                 if self.iso_box_dragging {
-                    self.iso_box_phase = Some(IsoBoxHeightPhase { x0: bx0, y0: by0, x1: bx1, y1: by1 });
+                    self.iso_box_phase = Some(IsoBoxHeightPhase { x0: bx0, y0: by0, x1: bx1, y1: by1, start_y: epy });
                     self.iso_box_dragging = false;
                 } else {
-                    self.iso_cylinder_phase = Some(IsoCylinderPhase { x0: bx0, y0: by0, x1: bx1, y1: by1 });
+                    self.iso_cylinder_phase = Some(IsoCylinderPhase { x0: bx0, y0: by0, x1: bx1, y1: by1, start_y: epy });
                     self.iso_cylinder_dragging = false;
                 }
                 self.drag_start = None;
@@ -6675,11 +6705,11 @@ print("FAIL")
             }
 
             // Rectangle drag start → isometric box mode
-            if matches!(self.active_tool, ActiveTool::Rectangle { .. }) {
+            if matches!(self.active_tool, ActiveTool::Rectangle { .. }) && self.iso_mode != crate::tools::IsoMode::Off {
                 self.iso_box_dragging = true;
             }
             // Ellipse drag start → isometric cylinder mode
-            if matches!(self.active_tool, ActiveTool::Ellipse { .. }) {
+            if matches!(self.active_tool, ActiveTool::Ellipse { .. }) && self.iso_mode != crate::tools::IsoMode::Off {
                 self.iso_cylinder_dragging = true;
             }
             self.stroke_edits.clear();

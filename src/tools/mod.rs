@@ -32,6 +32,7 @@ pub enum ActiveTool {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IsoMode {
+    Off,
     Isometric,
     IsometricHidden,
     IsometricFill,
