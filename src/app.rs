@@ -175,6 +175,7 @@ pub struct App {
     renaming_tab_focused: bool,
     // Palette drag-and-drop reorder
     palette_drag_idx: Option<usize>,
+    brushes_drag_idx: Option<usize>,
     // Spring-animated selection highlight for layers panel
     layer_sel_y: f32,
     layer_sel_vel: f32,
@@ -430,6 +431,7 @@ impl App {
             renaming_tab: None,
             renaming_tab_focused: false,
             palette_drag_idx: None,
+            brushes_drag_idx: None,
             layer_sel_y: 0.0,
             layer_sel_vel: 0.0,
             anim_sel_y: 0.0,
@@ -5822,6 +5824,16 @@ print("FAIL")
         pts
     }
 
+    fn delete_active_brush(&mut self) {
+        if let Some(idx) = self.active_brush_index {
+            if idx < self.brushes.len() {
+                self.brushes.remove(idx);
+            }
+            self.active_brush_index = None;
+            self.brushes_drag_idx = None;
+        }
+    }
+
     fn draw_brushes_section(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme.clone();
         if self.ui_state.is_collapsed(Panel::Brushes) {
@@ -5854,14 +5866,15 @@ print("FAIL")
             return;
         }
 
-        let (show, add_clicked, _, _, _) = section_header(
+        let has_active = self.active_brush_index.is_some();
+        let (show, add_clicked, minus_clicked) = section_header_with_minus_and_add(
             ui,
             &self.theme,
             &mut self.ui_state,
             Panel::Brushes,
             egui::include_image!("../assets/icons/brush.svg"),
-            None,
-            false,
+            true,
+            has_active,
         );
 
         if !show { return; }
@@ -5870,90 +5883,183 @@ print("FAIL")
             self.add_brush_from_selection();
         }
 
+        if minus_clicked {
+            self.delete_active_brush();
+        }
+
         let cols = 4;
-        let rows = 128;
+        let brush_len = self.brushes.len();
+        let rows = ((brush_len + 3) / 4).max(1);
 
         let grid_width = 176.0;
         let size = grid_width / cols as f32;
         let row_height = size;
 
-        let max_height = 8.0 * row_height;
+        let visible_rows = rows.min(4);
+        let current_height = visible_rows as f32 * row_height;
+
+        let is_dragging = self.brushes_drag_idx.is_some();
+        let pointer_pos = ui.input(|i| i.pointer.hover_pos());
+        let released = ui.input(|i| i.pointer.primary_released());
 
         Frame::new().fill(theme.panel).inner_margin(Margin::same(0)).show(ui, |ui| {
+            let (grid_rect, _) = ui.allocate_exact_size(
+                Vec2::new(grid_width, current_height),
+                egui::Sense::hover(),
+            );
+
             egui::ScrollArea::vertical()
                 .id_salt("brushes_scroll")
-                .max_height(max_height)
+                .max_height(current_height)
                 .show(ui, |ui| {
-                    egui::Grid::new("brushes_grid")
-                        .num_columns(cols)
-                        .min_col_width(size)
-                        .max_col_width(size)
-                        .min_row_height(row_height)
-                        .spacing(Vec2::ZERO)
-                        .show(ui, |ui| {
-                            for r in 0..rows {
-                                for c in 0..cols {
-                                    let idx = r * cols + c;
-                                    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::click());
-                                    
-                                    let active = self.active_brush_index == Some(idx);
-                                    let hover = resp.hovered();
-                                    
-                                    let bg_color = if active {
-                                        theme.accent.linear_multiply(0.3)
-                                    } else if hover {
-                                        theme.surface.linear_multiply(1.2)
-                                    } else {
-                                        theme.surface
-                                    };
-                                    
-                                    ui.painter().rect_filled(rect.shrink(1.0), 0.0, bg_color);
-                                    
-                                    let border_color = if active {
-                                        theme.accent
-                                    } else {
-                                        theme.border
-                                    };
-                                    ui.painter().rect_stroke(rect.shrink(1.0), 0.0, egui::Stroke::new(1.0, border_color), egui::StrokeKind::Inside);
-                                    
-                                    if idx < self.brushes.len() {
-                                        let brush = &self.brushes[idx];
-                                        let bw = brush.width as f32;
-                                        let bh = brush.height as f32;
-                                        let inner_rect = rect.shrink(3.0);
-                                        let scale = (inner_rect.width() / bw).min(inner_rect.height() / bh).min(4.0).max(1.0);
-                                        let tw = bw * scale;
-                                        let th = bh * scale;
-                                        let tx = inner_rect.left() + (inner_rect.width() - tw) / 2.0;
-                                        let ty = inner_rect.top() + (inner_rect.height() - th) / 2.0;
-                                        
-                                        for py in 0..brush.height {
-                                            for px in 0..brush.width {
-                                                let p = brush.pixels[(py * brush.width + px) as usize];
-                                                if p[3] > 0 {
-                                                    let color = Color32::from_rgba_premultiplied(p[0], p[1], p[2], p[3]);
-                                                    let px_rect = egui::Rect::from_min_size(
-                                                        Pos2::new(tx + px as f32 * scale, ty + py as f32 * scale),
-                                                        Vec2::splat(scale),
-                                                    );
-                                                    ui.painter().rect_filled(px_rect, 0.0, color);
-                                                }
-                                            }
-                                        }
-                                        
-                                        if resp.clicked() {
-                                            if active {
-                                                self.active_brush_index = None;
-                                            } else {
-                                                self.active_brush_index = Some(idx);
-                                            }
-                                        }
+                    let (scroll_grid_rect, _) = ui.allocate_exact_size(
+                        Vec2::new(grid_width, rows as f32 * row_height),
+                        egui::Sense::hover(),
+                    );
+                    let scroll_painter = ui.painter_at(scroll_grid_rect);
+
+                    for i in 0..brush_len {
+                        let col = i % cols;
+                        let row = i / cols;
+                        let rect = egui::Rect::from_min_size(
+                            scroll_grid_rect.min + Vec2::new(col as f32 * size, row as f32 * row_height),
+                            Vec2::new(size, size),
+                        );
+
+                        if self.brushes_drag_idx == Some(i) {
+                            scroll_painter.rect_filled(rect.shrink(1.0), 0.0, theme.surface.linear_multiply(0.5));
+                            continue;
+                        }
+
+                        let brush = &self.brushes[i];
+                        let active = self.active_brush_index == Some(i);
+                        let hover = ui.rect_contains_pointer(rect);
+
+                        let bg_color = if active {
+                            theme.accent.linear_multiply(0.3)
+                        } else if hover {
+                            theme.surface.linear_multiply(1.2)
+                        } else {
+                            theme.surface
+                        };
+
+                        scroll_painter.rect_filled(rect.shrink(1.0), 0.0, bg_color);
+
+                        let border_color = if active {
+                            theme.accent
+                        } else {
+                            theme.border
+                        };
+                        scroll_painter.rect_stroke(rect.shrink(1.0), 0.0, egui::Stroke::new(1.0, border_color), egui::StrokeKind::Inside);
+
+                        let bw = brush.width as f32;
+                        let bh = brush.height as f32;
+                        let inner_rect = rect.shrink(3.0);
+                        let scale = (inner_rect.width() / bw).min(inner_rect.height() / bh).min(4.0).max(1.0);
+                        let tw = bw * scale;
+                        let th = bh * scale;
+                        let tx = inner_rect.left() + (inner_rect.width() - tw) / 2.0;
+                        let ty = inner_rect.top() + (inner_rect.height() - th) / 2.0;
+
+                        for py in 0..brush.height {
+                            for px in 0..brush.width {
+                                let p = brush.pixels[(py * brush.width + px) as usize];
+                                if p[3] > 0 {
+                                    let color = Color32::from_rgba_premultiplied(p[0], p[1], p[2], p[3]);
+                                    let px_rect = egui::Rect::from_min_size(
+                                        Pos2::new(tx + px as f32 * scale, ty + py as f32 * scale),
+                                        Vec2::splat(scale),
+                                    );
+                                    scroll_painter.rect_filled(px_rect, 0.0, color);
+                                }
+                            }
+                        }
+
+                        let resp = ui.interact(rect, ui.id().with(("brush_item", i)), egui::Sense::click_and_drag());
+                        if resp.drag_started() {
+                            self.brushes_drag_idx = Some(i);
+                        }
+                        if resp.clicked() {
+                            if active {
+                                self.active_brush_index = None;
+                            } else {
+                                self.active_brush_index = Some(i);
+                            }
+                        }
+                    }
+                });
+
+            // --- Handle drop to reorder ---
+            if released {
+                if let Some(drag_idx) = self.brushes_drag_idx.take() {
+                    if let Some(pos) = pointer_pos {
+                        if grid_rect.contains(pos) {
+                            let relative_y = pos.y - grid_rect.min.y;
+                            let drop_col = ((pos.x - grid_rect.min.x) / size) as usize;
+                            let drop_row = (relative_y / row_height) as usize;
+                            let drop_idx = (drop_row * cols + drop_col).min(brush_len.saturating_sub(1));
+                            if drop_idx != drag_idx {
+                                let brush = self.brushes.remove(drag_idx);
+                                self.brushes.insert(drop_idx, brush);
+                                if let Some(active_idx) = self.active_brush_index {
+                                    if active_idx == drag_idx {
+                                        self.active_brush_index = Some(drop_idx);
+                                    } else if drag_idx < active_idx && drop_idx >= active_idx {
+                                        self.active_brush_index = Some(active_idx - 1);
+                                    } else if drag_idx > active_idx && drop_idx <= active_idx {
+                                        self.active_brush_index = Some(active_idx + 1);
                                     }
                                 }
-                                ui.end_row();
                             }
-                        });
-                });
+                        }
+                    }
+                }
+            }
+
+            // --- Drag ghost for internal brushes drag ---
+            if let Some(drag_idx) = self.brushes_drag_idx {
+                if is_dragging {
+                    if let Some(pos) = pointer_pos {
+                        let ghost_rect = egui::Rect::from_center_size(pos, Vec2::new(size, size));
+                        let ghost_painter = ui.ctx().layer_painter(egui::LayerId::new(
+                            egui::Order::Tooltip,
+                            egui::Id::new("brushes_drag_ghost"),
+                        ));
+
+                        let brush = &self.brushes[drag_idx];
+                        let bw = brush.width as f32;
+                        let bh = brush.height as f32;
+                        let inner_rect = ghost_rect.shrink(3.0);
+                        let scale = (inner_rect.width() / bw).min(inner_rect.height() / bh).min(4.0).max(1.0);
+                        let tw = bw * scale;
+                        let th = bh * scale;
+                        let tx = inner_rect.left() + (inner_rect.width() - tw) / 2.0;
+                        let ty = inner_rect.top() + (inner_rect.height() - th) / 2.0;
+
+                        ghost_painter.rect_filled(ghost_rect.shrink(1.0), 0.0, theme.surface.linear_multiply(1.2));
+                        ghost_painter.rect_stroke(
+                            ghost_rect.shrink(1.0),
+                            0.0,
+                            egui::Stroke::new(2.0, theme.fg),
+                            egui::StrokeKind::Inside,
+                        );
+
+                        for py in 0..brush.height {
+                            for px in 0..brush.width {
+                                let p = brush.pixels[(py * brush.width + px) as usize];
+                                if p[3] > 0 {
+                                    let color = Color32::from_rgba_premultiplied(p[0], p[1], p[2], p[3]);
+                                    let px_rect = egui::Rect::from_min_size(
+                                        Pos2::new(tx + px as f32 * scale, ty + py as f32 * scale),
+                                        Vec2::splat(scale),
+                                    );
+                                    ghost_painter.rect_filled(px_rect, 0.0, color);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         });
     }
 
@@ -9606,6 +9712,62 @@ fn dropdown_row(ui: &mut egui::Ui, theme: &Theme, label: &str, right: Option<&st
 
 fn window_check(visible: bool) -> Option<&'static str> {
     visible.then_some("✓")
+}
+
+fn section_header_with_minus_and_add(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    state: &mut UiState,
+    panel: Panel,
+    icon: ImageSource<'static>,
+    show_minus: bool,
+    minus_enabled: bool,
+) -> (bool, bool, bool) {
+    if !state.is_visible(panel) {
+        return (false, false, false);
+    }
+    let collapsed = state.is_collapsed(panel);
+    let mut add_clicked = false;
+    let mut minus_clicked = false;
+    Frame::new().fill(theme.panel).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), egui::Sense::hover());
+        let painter = ui.painter_at(rect);
+        
+        let icon_size = Vec2::splat(16.0);
+        let icon_rect = egui::Rect::from_center_size(Pos2::new(rect.left() + 8.0, rect.center().y), icon_size);
+        let icon_resp = ui.interact(icon_rect, egui::Id::new(("hdr_icon", panel)), egui::Sense::click());
+        let icon_tint = if icon_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+        ui.put(icon_rect, Image::new(icon).tint(icon_tint).fit_to_exact_size(icon_size));
+        if icon_resp.clicked() {
+            state.toggle_collapsed(panel);
+        }
+        if !collapsed {
+            let plus_rect = egui::Rect::from_center_size(Pos2::new(rect.right() - 8.0, rect.center().y), Vec2::splat(16.0));
+            let plus_resp = ui.interact(plus_rect, egui::Id::new(("hdr_plus", panel)), egui::Sense::click());
+            let plus_color = if plus_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+            painter.text(plus_rect.center(), egui::Align2::CENTER_CENTER, "+", FontId::new(16.0, FontFamily::Proportional), plus_color);
+            if plus_resp.clicked() {
+                add_clicked = true;
+            }
+
+            if show_minus {
+                let minus_rect = egui::Rect::from_center_size(Pos2::new(rect.right() - 24.0, rect.center().y), Vec2::splat(16.0));
+                let minus_resp = ui.interact(minus_rect, egui::Id::new(("hdr_minus", panel)), egui::Sense::click());
+                let minus_color = if !minus_enabled {
+                    theme.fg_desc.linear_multiply(0.3)
+                } else if minus_resp.hovered() {
+                    Color32::WHITE
+                } else {
+                    theme.fg_desc
+                };
+                painter.text(minus_rect.center(), egui::Align2::CENTER_CENTER, "-", FontId::new(16.0, FontFamily::Proportional), minus_color);
+                if minus_enabled && minus_resp.clicked() {
+                    minus_clicked = true;
+                }
+            }
+        }
+    });
+    (!collapsed, add_clicked, minus_clicked)
 }
 
 /// Returns `(show_content, add_clicked, extra_clicked)`.
