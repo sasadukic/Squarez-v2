@@ -6522,7 +6522,7 @@ print("FAIL")
         }
 
         let press_started = response.drag_started() || (response.ctx.input(|i| i.pointer.primary_pressed()) && response.hovered());
-        if press_started {
+        if press_started && self.drag_start.is_none() {
             if is_select_tool && self.select_state.has_float() {
                 let (cx_px, cy_px) = self.canvas.screen_to_canvas_f32(pos, canvas_rect, w, h);
                 if self.hit_test_selection(cx_px, cy_px).is_none() {
