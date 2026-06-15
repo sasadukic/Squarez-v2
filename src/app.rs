@@ -454,13 +454,17 @@ impl App {
             view_show_pos: None,
             sidebar_order: {
                 let mut order = layout.as_ref().map(|l| l.sidebar_order.clone()).unwrap_or_else(|| {
-                    vec![Panel::Palette, Panel::Color, Panel::Layers, Panel::Animations, Panel::Preview, Panel::Tiles, Panel::Brushes]
+                    vec![Panel::Palette, Panel::Color, Panel::Brushes, Panel::Layers, Panel::Animations, Panel::Preview, Panel::Tiles]
                 });
                 if !order.contains(&Panel::Tiles) {
                     order.push(Panel::Tiles);
                 }
                 if !order.contains(&Panel::Brushes) {
-                    order.push(Panel::Brushes);
+                    if let Some(pos) = order.iter().position(|&p| p == Panel::Color) {
+                        order.insert(pos + 1, Panel::Brushes);
+                    } else {
+                        order.push(Panel::Brushes);
+                    }
                 }
                 order
             },
@@ -1836,6 +1840,7 @@ impl App {
                                 }
                                 if dropdown_row(ui, &theme, "Reset layout", None, true).clicked() {
                                     self.ui_state = UiState::default();
+                                    self.sidebar_order = vec![Panel::Palette, Panel::Color, Panel::Brushes, Panel::Layers, Panel::Animations, Panel::Preview, Panel::Tiles];
                                     close_menu = true;
                                 }
                             }
@@ -1899,6 +1904,7 @@ impl App {
                                 }
                                 if dropdown_row(ui, &theme, "Reset layout", None, true).clicked() {
                                     self.ui_state = UiState::default();
+                                    self.sidebar_order = vec![Panel::Palette, Panel::Color, Panel::Brushes, Panel::Layers, Panel::Animations, Panel::Preview, Panel::Tiles];
                                     self.view_show_open = false;
                                     close_menu = true;
                                 }
