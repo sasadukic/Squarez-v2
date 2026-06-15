@@ -5895,7 +5895,7 @@ print("FAIL")
         let size = grid_width / cols as f32;
         let row_height = size;
 
-        let visible_rows = rows.min(4);
+        let visible_rows = rows.min(2);
         let current_height = visible_rows as f32 * row_height;
 
         let is_dragging = self.brushes_drag_idx.is_some();
