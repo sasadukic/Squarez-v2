@@ -179,6 +179,9 @@ pub struct App {
     active_palette_idx: Option<usize>,
     copied_color: Option<Rgba>,
     palette_hovered: bool,
+    shading_mode: bool,
+    shading_direction_lighten: bool,
+    shading_ramp: Option<(usize, usize)>,
     // Spring-animated selection highlight for layers panel
     layer_sel_y: f32,
     layer_sel_vel: f32,
@@ -438,6 +441,9 @@ impl App {
             active_palette_idx: None,
             copied_color: None,
             palette_hovered: false,
+            shading_mode: false,
+            shading_direction_lighten: false,
+            shading_ramp: None,
             layer_sel_y: 0.0,
             layer_sel_vel: 0.0,
             anim_sel_y: 0.0,
@@ -2941,8 +2947,14 @@ impl App {
 
                 let current_fg = self.color_state.foreground;
                 let is_active = self.active_palette_idx == Some(i) || (self.active_palette_idx.is_none() && swatch == current_fg);
-                if is_active {
-                    painter.rect_stroke(rect, 0.0, egui::Stroke::new(2.0, theme.fg), egui::StrokeKind::Inside);
+                let in_ramp = if let Some((start, end)) = self.shading_ramp {
+                    i >= start && i <= end
+                } else {
+                    false
+                };
+                if is_active || in_ramp {
+                    let stroke_color = if is_active { theme.fg } else { theme.accent };
+                    painter.rect_stroke(rect, 0.0, egui::Stroke::new(2.0, stroke_color), egui::StrokeKind::Inside);
                 }
 
                 let resp = ui.interact(rect, ui.id().with(("swatch", i)), egui::Sense::click_and_drag());
@@ -2950,7 +2962,20 @@ impl App {
                     self.palette_drag_idx = Some(i);
                 }
                 if resp.clicked() {
-                    self.active_palette_idx = Some(i);
+                    let shift_held = ui.input(|inp| inp.modifiers.shift);
+                    if shift_held {
+                        if let Some(prev_idx) = self.active_palette_idx {
+                            let start = prev_idx.min(i);
+                            let end = prev_idx.max(i);
+                            self.shading_ramp = Some((start, end));
+                        } else {
+                            self.active_palette_idx = Some(i);
+                            self.shading_ramp = None;
+                        }
+                    } else {
+                        self.active_palette_idx = Some(i);
+                        self.shading_ramp = None;
+                    }
                     self.color_state.foreground = swatch;
                     sync_color_caches(&mut self.color_state);
                 }
@@ -4369,10 +4394,17 @@ impl App {
         let content_w = controls_w;
 
         let is_select_tool = matches!(self.active_tool, ActiveTool::RectSelect | ActiveTool::MagicWand);
+        let is_pencil = matches!(self.active_tool, ActiveTool::Pencil);
         // Base rows (Pen Size, Grid, Flip, Mirroring). Add 1 row if Sync Mode is active.
         let show_tile_row = self.wang_blob.mode != crate::wang_blob::WangBlobMode::None;
         let base_rows = if show_tile_row { 5 } else { 4 };
-        let num_rows = if is_select_tool { base_rows + 2 } else { base_rows };
+        let num_rows = if is_select_tool {
+            base_rows + 2
+        } else if is_pencil {
+            base_rows + 1
+        } else {
+            base_rows
+        };
         let content_h = btn_h * (num_rows as f32) + pad * ((num_rows - 1) as f32);
 
         let outcome = show_context_menu(
@@ -4670,6 +4702,34 @@ impl App {
                     row4_y + btn_h + pad
                 } else {
                     row3_y + btn_h + pad
+                };
+
+                let next_y = if is_pencil {
+                    let shade_y = next_y;
+                    let shade_rect = egui::Rect::from_min_size(egui::Pos2::new(base.x, shade_y), Vec2::new(content_w, btn_h));
+                    let shade_resp = ui.interact(shade_rect, egui::Id::new("ctx_shade_hover"), egui::Sense::hover());
+                    shade_resp.on_hover_text("Pencil Shading Ink");
+
+                    let left_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, shade_y), Vec2::new(ctrl_w, btn_h));
+                    let left_resp = ui.interact(left_rect, egui::Id::new("ctx_shade_toggle"), egui::Sense::click());
+                    let left_bg = if left_resp.hovered() { theme.accent } else if self.shading_mode { theme.surface } else { Color32::TRANSPARENT };
+                    ui.painter().rect_filled(left_rect, 0.0, left_bg);
+                    let left_fg = if left_resp.hovered() || self.shading_mode { theme.fg } else { theme.fg_muted };
+                    ui.painter().text(left_rect.center(), egui::Align2::CENTER_CENTER, "Shd", FontId::new(10.0, FontFamily::Proportional), left_fg);
+                    if left_resp.clicked() { self.shading_mode = !self.shading_mode; }
+
+                    let right_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x + ctrl_w + pad, shade_y), Vec2::new(ctrl_w, btn_h));
+                    let right_resp = ui.interact(right_rect, egui::Id::new("ctx_shade_dir"), egui::Sense::click());
+                    let right_bg = if right_resp.hovered() { theme.accent } else if self.shading_direction_lighten { theme.surface } else { Color32::TRANSPARENT };
+                    ui.painter().rect_filled(right_rect, 0.0, right_bg);
+                    let right_fg = if right_resp.hovered() || self.shading_direction_lighten { theme.fg } else { theme.fg_muted };
+                    let dir_str = if self.shading_direction_lighten { "Lgt" } else { "Drk" };
+                    ui.painter().text(right_rect.center(), egui::Align2::CENTER_CENTER, dir_str, FontId::new(10.0, FontFamily::Proportional), right_fg);
+                    if right_resp.clicked() { self.shading_direction_lighten = !self.shading_direction_lighten; }
+
+                    shade_y + btn_h + pad
+                } else {
+                    next_y
                 };
 
                 // ── Rows for selection settings (Wand Mode & Connect) ──
@@ -7227,7 +7287,7 @@ print("FAIL")
                         } else {
                             self.pen_square(mx, my, w, h).into_iter().map(|(x, y)| (x, y, color)).collect()
                         };
-                        for (sx, sy, c) in points {
+                        for (sx, sy, mut c) in points {
                             if self.stroke_painted.contains(&(sx, sy)) { continue; }
                             let (target_fi, ox, oy) = if self.project.is_tiled() {
                                 let tile_w = self.project.tile_w;
@@ -7249,6 +7309,36 @@ print("FAIL")
                             } else {
                                 (fi, sx, sy)
                             };
+
+                            if self.shading_mode {
+                                let current_pixel_color = self.project.animations[ai].frames[target_fi].layers[li].get_pixel(ox, oy);
+                                let mut found_ramp_idx = None;
+                                if let Some((start, end)) = self.shading_ramp {
+                                    for p_idx in start..=end {
+                                        if p_idx < self.project.palette.len() {
+                                            if self.project.palette[p_idx] == current_pixel_color {
+                                                found_ramp_idx = Some(p_idx);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if let Some(p_idx) = found_ramp_idx {
+                                        let alt_held = ctx.input(|inp| inp.modifiers.alt);
+                                        let dir = if self.shading_direction_lighten {
+                                            if alt_held { -1 } else { 1 }
+                                        } else {
+                                            if alt_held { 1 } else { -1 }
+                                        };
+                                        let next_idx = (p_idx as i32 + dir).clamp(start as i32, end as i32) as usize;
+                                        c = self.project.palette[next_idx];
+                                    } else {
+                                        continue;
+                                    }
+                                } else {
+                                    continue;
+                                }
+                            }
+
                             let edits = apply_pencil(&self.project.animations[ai].frames[target_fi].layers[li], ox, oy, c);
                             for &(_x, _y, old, new) in &edits {
                                 if self.select_state.is_pixel_selected(sx, sy) {
