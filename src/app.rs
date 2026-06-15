@@ -4969,9 +4969,7 @@ impl App {
                             art_rect.min.y + (ry + rh) as f32 * zoom,
                         );
                         let sel_rect = egui::Rect::from_min_max(sel_min, sel_max);
-                        
-                        // Underlay (shadow) outline
-                        painter.rect_stroke(sel_rect, 0.0, egui::Stroke::new(2.0, egui::Color32::from_black_alpha(120)), egui::StrokeKind::Outside);
+
                         
                         // Dashed selection outline - marches clockwise
                         let w_px = sel_rect.width();
@@ -5057,12 +5055,6 @@ impl App {
                         let dash = 4.0_f32;
                         let gap = 4.0_f32;
 
-                        // Outline (shadow)
-                        for i in 0..4 {
-                            let a = pts[i];
-                            let b = pts[(i + 1) % 4];
-                            painter.line_segment([a, b], egui::Stroke::new(2.0, egui::Color32::from_black_alpha(120)));
-                        }
 
                         // Dotted outline
                         let shapes = egui::Shape::dashed_line(&path, egui::Stroke::new(1.0, egui::Color32::WHITE), dash, gap);
