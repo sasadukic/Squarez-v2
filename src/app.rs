@@ -6468,9 +6468,22 @@ print("FAIL")
             // Already have shape_px/shape_py; (px, py) unused for shape mid-drag arms.
             (0u32, 0u32)
         } else {
-            let Some((px, py)) = self.canvas.screen_to_canvas(pos, canvas_rect, w, h) else { return; };
-            if px >= w || py >= h { return; }
-            (px, py)
+            let coords = self.canvas.screen_to_canvas(pos, canvas_rect, w, h);
+            if is_select_tool || is_shape_tool {
+                let (cx, cy) = match coords {
+                    Some((cx, cy)) => (cx.min(w - 1), cy.min(h - 1)),
+                    None => {
+                        let cx = shape_px.clamp(0, w as i32 - 1) as u32;
+                        let cy = shape_py.clamp(0, h as i32 - 1) as u32;
+                        (cx, cy)
+                    }
+                };
+                (cx, cy)
+            } else {
+                let Some((cx, cy)) = coords else { return; };
+                if cx >= w || cy >= h { return; }
+                (cx, cy)
+            }
         };
 
         // Selection is non-destructive — allow it even on locked/group layers.
