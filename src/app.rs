@@ -2968,13 +2968,16 @@ impl App {
                             let start = prev_idx.min(i);
                             let end = prev_idx.max(i);
                             self.shading_ramp = Some((start, end));
+                            self.shading_mode = start != end;
                         } else {
                             self.active_palette_idx = Some(i);
                             self.shading_ramp = None;
+                            self.shading_mode = false;
                         }
                     } else {
                         self.active_palette_idx = Some(i);
                         self.shading_ramp = None;
+                        self.shading_mode = false;
                     }
                     self.color_state.foreground = swatch;
                     sync_color_caches(&mut self.color_state);
@@ -4708,22 +4711,14 @@ impl App {
                     let shade_y = next_y;
                     let shade_rect = egui::Rect::from_min_size(egui::Pos2::new(base.x, shade_y), Vec2::new(content_w, btn_h));
                     let shade_resp = ui.interact(shade_rect, egui::Id::new("ctx_shade_hover"), egui::Sense::hover());
-                    shade_resp.on_hover_text("Pencil Shading Ink");
+                    shade_resp.on_hover_text("Pencil Shading Ink Direction");
 
-                    let left_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, shade_y), Vec2::new(ctrl_w, btn_h));
-                    let left_resp = ui.interact(left_rect, egui::Id::new("ctx_shade_toggle"), egui::Sense::click());
-                    let left_bg = if left_resp.hovered() { theme.accent } else if self.shading_mode { theme.surface } else { Color32::TRANSPARENT };
-                    ui.painter().rect_filled(left_rect, 0.0, left_bg);
-                    let left_fg = if left_resp.hovered() || self.shading_mode { theme.fg } else { theme.fg_muted };
-                    ui.painter().text(left_rect.center(), egui::Align2::CENTER_CENTER, "Shd", FontId::new(10.0, FontFamily::Proportional), left_fg);
-                    if left_resp.clicked() { self.shading_mode = !self.shading_mode; }
-
-                    let right_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x + ctrl_w + pad, shade_y), Vec2::new(ctrl_w, btn_h));
+                    let right_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, shade_y), Vec2::new(controls_w, btn_h));
                     let right_resp = ui.interact(right_rect, egui::Id::new("ctx_shade_dir"), egui::Sense::click());
-                    let right_bg = if right_resp.hovered() { theme.accent } else if self.shading_direction_lighten { theme.surface } else { Color32::TRANSPARENT };
+                    let right_bg = if right_resp.hovered() { theme.accent } else { theme.surface };
                     ui.painter().rect_filled(right_rect, 0.0, right_bg);
-                    let right_fg = if right_resp.hovered() || self.shading_direction_lighten { theme.fg } else { theme.fg_muted };
-                    let dir_str = if self.shading_direction_lighten { "Lgt" } else { "Drk" };
+                    let right_fg = if right_resp.hovered() { theme.fg } else { theme.fg_muted };
+                    let dir_str = if self.shading_direction_lighten { "Lighten" } else { "Darken" };
                     ui.painter().text(right_rect.center(), egui::Align2::CENTER_CENTER, dir_str, FontId::new(10.0, FontFamily::Proportional), right_fg);
                     if right_resp.clicked() { self.shading_direction_lighten = !self.shading_direction_lighten; }
 
@@ -7323,7 +7318,7 @@ print("FAIL")
                                         }
                                     }
                                     if let Some(p_idx) = found_ramp_idx {
-                                        let alt_held = ctx.input(|inp| inp.modifiers.alt);
+                                        let alt_held = response.ctx.input(|inp| inp.modifiers.alt);
                                         let dir = if self.shading_direction_lighten {
                                             if alt_held { -1 } else { 1 }
                                         } else {
