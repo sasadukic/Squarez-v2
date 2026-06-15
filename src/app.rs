@@ -8813,8 +8813,9 @@ impl eframe::App for App {
 
         // Alt → cycle to next tool in the active tool's group (detect on rising edge)
         let alt_now = ctx.input(|i| i.modifiers.alt);
+        let ctrl_now = ctx.input(|i| i.modifiers.ctrl);
         let primary_now = ctx.input(|i| i.pointer.primary_down());
-        if alt_now && !self.alt_was_down && !primary_now && self.iso_box_phase.is_none() && self.iso_cylinder_phase.is_none() {
+        if alt_now && !self.alt_was_down && !primary_now && !ctrl_now && self.iso_box_phase.is_none() && self.iso_cylinder_phase.is_none() {
             self.cycle_tool_in_group();
         }
         self.alt_was_down = alt_now;
