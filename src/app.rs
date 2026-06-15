@@ -240,6 +240,15 @@ pub struct App {
     preview_window_width: f32,
     /// Track if any menu was open at the start of the current frame
     menu_was_open_at_frame_start: bool,
+    brushes: Vec<CustomBrush>,
+    active_brush_index: Option<usize>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CustomBrush {
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<Rgba>,
 }
 
 #[allow(dead_code)]
@@ -272,6 +281,8 @@ struct LayoutState {
     ui_state: UiState,
     sidebar_order: Vec<Panel>,
     color_state: Option<ColorState>,
+    brushes: Vec<CustomBrush>,
+    active_brush_index: Option<usize>,
 }
 
 impl Default for LayoutState {
@@ -280,6 +291,8 @@ impl Default for LayoutState {
             ui_state: UiState::default(),
             sidebar_order: Vec::new(),
             color_state: None,
+            brushes: Vec::new(),
+            active_brush_index: None,
         }
     }
 }
@@ -439,10 +452,13 @@ impl App {
             view_show_pos: None,
             sidebar_order: {
                 let mut order = layout.map(|l| l.sidebar_order).unwrap_or_else(|| {
-                    vec![Panel::Palette, Panel::Color, Panel::Layers, Panel::Animations, Panel::Preview, Panel::Tiles]
+                    vec![Panel::Palette, Panel::Color, Panel::Layers, Panel::Animations, Panel::Preview, Panel::Tiles, Panel::Brushes]
                 });
                 if !order.contains(&Panel::Tiles) {
                     order.push(Panel::Tiles);
+                }
+                if !order.contains(&Panel::Brushes) {
+                    order.push(Panel::Brushes);
                 }
                 order
             },
@@ -462,6 +478,8 @@ impl App {
             preview_popped_out: false,
             preview_window_width: 176.0,
             menu_was_open_at_frame_start: false,
+            brushes: layout.as_ref().map(|l| l.brushes.clone()).unwrap_or_default(),
+            active_brush_index: layout.as_ref().and_then(|l| l.active_brush_index),
         }
     }
 
@@ -1811,6 +1829,9 @@ impl App {
                                 if dropdown_row(ui, &theme, "Tiles", window_check(self.ui_state.is_visible(Panel::Tiles)), true).clicked() {
                                     self.ui_state.toggle_visible(Panel::Tiles);
                                 }
+                                if dropdown_row(ui, &theme, "Brushes", window_check(self.ui_state.is_visible(Panel::Brushes)), true).clicked() {
+                                    self.ui_state.toggle_visible(Panel::Brushes);
+                                }
                                 if dropdown_row(ui, &theme, "Reset layout", None, true).clicked() {
                                     self.ui_state = UiState::default();
                                     close_menu = true;
@@ -1870,6 +1891,9 @@ impl App {
                                 }
                                 if dropdown_row(ui, &theme, "Tiles", window_check(self.ui_state.is_visible(Panel::Tiles)), true).clicked() {
                                     self.ui_state.toggle_visible(Panel::Tiles);
+                                }
+                                if dropdown_row(ui, &theme, "Brushes", window_check(self.ui_state.is_visible(Panel::Brushes)), true).clicked() {
+                                    self.ui_state.toggle_visible(Panel::Brushes);
                                 }
                                 if dropdown_row(ui, &theme, "Reset layout", None, true).clicked() {
                                     self.ui_state = UiState::default();
@@ -2287,6 +2311,7 @@ impl App {
                                     Panel::Preview    => self.draw_preview_section(ui),
                                     Panel::Timeline   => {},
                                     Panel::Tiles      => self.draw_tiles_section(ui),
+                                    Panel::Brushes    => self.draw_brushes_section(ui),
                                 }
                             }
 
@@ -5705,6 +5730,229 @@ print("FAIL")
                         }
                     }
                 });
+    }
+
+    fn add_brush_from_selection(&mut self) {
+        let (rx, ry, rw, rh) = if self.select_state.has_float() {
+            let Some((w0, h0)) = self.select_state.float_size() else { return; };
+            (self.select_state.offset.0 as u32, self.select_state.offset.1 as u32, w0, h0)
+        } else if let Some((rx, ry, rw, rh)) = self.select_state.rect {
+            (rx, ry, rw, rh)
+        } else if let Some(ref mask) = self.select_state.mask {
+            if let Some(bbox) = mask.bounding_box() {
+                bbox
+            } else {
+                return;
+            }
+        } else {
+            return;
+        };
+
+        if rw == 0 || rh == 0 { return; }
+
+        let ai = self.project.active_animation;
+        let fi = self.project.active_frame;
+        let li = self.project.active_layer;
+
+        let ref_layer = if self.project.is_tiled() {
+            self.stitch_temp_layer(ai, li)
+        } else {
+            self.project.animations[ai].frames[fi].layers[li].clone()
+        };
+
+        let mut pixels = Vec::with_capacity((rw * rh) as usize);
+        if self.select_state.has_float() {
+            if let Some(ref float) = self.select_state.float_pixels {
+                for y in 0..rh {
+                    for x in 0..rw {
+                        let p = float.pixels[(y * rw + x) as usize];
+                        pixels.push(p);
+                    }
+                }
+            }
+        } else {
+            for y in 0..rh {
+                for x in 0..rw {
+                    let cx = rx + x;
+                    let cy = ry + y;
+                    let is_selected = if let Some(ref mask) = self.select_state.mask {
+                        mask.get(cx, cy)
+                    } else {
+                        true
+                    };
+                    if is_selected {
+                        let p = ref_layer.get_pixel(cx, cy);
+                        pixels.push(p);
+                    } else {
+                        pixels.push([0, 0, 0, 0]);
+                    }
+                }
+            }
+        }
+
+        let brush = CustomBrush {
+            width: rw,
+            height: rh,
+            pixels,
+        };
+        if self.brushes.len() < 512 {
+            self.brushes.push(brush);
+            self.active_brush_index = Some(self.brushes.len() - 1);
+        }
+    }
+
+    fn brush_stamp(&self, idx: usize, cx: u32, cy: u32, cw: u32, ch: u32) -> Vec<(u32, u32, Rgba)> {
+        let brush = &self.brushes[idx];
+        let bw = brush.width;
+        let bh = brush.height;
+        let mut pts = Vec::new();
+        for by in 0..bh {
+            for bx in 0..bw {
+                let p = brush.pixels[(by * bw + bx) as usize];
+                if p[3] > 0 {
+                    let tx = cx as i32 + bx as i32 - (bw / 2) as i32;
+                    let ty = cy as i32 + by as i32 - (bh / 2) as i32;
+                    if tx >= 0 && ty >= 0 && tx < cw as i32 && ty < ch as i32 {
+                        pts.push((tx as u32, ty as u32, p));
+                    }
+                }
+            }
+        }
+        pts
+    }
+
+    fn draw_brushes_section(&mut self, ui: &mut egui::Ui) {
+        let theme = self.theme.clone();
+        if self.ui_state.is_collapsed(Panel::Brushes) {
+            Frame::new().fill(theme.panel).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
+                let (rect, _) = ui.allocate_exact_size(
+                    Vec2::new(ui.available_width(), 26.0),
+                    egui::Sense::hover(),
+                );
+                let icon_size = Vec2::splat(16.0);
+                let icon_rect = egui::Rect::from_center_size(
+                    Pos2::new(rect.left() + 8.0, rect.center().y),
+                    icon_size,
+                );
+                let icon_resp = ui.interact(
+                    icon_rect,
+                    ui.id().with("brushes_icon"),
+                    egui::Sense::click(),
+                );
+                let icon_tint = if icon_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                ui.put(
+                    icon_rect,
+                    Image::new(egui::include_image!("../assets/icons/brush.svg"))
+                        .tint(icon_tint)
+                        .fit_to_exact_size(icon_size),
+                );
+                if icon_resp.clicked() {
+                    self.ui_state.toggle_collapsed(Panel::Brushes);
+                }
+            });
+            return;
+        }
+
+        let (show, add_clicked, _, _, _) = section_header(
+            ui,
+            &self.theme,
+            &mut self.ui_state,
+            Panel::Brushes,
+            egui::include_image!("../assets/icons/brush.svg"),
+            None,
+            false,
+        );
+
+        if !show { return; }
+
+        if add_clicked {
+            self.add_brush_from_selection();
+        }
+
+        let cols = 4;
+        let rows = 128;
+
+        let grid_width = 176.0;
+        let size = grid_width / cols as f32;
+        let row_height = size;
+
+        let max_height = 8.0 * row_height;
+
+        Frame::new().fill(theme.panel).inner_margin(Margin::same(0)).show(ui, |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt("brushes_scroll")
+                .max_height(max_height)
+                .show(ui, |ui| {
+                    egui::Grid::new("brushes_grid")
+                        .num_columns(cols)
+                        .min_col_width(size)
+                        .max_col_width(size)
+                        .min_row_height(row_height)
+                        .spacing(Vec2::ZERO)
+                        .show(ui, |ui| {
+                            for r in 0..rows {
+                                for c in 0..cols {
+                                    let idx = r * cols + c;
+                                    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::click());
+                                    
+                                    let active = self.active_brush_index == Some(idx);
+                                    let hover = resp.hovered();
+                                    
+                                    let bg_color = if active {
+                                        theme.accent.linear_multiply(0.3)
+                                    } else if hover {
+                                        theme.surface.linear_multiply(1.2)
+                                    } else {
+                                        theme.surface
+                                    };
+                                    
+                                    ui.painter().rect_filled(rect.shrink(1.0), 0.0, bg_color);
+                                    
+                                    let border_color = if active {
+                                        theme.accent
+                                    } else {
+                                        theme.border
+                                    };
+                                    ui.painter().rect_stroke(rect.shrink(1.0), 0.0, egui::Stroke::new(1.0, border_color), egui::StrokeKind::Inside);
+                                    
+                                    if idx < self.brushes.len() {
+                                        let brush = &self.brushes[idx];
+                                        let bw = brush.width as f32;
+                                        let bh = brush.height as f32;
+                                        let inner_rect = rect.shrink(3.0);
+                                        let scale = (inner_rect.width() / bw).min(inner_rect.height() / bh).min(4.0).max(1.0);
+                                        let tw = bw * scale;
+                                        let th = bh * scale;
+                                        let tx = inner_rect.left() + (inner_rect.width() - tw) / 2.0;
+                                        let ty = inner_rect.top() + (inner_rect.height() - th) / 2.0;
+                                        
+                                        for py in 0..brush.height {
+                                            for px in 0..brush.width {
+                                                let p = brush.pixels[(py * brush.width + px) as usize];
+                                                if p[3] > 0 {
+                                                    let color = Color32::from_rgba_premultiplied(p[0], p[1], p[2], p[3]);
+                                                    let px_rect = egui::Rect::from_min_size(
+                                                        Pos2::new(tx + px as f32 * scale, ty + py as f32 * scale),
+                                                        Vec2::splat(scale),
+                                                    );
+                                                    ui.painter().rect_filled(px_rect, 0.0, color);
+                                                }
+                                            }
+                                        }
+                                        
+                                        if resp.clicked() {
+                                            if active {
+                                                self.active_brush_index = None;
+                                            } else {
+                                                self.active_brush_index = Some(idx);
+                                            }
+                                        }
+                                    }
+                                }
+                                ui.end_row();
+                            }
+                        });
+                });
         });
     }
 
@@ -6593,9 +6841,18 @@ print("FAIL")
                             let mut seen = std::collections::HashSet::new();
                             let mut pts = Vec::new();
                             for (mx, my) in self.mirror_positions(hx, hy, w, h) {
-                                for (sx, sy) in self.pen_square(mx, my, w, h) {
+                                let points: Vec<(u32, u32, Rgba)> = if let Some(brush_idx) = self.active_brush_index {
+                                    if brush_idx < self.brushes.len() {
+                                        self.brush_stamp(brush_idx, mx, my, w, h)
+                                    } else {
+                                        self.pen_square(mx, my, w, h).into_iter().map(|(x, y)| (x, y, color)).collect()
+                                    }
+                                } else {
+                                    self.pen_square(mx, my, w, h).into_iter().map(|(x, y)| (x, y, color)).collect()
+                                };
+                                for (sx, sy, c) in points {
                                     if seen.insert((sx, sy)) {
-                                        pts.push((sx, sy, color));
+                                        pts.push((sx, sy, c));
                                     }
                                 }
                             }
@@ -6605,7 +6862,16 @@ print("FAIL")
                             let mut seen = std::collections::HashSet::new();
                             let mut pts = Vec::new();
                             for (mx, my) in self.mirror_positions(hx, hy, w, h) {
-                                for (sx, sy) in self.pen_square(mx, my, w, h) {
+                                let points: Vec<(u32, u32)> = if let Some(brush_idx) = self.active_brush_index {
+                                    if brush_idx < self.brushes.len() {
+                                        self.brush_stamp(brush_idx, mx, my, w, h).into_iter().map(|(x, y, _)| (x, y)).collect()
+                                    } else {
+                                        self.pen_square(mx, my, w, h)
+                                    }
+                                } else {
+                                    self.pen_square(mx, my, w, h)
+                                };
+                                for (sx, sy) in points {
                                     if seen.insert((sx, sy)) {
                                         pts.push((sx, sy, [0, 0, 0, 0]));
                                     }
@@ -6816,7 +7082,16 @@ print("FAIL")
                         }
                     }
                     for &((mx, my), _) in &streamed {
-                        for (sx, sy) in self.pen_square(mx, my, w, h) {
+                        let points: Vec<(u32, u32, Rgba)> = if let Some(brush_idx) = self.active_brush_index {
+                            if brush_idx < self.brushes.len() {
+                                self.brush_stamp(brush_idx, mx, my, w, h)
+                            } else {
+                                self.pen_square(mx, my, w, h).into_iter().map(|(x, y)| (x, y, color)).collect()
+                            }
+                        } else {
+                            self.pen_square(mx, my, w, h).into_iter().map(|(x, y)| (x, y, color)).collect()
+                        };
+                        for (sx, sy, c) in points {
                             if self.stroke_painted.contains(&(sx, sy)) { continue; }
                             let (target_fi, ox, oy) = if self.project.is_tiled() {
                                 let tile_w = self.project.tile_w;
@@ -6838,7 +7113,7 @@ print("FAIL")
                             } else {
                                 (fi, sx, sy)
                             };
-                            let edits = apply_pencil(&self.project.animations[ai].frames[target_fi].layers[li], ox, oy, color);
+                            let edits = apply_pencil(&self.project.animations[ai].frames[target_fi].layers[li], ox, oy, c);
                             for &(_x, _y, old, new) in &edits {
                                 if self.select_state.is_pixel_selected(sx, sy) {
                                     self.project.animations[ai].frames[target_fi].layers[li].set_pixel(ox, oy, new);
@@ -6868,7 +7143,16 @@ print("FAIL")
                 for pos in positions {
                     let streamed = self.mirror_positions_with_streams(pos.0, pos.1, w, h);
                     for &((mx, my), _) in &streamed {
-                        for (sx, sy) in self.pen_square(mx, my, w, h) {
+                        let points: Vec<(u32, u32)> = if let Some(brush_idx) = self.active_brush_index {
+                            if brush_idx < self.brushes.len() {
+                                self.brush_stamp(brush_idx, mx, my, w, h).into_iter().map(|(x, y, _)| (x, y)).collect()
+                            } else {
+                                self.pen_square(mx, my, w, h)
+                            }
+                        } else {
+                            self.pen_square(mx, my, w, h)
+                        };
+                        for (sx, sy) in points {
                             if self.stroke_painted.contains(&(sx, sy)) { continue; }
                             let (target_fi, ox, oy) = if self.project.is_tiled() {
                                 let tile_w = self.project.tile_w;
@@ -8948,6 +9232,8 @@ impl eframe::App for App {
             ui_state: self.ui_state.clone(),
             sidebar_order: self.sidebar_order.clone(),
             color_state: Some(self.color_state.clone()),
+            brushes: self.brushes.clone(),
+            active_brush_index: self.active_brush_index,
         };
         if let Ok(json) = serde_json::to_string(&state) {
             storage.set_string(LAYOUT_STORAGE_KEY, json);
@@ -9576,6 +9862,7 @@ fn panel_icon(panel: Panel) -> egui::ImageSource<'static> {
         Panel::Preview    => egui::include_image!("../assets/icons/visibility.svg"),
         Panel::Timeline   => egui::include_image!("../assets/icons/visibility.svg"),
         Panel::Tiles      => egui::include_image!("../assets/icons/tiles.png"),
+        Panel::Brushes    => egui::include_image!("../assets/icons/brush.svg"),
     }
 }
 
