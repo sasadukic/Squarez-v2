@@ -124,7 +124,7 @@ pub struct App {
     alt_was_down: bool,
     iso_box_dragging: bool,
     iso_cylinder_dragging: bool,
-    iso_top_down: bool,
+    iso_mode: crate::tools::IsoMode,
     iso_box_phase: Option<IsoBoxHeightPhase>,
     iso_cylinder_phase: Option<IsoCylinderPhase>,
     mirror_x: bool,
@@ -374,7 +374,7 @@ impl App {
             alt_was_down: false,
             iso_box_dragging: false,
             iso_cylinder_dragging: false,
-            iso_top_down: false,
+            iso_mode: crate::tools::IsoMode::Isometric,
             iso_box_phase: None,
             iso_cylinder_phase: None,
             mirror_x: false,
@@ -4312,67 +4312,76 @@ impl App {
         let theme = self.theme.clone();
         let btn_h = 28.0;
         let pad = 4.0;
-        let ctrl_w = 40.0;                       // one control slot
-        let controls_w = ctrl_w * 2.0 + pad;     // two controls + gap between them
-        let content_w = controls_w;
-
-        let is_select_tool = matches!(self.active_tool, ActiveTool::RectSelect | ActiveTool::MagicWand);
-        // Base rows (Pen Size, Grid, Flip, Mirroring). Add 1 row if Sync Mode is active.
-        let show_tile_row = self.wang_blob.mode != crate::wang_blob::WangBlobMode::None;
-        let base_rows = if show_tile_row { 5 } else { 4 };
-        let num_rows = if is_select_tool { base_rows + 2 } else { base_rows };
-        let content_h = btn_h * (num_rows as f32) + pad * ((num_rows - 1) as f32);
-
-        let outcome = show_context_menu(
-            &mut state,
-            ctx,
-            &theme,
-            "canvas_ctx_menu",
-            None,
-            |ui| {
-                let total = ui.allocate_exact_size(Vec2::new(content_w, content_h), egui::Sense::hover()).0;
-                let base = total.min;
-                let controls_x = base.x;
-                let icon_size = egui::Vec2::splat(16.0);
-
-                // ── Row 0: Pen Size ──
+        let ctrl_w = 40.0;                                       // ── Row 0: Mode Toggle (or Pen Size) ──
                 let row0_y = base.y;
-                let row0_rect = egui::Rect::from_min_size(egui::Pos2::new(base.x, row0_y), Vec2::new(content_w, btn_h));
-                let row0_resp = ui.interact(row0_rect, egui::Id::new("ctx_row0_hover"), egui::Sense::hover());
-                row0_resp.on_hover_text("Pen Size");
+                let is_shape_mode_tool = matches!(self.active_tool, ActiveTool::Rectangle { .. } | ActiveTool::Ellipse { .. });
+                if is_shape_mode_tool {
+                    let row0_rect = egui::Rect::from_min_size(egui::Pos2::new(base.x, row0_y), Vec2::new(content_w, btn_h));
+                    let row0_resp = ui.interact(row0_rect, egui::Id::new("ctx_row0_hover"), egui::Sense::hover());
+                    row0_resp.on_hover_text("Projection Mode");
 
-                let minus_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row0_y), Vec2::new(ctrl_w, btn_h));
-                let minus_resp = ui.interact(minus_rect, egui::Id::new("ctx_pen_minus"), egui::Sense::click());
-                let minus_bg = if minus_resp.hovered() { theme.accent } else { Color32::TRANSPARENT };
-                ui.painter().rect_filled(minus_rect, 0.0, minus_bg);
-                let minus_fg = if minus_resp.hovered() { theme.fg } else { theme.fg_muted };
-                let minus_icon_size = egui::Vec2::splat(11.0);
-                let minus_icon_rect = egui::Rect::from_center_size(minus_rect.center(), minus_icon_size);
-                ui.put(
-                    minus_icon_rect,
-                    egui::Image::new(egui::include_image!("../assets/icons/pencil.svg"))
-                        .tint(minus_fg)
-                        .fit_to_exact_size(minus_icon_size),
-                );
-                if minus_resp.clicked() && self.pen_size > 1 { self.pen_size -= 1; }
+                    let toggle_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row0_y), Vec2::new(controls_w, btn_h));
+                    let toggle_resp = ui.interact(toggle_rect, egui::Id::new("ctx_shape_mode_toggle"), egui::Sense::click());
+                    let toggle_bg = if toggle_resp.hovered() { theme.accent } else { theme.surface };
+                    ui.painter().rect_filled(toggle_rect, 0.0, toggle_bg);
+                    let toggle_fg = if toggle_resp.hovered() { theme.fg } else { theme.fg_muted };
 
-                let size_val_x = controls_x + ctrl_w + pad / 2.0;
-                ui.painter().text(egui::Pos2::new(size_val_x, row0_y + btn_h / 2.0), egui::Align2::CENTER_CENTER, format!("{}", self.pen_size), FontId::new(11.0, FontFamily::Proportional), theme.fg_desc);
+                    let mode_str = match self.iso_mode {
+                        crate::tools::IsoMode::Isometric => "Isometric",
+                        crate::tools::IsoMode::IsometricHidden => "Iso Hidden",
+                        crate::tools::IsoMode::IsometricFill => "Iso Fill",
+                        crate::tools::IsoMode::TopDown => "TopDown",
+                        crate::tools::IsoMode::TopDownFill => "TopDown Fill",
+                    };
+                    ui.painter().text(toggle_rect.center(), egui::Align2::CENTER_CENTER, mode_str, FontId::new(10.0, FontFamily::Proportional), toggle_fg);
 
-                let plus_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x + ctrl_w + pad, row0_y), Vec2::new(ctrl_w, btn_h));
-                let plus_resp = ui.interact(plus_rect, egui::Id::new("ctx_pen_plus"), egui::Sense::click());
-                let plus_bg = if plus_resp.hovered() { theme.accent } else { Color32::TRANSPARENT };
-                ui.painter().rect_filled(plus_rect, 0.0, plus_bg);
-                let plus_fg = if plus_resp.hovered() { theme.fg } else { theme.fg_muted };
-                let plus_icon_size = egui::Vec2::splat(16.0);
-                let plus_icon_rect = egui::Rect::from_center_size(plus_rect.center(), plus_icon_size);
-                ui.put(
-                    plus_icon_rect,
-                    egui::Image::new(egui::include_image!("../assets/icons/pencil.svg"))
-                        .tint(plus_fg)
-                        .fit_to_exact_size(plus_icon_size),
-                );
-                if plus_resp.clicked() && self.pen_size < 8 { self.pen_size += 1; }
+                    if toggle_resp.clicked() {
+                        self.iso_mode = match self.iso_mode {
+                            crate::tools::IsoMode::Isometric => crate::tools::IsoMode::IsometricHidden,
+                            crate::tools::IsoMode::IsometricHidden => crate::tools::IsoMode::IsometricFill,
+                            crate::tools::IsoMode::IsometricFill => crate::tools::IsoMode::TopDown,
+                            crate::tools::IsoMode::TopDown => crate::tools::IsoMode::TopDownFill,
+                            crate::tools::IsoMode::TopDownFill => crate::tools::IsoMode::Isometric,
+                        };
+                    }
+                } else {
+                    let row0_rect = egui::Rect::from_min_size(egui::Pos2::new(base.x, row0_y), Vec2::new(content_w, btn_h));
+                    let row0_resp = ui.interact(row0_rect, egui::Id::new("ctx_row0_hover"), egui::Sense::hover());
+                    row0_resp.on_hover_text("Pen Size");
+
+                    let minus_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row0_y), Vec2::new(ctrl_w, btn_h));
+                    let minus_resp = ui.interact(minus_rect, egui::Id::new("ctx_pen_minus"), egui::Sense::click());
+                    let minus_bg = if minus_resp.hovered() { theme.accent } else { Color32::TRANSPARENT };
+                    ui.painter().rect_filled(minus_rect, 0.0, minus_bg);
+                    let minus_fg = if minus_resp.hovered() { theme.fg } else { theme.fg_muted };
+                    let minus_icon_size = egui::Vec2::splat(11.0);
+                    let minus_icon_rect = egui::Rect::from_center_size(minus_rect.center(), minus_icon_size);
+                    ui.put(
+                        minus_icon_rect,
+                        egui::Image::new(egui::include_image!("../assets/icons/pencil.svg"))
+                            .tint(minus_fg)
+                            .fit_to_exact_size(minus_icon_size),
+                    );
+                    if minus_resp.clicked() && self.pen_size > 1 { self.pen_size -= 1; }
+
+                    let size_val_x = controls_x + ctrl_w + pad / 2.0;
+                    ui.painter().text(egui::Pos2::new(size_val_x, row0_y + btn_h / 2.0), egui::Align2::CENTER_CENTER, format!("{}", self.pen_size), FontId::new(11.0, FontFamily::Proportional), theme.fg_desc);
+
+                    let plus_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x + ctrl_w + pad, row0_y), Vec2::new(ctrl_w, btn_h));
+                    let plus_resp = ui.interact(plus_rect, egui::Id::new("ctx_pen_plus"), egui::Sense::click());
+                    let plus_bg = if plus_resp.hovered() { theme.accent } else { Color32::TRANSPARENT };
+                    ui.painter().rect_filled(plus_rect, 0.0, plus_bg);
+                    let plus_fg = if plus_resp.hovered() { theme.fg } else { theme.fg_muted };
+                    let plus_icon_size = egui::Vec2::splat(16.0);
+                    let plus_icon_rect = egui::Rect::from_center_size(plus_rect.center(), plus_icon_size);
+                    ui.put(
+                        plus_icon_rect,
+                        egui::Image::new(egui::include_image!("../assets/icons/pencil.svg"))
+                            .tint(plus_fg)
+                            .fit_to_exact_size(plus_icon_size),
+                    );
+                    if plus_resp.clicked() && self.pen_size < 8 { self.pen_size += 1; }
+                }
 
                 // ── Row 1: Grid ──
                 let row1_y = row0_y + btn_h + pad;
@@ -6012,7 +6021,7 @@ print("FAIL")
             } else {
                 0
             };
-            let preview = iso_box_preview(phase.x0, phase.y0, phase.x1, phase.y1, height, color, w, h, self.iso_top_down);
+            let preview = iso_box_preview(phase.x0, phase.y0, phase.x1, phase.y1, height, color, w, h, self.iso_mode);
             if self.shape_preview != preview.iter().map(|&(x,y,c)|(x,y,c)).collect::<Vec<_>>() {
                 self.shape_preview = preview;
                 self.canvas_dirty = true;
@@ -6028,7 +6037,7 @@ print("FAIL")
                 let edits = iso_box_pixels(
                     &ref_layer,
                     phase.x0, phase.y0, phase.x1, phase.y1, height, color,
-                    self.iso_top_down,
+                    self.iso_mode,
                 );
                 let edits: Vec<_> = edits.into_iter().filter(|&(x, y, _, _)| {
                     self.select_state.is_pixel_selected(x, y)
@@ -6081,7 +6090,7 @@ print("FAIL")
             } else {
                 0
             };
-            let preview = iso_cylinder_preview(phase.x0, phase.y0, phase.x1, phase.y1, height, color, w, h, self.iso_top_down);
+            let preview = iso_cylinder_preview(phase.x0, phase.y0, phase.x1, phase.y1, height, color, w, h, self.iso_mode);
             if self.shape_preview != preview.iter().map(|&(x,y,c)|(x,y,c)).collect::<Vec<_>>() {
                 self.shape_preview = preview;
                 self.canvas_dirty = true;
@@ -6096,7 +6105,7 @@ print("FAIL")
                 let edits = iso_cylinder_pixels(
                     &ref_layer,
                     phase.x0, phase.y0, phase.x1, phase.y1, height, color,
-                    self.iso_top_down,
+                    self.iso_mode,
                 );
                 let edits: Vec<_> = edits.into_iter().filter(|&(x, y, _, _)| {
                     self.select_state.is_pixel_selected(x, y)
@@ -6604,15 +6613,13 @@ print("FAIL")
                 }
             }
 
-            // Ctrl held during Rectangle drag start → isometric box mode
-            if matches!(self.active_tool, ActiveTool::Rectangle { .. }) && response.ctx.input(|i| i.modifiers.ctrl) {
+            // Rectangle drag start → isometric box mode
+            if matches!(self.active_tool, ActiveTool::Rectangle { .. }) {
                 self.iso_box_dragging = true;
-                self.iso_top_down = response.ctx.input(|i| i.modifiers.alt);
             }
-            // Ctrl held during Ellipse drag start → isometric cylinder mode
-            if matches!(self.active_tool, ActiveTool::Ellipse { .. }) && response.ctx.input(|i| i.modifiers.ctrl) {
+            // Ellipse drag start → isometric cylinder mode
+            if matches!(self.active_tool, ActiveTool::Ellipse { .. }) {
                 self.iso_cylinder_dragging = true;
-                self.iso_top_down = response.ctx.input(|i| i.modifiers.alt);
             }
             self.stroke_edits.clear();
             self.shape_preview.clear();
@@ -6855,13 +6862,13 @@ print("FAIL")
                 if self.iso_box_dragging {
                     let x1 = shape_px.clamp(0, w as i32 - 1) as u32;
                     let y1 = shape_py.clamp(0, h as i32 - 1) as u32;
-                    let preview = iso_box_preview(x0, y0, x1, y1, 0_i32, color, w, h, self.iso_top_down);
+                    let preview = iso_box_preview(x0, y0, x1, y1, 0_i32, color, w, h, self.iso_mode);
                     self.shape_preview = preview;
                     self.canvas_dirty = true;
                 } else if self.iso_cylinder_dragging {
                     let x1 = shape_px.clamp(0, w as i32 - 1) as u32;
                     let y1 = shape_py.clamp(0, h as i32 - 1) as u32;
-                    let preview = iso_cylinder_preview(x0, y0, x1, y1, 0_i32, color, w, h, self.iso_top_down);
+                    let preview = iso_cylinder_preview(x0, y0, x1, y1, 0_i32, color, w, h, self.iso_mode);
                     self.shape_preview = preview;
                     self.canvas_dirty = true;
                 } else {

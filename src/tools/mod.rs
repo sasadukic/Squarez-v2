@@ -30,10 +30,13 @@ pub enum ActiveTool {
     Zoom,
 }
 
-#[derive(Debug, Clone)]
-pub struct ToolInput {
-    pub canvas_x: u32,
-    pub canvas_y: u32,
-    pub color: Rgba,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IsoMode {
+    Isometric,
+    IsometricHidden,
+    IsometricFill,
+    TopDown,
+    TopDownFill,
 }
+
 
