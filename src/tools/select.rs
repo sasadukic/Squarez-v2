@@ -172,8 +172,6 @@ pub enum Handle {
     W,      E,
     SW, S, SE,
     Rotate,
-    FlipH, // click-only, left of W handle  → mirrors horizontally
-    FlipV, // click-only, below S handle    → mirrors vertically
     Inside,
 }
 

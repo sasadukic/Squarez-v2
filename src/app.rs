@@ -4983,13 +4983,53 @@ impl App {
                     );
                     if let Some(corners) = self.select_state.rotated_corners() {
                         let pts: Vec<egui::Pos2> = corners.iter().map(|&c| to_screen(c)).collect();
-                        // Outline (shadow + white)
+                        
+                        // Dashed selection outline - marches clockwise
+                        let l0 = (pts[1] - pts[0]).length();
+                        let l1 = (pts[2] - pts[1]).length();
+                        let l2 = (pts[3] - pts[2]).length();
+                        let l3 = (pts[0] - pts[3]).length();
+                        let perim = l0 + l1 + l2 + l3;
+                        
+                        let t = ui.ctx().input(|i| i.time) as f32;
+                        ui.ctx().request_repaint();
+                        let off = (t * 20.0).rem_euclid(perim);
+                        
+                        let (start, waypoints) = if off < l0 {
+                            let ratio = off / l0;
+                            let p = pts[0] + (pts[1] - pts[0]) * ratio;
+                            (p, vec![pts[1], pts[2], pts[3], pts[0]])
+                        } else if off < l0 + l1 {
+                            let ratio = (off - l0) / l1;
+                            let p = pts[1] + (pts[2] - pts[1]) * ratio;
+                            (p, vec![pts[2], pts[3], pts[0], pts[1]])
+                        } else if off < l0 + l1 + l2 {
+                            let ratio = (off - l0 - l1) / l2;
+                            let p = pts[2] + (pts[3] - pts[2]) * ratio;
+                            (p, vec![pts[3], pts[0], pts[1], pts[2]])
+                        } else {
+                            let ratio = (off - l0 - l1 - l2) / l3;
+                            let p = pts[3] + (pts[0] - pts[3]) * ratio;
+                            (p, vec![pts[0], pts[1], pts[2], pts[3]])
+                        };
+                        
+                        let mut path = vec![start];
+                        path.extend(waypoints);
+                        path.push(start);
+                        
+                        let dash = 4.0_f32;
+                        let gap = 4.0_f32;
+
+                        // Outline (shadow)
                         for i in 0..4 {
                             let a = pts[i];
                             let b = pts[(i + 1) % 4];
                             painter.line_segment([a, b], egui::Stroke::new(2.0, egui::Color32::from_black_alpha(120)));
-                            painter.line_segment([a, b], egui::Stroke::new(1.0, egui::Color32::WHITE));
                         }
+
+                        // Dotted outline
+                        let shapes = egui::Shape::dashed_line(&path, egui::Stroke::new(1.0, egui::Color32::WHITE), dash, gap);
+                        painter.extend(shapes);
                     }
                     if let Some(handles) = self.selection_handle_positions() {
                         // Helper: find a handle's screen position by variant.
@@ -4997,8 +5037,8 @@ impl App {
                             .find(|(h, _)| *h == target)
                             .map(|(_, p)| to_screen(*p));
 
-                        // Stems: N→Rotate, W→FlipH, S→FlipV
-                        for (from, to) in [(Handle::N, Handle::Rotate), (Handle::W, Handle::FlipH), (Handle::S, Handle::FlipV)] {
+                        // Stems: N→Rotate
+                        for (from, to) in [(Handle::N, Handle::Rotate)] {
                             if let (Some(a), Some(b)) = (find(from), find(to)) {
                                 painter.line_segment([a, b], egui::Stroke::new(2.0, egui::Color32::from_black_alpha(120)));
                                 painter.line_segment([a, b], egui::Stroke::new(1.0, egui::Color32::WHITE));
@@ -5008,7 +5048,7 @@ impl App {
                         // Handles
                         for (h, p) in handles {
                             let center = to_screen(p);
-                            let size = if matches!(h, Handle::Rotate | Handle::FlipH | Handle::FlipV) { 5.0 } else { 4.0 };
+                            let size = if matches!(h, Handle::Rotate) { 5.0 } else { 4.0 };
                             let hr = egui::Rect::from_center_size(center, egui::Vec2::splat(size * 2.0));
                             painter.rect_filled(hr, 1.0, egui::Color32::WHITE);
                             painter.rect_stroke(hr, 1.0, egui::Stroke::new(1.0, egui::Color32::BLACK), egui::StrokeKind::Outside);
@@ -7065,7 +7105,7 @@ print("FAIL")
     ///   SW S SE
     /// Plus a rotation handle 18 canvas-pixels above the N handle (along the
     /// "up" axis of the rotated rect).
-    fn selection_handle_positions(&self) -> Option<[(Handle, (f32, f32)); 11]> {
+    fn selection_handle_positions(&self) -> Option<[(Handle, (f32, f32)); 9]> {
         let (w0, h0) = self.select_state.float_size()?;
         let sw = w0 as f32 * self.select_state.scale.0.abs();
         let sh = h0 as f32 * self.select_state.scale.1.abs();
@@ -7078,7 +7118,7 @@ print("FAIL")
             let dy = ly - cy;
             (cx + dx * c - dy * s, cy + dx * s + dy * c)
         };
-        // Rotation + flip handle offsets: 18 canvas-pixels outside the rect (local space).
+        // Rotation handle offset: 18 canvas-pixels outside the rect (local space).
         let off = 18.0 / self.canvas.zoom.max(0.0001);
         Some([
             (Handle::NW, map(ox,        oy)),
@@ -7090,8 +7130,6 @@ print("FAIL")
             (Handle::S,  map(ox + sw/2., oy + sh)),
             (Handle::SE, map(ox + sw,    oy + sh)),
             (Handle::Rotate, map(ox + sw/2., oy - off)),
-            (Handle::FlipH,  map(ox - off,    oy + sh/2.)),
-            (Handle::FlipV,  map(ox + sw/2.,  oy + sh + off)),
         ])
     }
 
@@ -7177,32 +7215,9 @@ print("FAIL")
         let h = self.project.canvas_height;
         let (cx_px, cy_px) = self.canvas.screen_to_canvas_f32(pos, canvas_rect, w, h);
 
-        // Click on flip handles → mirror (no drag).
-        if response.clicked() {
-            if let Some(handle) = self.hit_test_selection(cx_px, cy_px) {
-                match handle {
-                    Handle::FlipH => {
-                        self.select_state.scale.0 = -self.select_state.scale.0;
-                        self.canvas_dirty = true;
-                        return true;
-                    }
-                    Handle::FlipV => {
-                        self.select_state.scale.1 = -self.select_state.scale.1;
-                        self.canvas_dirty = true;
-                        return true;
-                    }
-                    _ => {}
-                }
-            }
-        }
-
         // Start an interaction on drag_started inside a handle or the rect.
         if response.drag_started() {
             if let Some(handle) = self.hit_test_selection(cx_px, cy_px) {
-                // Flip handles are click-only; pressing-and-dragging on them does nothing.
-                if matches!(handle, Handle::FlipH | Handle::FlipV) {
-                    return true;
-                }
                 let interaction = match handle {
                     Handle::Inside => SelectInteraction::Moving,
                     Handle::Rotate => SelectInteraction::Rotating,
