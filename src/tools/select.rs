@@ -132,11 +132,15 @@ pub fn magic_wand_select(layer: &Layer, start_x: u32, start_y: u32, eight_way: b
         visited[idx] = true;
 
         let current = layer.get_pixel(x, y);
-        if current[0] == target[0]
-            && current[1] == target[1]
-            && current[2] == target[2]
-            && current[3] == target[3]
-        {
+        let matches = if target[3] == 0 {
+            current[3] == 0
+        } else {
+            current[0] == target[0]
+                && current[1] == target[1]
+                && current[2] == target[2]
+                && current[3] == target[3]
+        };
+        if matches {
             selected[idx] = true;
 
             // 4-way neighbors
@@ -242,6 +246,27 @@ pub struct DragAnchor {
 impl SelectState {
     pub fn has_float(&self) -> bool { self.float_pixels.is_some() }
 
+    pub fn has_selection(&self) -> bool {
+        self.rect.is_some() || self.mask.as_ref().map(|m| !m.is_empty()).unwrap_or(false)
+    }
+
+    pub fn is_pixel_selected(&self, x: u32, y: u32) -> bool {
+        if !self.has_selection() {
+            return true;
+        }
+        if let Some((rx, ry, rw, rh)) = self.rect {
+            if x >= rx && x < rx + rw && y >= ry && y < ry + rh {
+                return true;
+            }
+        }
+        if let Some(ref m) = self.mask {
+            if m.get(x, y) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// True when a float exists and the user can move/resize/rotate it.
     pub fn is_active(&self) -> bool { self.has_float() }
 
@@ -253,6 +278,18 @@ impl SelectState {
     /// Reset everything (no float, no rect).
     pub fn clear(&mut self) {
         *self = SelectState::default();
+    }
+
+    pub fn clear_float_keep_mask(&mut self, new_mask: SelectionMask) {
+        self.float_pixels = None;
+        self.origin = None;
+        self.offset = (0.0, 0.0);
+        self.scale = (1.0, 1.0);
+        self.rotation = 0.0;
+        self.interaction = SelectInteraction::None;
+        self.drag_anchor = None;
+        self.rect = None;
+        self.mask = Some(new_mask);
     }
 
     /// Begin a float from a freshly lifted buffer and origin rect.

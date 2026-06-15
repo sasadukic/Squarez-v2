@@ -5193,6 +5193,148 @@ print("FAIL")
         self.canvas_dirty = true;
     }
 
+    fn copy_to_clipboard(&mut self) {
+        let (rx, ry, rw, rh) = if self.select_state.has_float() {
+            let Some((w0, h0)) = self.select_state.float_size() else { return; };
+            (self.select_state.offset.0 as u32, self.select_state.offset.1 as u32, w0, h0)
+        } else if let Some((rx, ry, rw, rh)) = self.select_state.rect {
+            (rx, ry, rw, rh)
+        } else if let Some(ref mask) = self.select_state.mask {
+            if let Some(bbox) = mask.bounding_box() {
+                bbox
+            } else {
+                return;
+            }
+        } else {
+            return;
+        };
+
+        if rw == 0 || rh == 0 { return; }
+
+        let ai = self.project.active_animation;
+        let fi = self.project.active_frame;
+        let li = self.project.active_layer;
+
+        let ref_layer = if self.project.is_tiled() {
+            self.stitch_temp_layer(ai, li)
+        } else {
+            self.project.animations[ai].frames[fi].layers[li].clone()
+        };
+
+        let mut rgba_bytes = Vec::with_capacity((rw * rh * 4) as usize);
+        if self.select_state.has_float() {
+            if let Some(ref float) = self.select_state.float_pixels {
+                for y in 0..rh {
+                    for x in 0..rw {
+                        let p = float.pixels[(y * rw + x) as usize];
+                        rgba_bytes.extend_from_slice(&p);
+                    }
+                }
+            }
+        } else {
+            for y in 0..rh {
+                for x in 0..rw {
+                    let cx = rx + x;
+                    let cy = ry + y;
+                    let is_selected = if let Some(ref mask) = self.select_state.mask {
+                        mask.get(cx, cy)
+                    } else {
+                        true
+                    };
+                    if is_selected {
+                        let p = ref_layer.get_pixel(cx, cy);
+                        rgba_bytes.extend_from_slice(&p);
+                    } else {
+                        rgba_bytes.extend_from_slice(&[0, 0, 0, 0]);
+                    }
+                }
+            }
+        }
+
+        if let Ok(mut cb) = arboard::Clipboard::new() {
+            let image_data = arboard::ImageData {
+                width: rw as usize,
+                height: rh as usize,
+                bytes: std::borrow::Cow::Owned(rgba_bytes),
+            };
+            let _ = cb.set_image(image_data);
+        }
+    }
+
+    fn cut_to_clipboard(&mut self) {
+        self.copy_to_clipboard();
+        self.delete_selection();
+    }
+
+    fn delete_selection(&mut self) {
+        if self.select_state.has_float() {
+            self.select_state.clear();
+            self.canvas_dirty = true;
+            if self.project.is_tiled() {
+                self.mark_all_thumbnails_dirty();
+            }
+        } else if self.select_state.has_selection() {
+            let ai = self.project.active_animation;
+            let fi = self.project.active_frame;
+            let li = self.project.active_layer;
+            if self.project.animations[ai].frames[fi].layers[li].locked { return; }
+            if self.project.animations[ai].frames[fi].layers[li].is_group { return; }
+
+            let ref_layer = if self.project.is_tiled() {
+                self.stitch_temp_layer(ai, li)
+            } else {
+                self.project.animations[ai].frames[fi].layers[li].clone()
+            };
+
+            let w = ref_layer.width;
+            let h = ref_layer.height;
+            let mut edits = Vec::new();
+
+            for y in 0..h {
+                for x in 0..w {
+                    if self.select_state.is_pixel_selected(x, y) {
+                        let old = ref_layer.get_pixel(x, y);
+                        if old[3] != 0 {
+                            edits.push((x, y, old, [0, 0, 0, 0]));
+                        }
+                    }
+                }
+            }
+
+            if !edits.is_empty() {
+                if self.project.is_tiled() {
+                    let tile_w = self.project.tile_w;
+                    let tile_h = self.project.tile_h;
+                    let tiles_w = self.project.tiles_w;
+                    let tiles_h = self.project.tiles_h;
+                    for &(x, y, _o, n) in &edits {
+                        let tx = x / tile_w;
+                        let ty = y / tile_h;
+                        let ox = x % tile_w;
+                        let oy = y % tile_h;
+                        if tx < tiles_w && ty < tiles_h {
+                            let t_fi = (ty * tiles_w + tx) as usize;
+                            if t_fi < self.project.animations[ai].frames.len() {
+                                self.project.animations[ai].frames[t_fi].layers[li].set_pixel(ox, oy, n);
+                                self.project.animations[ai].frames[t_fi].dirty = true;
+                                if ai < self.thumbnails.len() && t_fi < self.thumbnails[ai].len() {
+                                    self.thumbnails[ai][t_fi].dirty = true;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    for &(x, y, _o, n) in &edits {
+                        self.project.animations[ai].frames[fi].layers[li].set_pixel(x, y, n);
+                    }
+                }
+                self.undo_stack.push(Command::PaintPixels { animation_id: ai, frame_id: fi, layer_id: li, edits });
+                self.active_modified = true;
+                self.canvas_dirty = true;
+            }
+        }
+    }
+
     fn add_tile(&mut self) {
         let ai = self.project.active_animation;
         let idx = self.project.animations[ai].frames.len();
@@ -5816,6 +5958,9 @@ print("FAIL")
                     &ref_layer,
                     phase.x0, phase.y0, phase.x1, phase.y1, height, color,
                 );
+                let edits: Vec<_> = edits.into_iter().filter(|&(x, y, _, _)| {
+                    self.select_state.is_pixel_selected(x, y)
+                }).collect();
                 if !edits.is_empty() {
                     if self.project.is_tiled() {
                         let tile_w = self.project.tile_w;
@@ -5880,6 +6025,9 @@ print("FAIL")
                     &ref_layer,
                     phase.x0, phase.y0, phase.x1, phase.y1, height, color,
                 );
+                let edits: Vec<_> = edits.into_iter().filter(|&(x, y, _, _)| {
+                    self.select_state.is_pixel_selected(x, y)
+                }).collect();
                 if !edits.is_empty() {
                     if self.project.is_tiled() {
                         let tile_w = self.project.tile_w;
@@ -6031,7 +6179,9 @@ print("FAIL")
                     let mut seen = std::collections::HashSet::new();
                     let mut deduped = Vec::new();
                     for e in all_edits {
-                        if seen.insert((e.0, e.1)) { deduped.push(e); }
+                        if self.select_state.is_pixel_selected(e.0, e.1) {
+                            if seen.insert((e.0, e.1)) { deduped.push(e); }
+                        }
                     }
                     if !deduped.is_empty() {
                         if self.project.is_tiled() {
@@ -6143,23 +6293,52 @@ print("FAIL")
             self.mirror_x_sequence.clear();
             self.mirror_y_sequence.clear();
             self.mirror_xy_sequence.clear();
-            // RectSelect / MagicWand: lift selected pixels into a floating buffer.
+            // RectSelect: update selection mask instead of lifting immediately
             if matches!(self.active_tool, ActiveTool::RectSelect) {
                 if !self.select_state.has_float() {
                     if let Some(rect) = self.select_state.rect {
+                        let shift_held = response.ctx.input(|i| i.modifiers.shift);
+                        let alt_held = response.ctx.input(|i| i.modifiers.alt);
                         if rect.2 > 0 && rect.3 > 0 {
-                            self.lift_selection_to_float(rect);
+                            let mut temp_mask = crate::tools::SelectionMask::new(w, h);
+                            let (rx, ry, rw, rh) = rect;
+                            for y in ry..ry + rh {
+                                for x in rx..rx + rw {
+                                    temp_mask.set(x, y, true);
+                                }
+                            }
+                            let mode = if shift_held && alt_held {
+                                crate::tools::SelectionMode::Intersect
+                            } else if shift_held {
+                                crate::tools::SelectionMode::Add
+                            } else if alt_held {
+                                crate::tools::SelectionMode::Subtract
+                            } else {
+                                crate::tools::SelectionMode::Replace
+                            };
+                            let combined = if let Some(ref current_mask) = self.select_state.mask {
+                                current_mask.combine(&temp_mask, mode)
+                            } else {
+                                if mode == crate::tools::SelectionMode::Subtract || mode == crate::tools::SelectionMode::Intersect {
+                                    crate::tools::SelectionMask::new(w, h)
+                                } else {
+                                    temp_mask
+                                }
+                            };
+                            self.select_state.mask = Some(combined);
+                            self.select_state.rect = None;
+                            self.canvas_dirty = true;
                         } else {
-                            self.select_state.clear();
+                            if !shift_held && !alt_held {
+                                self.select_state.clear();
+                            }
+                            self.select_state.rect = None;
+                            self.canvas_dirty = true;
                         }
                     }
                 }
             } else if matches!(self.active_tool, ActiveTool::MagicWand) {
-                if !self.select_state.has_float() {
-                    if self.select_state.mask.is_some() {
-                        self.lift_mask_to_float();
-                    }
-                }
+                // Do nothing on release for magic wand
             }
             self.drag_start = None;
             return;
@@ -6271,22 +6450,26 @@ print("FAIL")
             };
             self.drag_start = Some(start);
 
-            // If we have a selection mask and the user dragged inside it, lift it to float!
+            // If we have a selection mask and the user dragged inside it (with no modifiers), lift it to float!
             if is_select_tool && !self.select_state.has_float() && response.drag_started() {
-                if let Some(ref mask) = self.select_state.mask {
-                    if mask.get(px, py) {
-                        self.lift_mask_to_float();
-                        self.select_state.interaction = SelectInteraction::Moving;
-                        let latest = response.ctx.input(|i| i.pointer.latest_pos()).unwrap_or(pos);
-                        let (cx, cy) = self.canvas.screen_to_canvas_f32(latest, canvas_rect, w, h);
-                        self.select_state.drag_anchor = Some(crate::tools::DragAnchor {
-                            mouse_x: cx,
-                            mouse_y: cy,
-                            offset: self.select_state.offset,
-                            scale: self.select_state.scale,
-                            rotation: self.select_state.rotation,
-                        });
-                        return;
+                let shift_held = response.ctx.input(|i| i.modifiers.shift);
+                let alt_held = response.ctx.input(|i| i.modifiers.alt);
+                if !shift_held && !alt_held {
+                    if let Some(ref mask) = self.select_state.mask {
+                        if mask.get(px, py) {
+                            self.lift_mask_to_float();
+                            self.select_state.interaction = SelectInteraction::Moving;
+                            let latest = response.ctx.input(|i| i.pointer.latest_pos()).unwrap_or(pos);
+                            let (cx, cy) = self.canvas.screen_to_canvas_f32(latest, canvas_rect, w, h);
+                            self.select_state.drag_anchor = Some(crate::tools::DragAnchor {
+                                mouse_x: cx,
+                                mouse_y: cy,
+                                offset: self.select_state.offset,
+                                scale: self.select_state.scale,
+                                rotation: self.select_state.rotation,
+                            });
+                            return;
+                        }
                     }
                 }
             }
@@ -6299,10 +6482,25 @@ print("FAIL")
                         self.project.animations[ai].frames[fi].layers[li].clone()
                     };
                     let new_mask = crate::tools::magic_wand_select(&ref_layer, px, py, self.select_state.wand_eight_way);
-                    let combined = if let Some(ref current_mask) = self.select_state.mask {
-                        current_mask.combine(&new_mask, self.select_state.wand_mode)
+                    let shift_held = response.ctx.input(|i| i.modifiers.shift);
+                    let alt_held = response.ctx.input(|i| i.modifiers.alt);
+                    let mode = if shift_held && alt_held {
+                        crate::tools::SelectionMode::Intersect
+                    } else if shift_held {
+                        crate::tools::SelectionMode::Add
+                    } else if alt_held {
+                        crate::tools::SelectionMode::Subtract
                     } else {
-                        new_mask
+                        self.select_state.wand_mode
+                    };
+                    let combined = if let Some(ref current_mask) = self.select_state.mask {
+                        current_mask.combine(&new_mask, mode)
+                    } else {
+                        if mode == crate::tools::SelectionMode::Subtract || mode == crate::tools::SelectionMode::Intersect {
+                            crate::tools::SelectionMask::new(w, h)
+                        } else {
+                            new_mask
+                        }
                     };
                     self.select_state.mask = Some(combined);
                     self.canvas_dirty = true;
@@ -6391,11 +6589,13 @@ print("FAIL")
                             };
                             let edits = apply_pencil(&self.project.animations[ai].frames[target_fi].layers[li], ox, oy, color);
                             for &(_x, _y, old, new) in &edits {
-                                self.project.animations[ai].frames[target_fi].layers[li].set_pixel(ox, oy, new);
-                                self.stroke_edits.push((sx, sy, old, new));
-                                self.project.animations[ai].frames[target_fi].dirty = true;
-                                if ai < self.thumbnails.len() && target_fi < self.thumbnails[ai].len() {
-                                    self.thumbnails[ai][target_fi].dirty = true;
+                                if self.select_state.is_pixel_selected(sx, sy) {
+                                    self.project.animations[ai].frames[target_fi].layers[li].set_pixel(ox, oy, new);
+                                    self.stroke_edits.push((sx, sy, old, new));
+                                    self.project.animations[ai].frames[target_fi].dirty = true;
+                                    if ai < self.thumbnails.len() && target_fi < self.thumbnails[ai].len() {
+                                        self.thumbnails[ai][target_fi].dirty = true;
+                                    }
                                 }
                             }
                             self.stroke_painted.insert((sx, sy));
@@ -6441,11 +6641,13 @@ print("FAIL")
                             };
                             let edits = apply_eraser(&self.project.animations[ai].frames[target_fi].layers[li], ox, oy);
                             for &(_x, _y, old, new) in &edits {
-                                self.project.animations[ai].frames[target_fi].layers[li].set_pixel(ox, oy, new);
-                                self.stroke_edits.push((sx, sy, old, new));
-                                self.project.animations[ai].frames[target_fi].dirty = true;
-                                if ai < self.thumbnails.len() && target_fi < self.thumbnails[ai].len() {
-                                    self.thumbnails[ai][target_fi].dirty = true;
+                                if self.select_state.is_pixel_selected(sx, sy) {
+                                    self.project.animations[ai].frames[target_fi].layers[li].set_pixel(ox, oy, new);
+                                    self.stroke_edits.push((sx, sy, old, new));
+                                    self.project.animations[ai].frames[target_fi].dirty = true;
+                                    if ai < self.thumbnails.len() && target_fi < self.thumbnails[ai].len() {
+                                        self.thumbnails[ai][target_fi].dirty = true;
+                                    }
                                 }
                             }
                             self.stroke_painted.insert((sx, sy));
@@ -6467,6 +6669,9 @@ print("FAIL")
                     let edits = apply_fill(layer, px, py, target, color);
                     (edits, fi)
                 };
+                let edits: Vec<_> = edits.into_iter().filter(|&(x, y, _, _)| {
+                    self.select_state.is_pixel_selected(x, y)
+                }).collect();
                 if !edits.is_empty() {
                     if self.project.is_tiled() {
                         let tile_w = self.project.tile_w;
@@ -6805,11 +7010,19 @@ print("FAIL")
                 self.project.animations[ai].frames[fi].layers[li].set_pixel(x, y, n);
             }
         }
+        let mut new_mask = crate::tools::SelectionMask::new(self.project.canvas_width, self.project.canvas_height);
+        for cy in y0..y1 {
+            for cx in x0..x1 {
+                if sample_transformed(&self.select_state, cx, cy).is_some() {
+                    new_mask.set(cx as u32, cy as u32, true);
+                }
+            }
+        }
         if !edits.is_empty() {
             self.undo_stack.push(Command::PaintPixels { animation_id: ai, frame_id: fi, layer_id: li, edits });
             self.active_modified = true;
         }
-        self.select_state.clear();
+        self.select_state.clear_float_keep_mask(new_mask);
         self.canvas_dirty = true;
     }
 
@@ -8501,13 +8714,9 @@ impl eframe::App for App {
         }
         if (ctx.input(|i| i.key_pressed(egui::Key::Delete)) || ctx.input(|i| i.key_pressed(egui::Key::Backspace)))
             && !ctx.wants_keyboard_input()
-            && self.select_state.has_float()
+            && (self.select_state.has_float() || self.select_state.has_selection())
         {
-            self.select_state.clear();
-            self.canvas_dirty = true;
-            if self.project.is_tiled() {
-                self.mark_all_thumbnails_dirty();
-            }
+            self.delete_selection();
         }
         // If the user switches away from the selection tools, commit any float.
         if self.select_state.has_float() && !matches!(self.active_tool, ActiveTool::RectSelect | ActiveTool::MagicWand) {
@@ -8536,11 +8745,11 @@ impl eframe::App for App {
         if !ctx.wants_keyboard_input() {
             let total = self.project.active_anim().frames.len();
             if total > 0 {
-                if ctx.input(|i| i.key_pressed(egui::Key::A)) {
+                if ctx.input(|i| i.key_pressed(egui::Key::A)) && !ctx.input(|i| i.modifiers.command || i.modifiers.ctrl) {
                     self.project.active_frame = (self.project.active_frame + total - 1) % total;
                     self.canvas_dirty = true;
                 }
-                if ctx.input(|i| i.key_pressed(egui::Key::D)) {
+                if ctx.input(|i| i.key_pressed(egui::Key::D)) && !ctx.input(|i| i.modifiers.command || i.modifiers.ctrl) {
                     self.project.active_frame = (self.project.active_frame + 1) % total;
                     self.canvas_dirty = true;
                 }
@@ -8610,8 +8819,68 @@ impl eframe::App for App {
                 }
             })
         });
+        let edit_copy = ctx.input(|i| {
+            i.events.iter().any(|event| {
+                if let egui::Event::Key { key: egui::Key::C, pressed: false, modifiers, .. } = event {
+                    (modifiers.command || modifiers.ctrl) && !modifiers.shift
+                } else {
+                    false
+                }
+            })
+        });
+        let edit_cut = ctx.input(|i| {
+            i.events.iter().any(|event| {
+                if let egui::Event::Key { key: egui::Key::X, pressed: false, modifiers, .. } = event {
+                    (modifiers.command || modifiers.ctrl) && !modifiers.shift
+                } else {
+                    false
+                }
+            })
+        });
+        let select_all_shortcut = ctx.input(|i| {
+            i.events.iter().any(|event| {
+                if let egui::Event::Key { key: egui::Key::A, pressed: false, modifiers, .. } = event {
+                    (modifiers.command || modifiers.ctrl) && !modifiers.shift
+                } else {
+                    false
+                }
+            })
+        });
+        let deselect_shortcut = ctx.input(|i| {
+            i.events.iter().any(|event| {
+                if let egui::Event::Key { key: egui::Key::D, pressed: false, modifiers, .. } = event {
+                    (modifiers.command || modifiers.ctrl) && !modifiers.shift
+                } else {
+                    false
+                }
+            })
+        });
 
-        if edit_paste && !ctx.wants_keyboard_input() { self.paste_from_clipboard(); }
+        if !ctx.wants_keyboard_input() {
+            if edit_paste { self.paste_from_clipboard(); }
+            if edit_copy  { self.copy_to_clipboard(); }
+            if edit_cut   { self.cut_to_clipboard(); }
+            if select_all_shortcut {
+                if self.select_state.has_float() {
+                    self.commit_float_to_layer();
+                }
+                let w = self.project.canvas_width;
+                let h = self.project.canvas_height;
+                let mut mask = crate::tools::SelectionMask::new(w, h);
+                mask.mask.fill(true);
+                self.select_state.mask = Some(mask);
+                self.select_state.rect = None;
+                self.canvas_dirty = true;
+            }
+            if deselect_shortcut {
+                if self.select_state.has_float() {
+                    self.commit_float_to_layer();
+                } else {
+                    self.select_state.clear();
+                }
+                self.canvas_dirty = true;
+            }
+        }
 
         if file_new  { self.open_new_dialog(false); }
         if file_open && !self.any_modal_open() {
