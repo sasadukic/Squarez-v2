@@ -177,8 +177,8 @@ pub fn iso_box_preview(x0: u32, y0: u32, x1: u32, y1: u32, height: i32, color: R
     }
 
     let rh = (orig_y1 as i32 - orig_y0 as i32).abs().max((orig_x1 as i32 - orig_x0 as i32).abs() / 2);
-    let cx = orig_x0 as i32;
-    let cy = if orig_y1 >= orig_y0 { orig_y0 as i32 + rh } else { orig_y0 as i32 - rh };
+    let cy = orig_y0 as i32;
+    let cx = if orig_x1 >= orig_x0 { orig_x0 as i32 + 2 * rh } else { orig_x0 as i32 - 2 * rh };
 
     if rh == 0 {
         return vec![];
@@ -442,8 +442,8 @@ pub fn iso_cylinder_preview(x0: u32, y0: u32, x1: u32, y1: u32, height: i32, col
     }
 
     let rh = (orig_y1 as i32 - orig_y0 as i32).abs().max((orig_x1 as i32 - orig_x0 as i32).abs() / 2);
-    let cx = orig_x0 as i32;
-    let cy = if orig_y1 >= orig_y0 { orig_y0 as i32 + rh } else { orig_y0 as i32 - rh };
+    let cy = orig_y0 as i32;
+    let cx = if orig_x1 >= orig_x0 { orig_x0 as i32 + 2 * rh } else { orig_x0 as i32 - 2 * rh };
     let rw = rh * 2;
 
     if rh == 0 {
