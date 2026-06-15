@@ -212,26 +212,71 @@ fn ellipse_outline(cx: i32, cy: i32, rx: i32, ry: i32) -> Vec<(i32, i32)> {
     if rx <= 0 || ry <= 0 {
         return vec![(cx, cy)];
     }
-    let mut pts = Vec::new();
-    let rx_sq = rx * rx;
-    let ry_sq = ry * ry;
-    let bound = rx_sq * ry_sq;
+    
+    let x0 = cx - rx;
+    let y0 = cy - ry;
+    let x1 = cx + rx;
+    let y1 = cy + ry;
+    
+    let mut x0 = x0;
+    let mut y0 = y0;
+    let mut x1 = x1;
+    let mut y1 = y1;
+    
+    let mut a = (x1 - x0).abs();
+    let b = (y1 - y0).abs();
+    let mut b1 = b & 1; /* diameter value sign */
+    
+    let mut dx = 4 * (1 - a) * b * b;
+    let mut dy = 4 * (1 + b1) * a * a; /* error increment */
+    let mut err = dx + dy + b1 * a * a; /* error of 1st step */
+    
+    y0 += (b + 1) / 2;
+    y1 = y0 - b1; /* starting pixel */
+    a *= 8 * a;
+    b1 = 8 * b * b;
 
-    let inside = |dx: i32, dy: i32| dx * dx * ry_sq + dy * dy * rx_sq <= bound;
+    let mut points = std::collections::HashSet::new();
 
-    for dy in -ry..=ry {
-        for dx in -rx..=rx {
-            if inside(dx, dy) {
-                // Border pixel if any 4-neighbour is outside
-                if !inside(dx - 1, dy) || !inside(dx + 1, dy)
-                    || !inside(dx, dy - 1) || !inside(dx, dy + 1)
-                {
-                    pts.push((cx + dx, cy + dy));
-                }
-            }
+    let mut draw_pixel = |x: i32, y: i32| {
+        points.insert((x, y));
+    };
+
+    loop {
+        draw_pixel(x1, y0);
+        draw_pixel(x0, y0);
+        draw_pixel(x0, y1);
+        draw_pixel(x1, y1);
+        
+        let e2 = 2 * err;
+        if e2 >= dx {
+            x0 += 1;
+            x1 -= 1;
+            dx += b1;
+            err += dx;
+        }
+        if e2 <= dy {
+            y0 += 1;
+            y1 -= 1;
+            dy += a;
+            err += dy;
+        }
+        
+        if x0 > x1 {
+            break;
         }
     }
-    pts
+    
+    while y0 - y1 < b {
+        draw_pixel(x0 - 1, y0);
+        draw_pixel(x1 + 1, y0);
+        y0 += 1;
+        draw_pixel(x0 - 1, y1);
+        draw_pixel(x1 + 1, y1);
+        y1 -= 1;
+    }
+
+    points.into_iter().collect()
 }
 
 /// Generate display pixels for an isometric cylinder **outline**.
