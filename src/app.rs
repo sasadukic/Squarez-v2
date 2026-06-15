@@ -180,7 +180,7 @@ pub struct App {
     copied_color: Option<Rgba>,
     palette_hovered: bool,
     shading_mode: bool,
-    shading_direction_lighten: bool,
+    shading_dir: i32,
     shading_ramp: Option<(usize, usize)>,
     // Spring-animated selection highlight for layers panel
     layer_sel_y: f32,
@@ -442,7 +442,7 @@ impl App {
             copied_color: None,
             palette_hovered: false,
             shading_mode: false,
-            shading_direction_lighten: false,
+            shading_dir: 1,
             shading_ramp: None,
             layer_sel_y: 0.0,
             layer_sel_vel: 0.0,
@@ -2969,15 +2969,18 @@ impl App {
                             let end = prev_idx.max(i);
                             self.shading_ramp = Some((start, end));
                             self.shading_mode = start != end;
+                            self.shading_dir = if i >= prev_idx { 1 } else { -1 };
                         } else {
                             self.active_palette_idx = Some(i);
                             self.shading_ramp = None;
                             self.shading_mode = false;
+                            self.shading_dir = 1;
                         }
                     } else {
                         self.active_palette_idx = Some(i);
                         self.shading_ramp = None;
                         self.shading_mode = false;
+                        self.shading_dir = 1;
                     }
                     self.color_state.foreground = swatch;
                     sync_color_caches(&mut self.color_state);
@@ -4403,8 +4406,6 @@ impl App {
         let base_rows = if show_tile_row { 5 } else { 4 };
         let num_rows = if is_select_tool {
             base_rows + 2
-        } else if is_pencil {
-            base_rows + 1
         } else {
             base_rows
         };
@@ -4705,26 +4706,6 @@ impl App {
                     row4_y + btn_h + pad
                 } else {
                     row3_y + btn_h + pad
-                };
-
-                let next_y = if is_pencil {
-                    let shade_y = next_y;
-                    let shade_rect = egui::Rect::from_min_size(egui::Pos2::new(base.x, shade_y), Vec2::new(content_w, btn_h));
-                    let shade_resp = ui.interact(shade_rect, egui::Id::new("ctx_shade_hover"), egui::Sense::hover());
-                    shade_resp.on_hover_text("Pencil Shading Ink Direction");
-
-                    let right_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, shade_y), Vec2::new(controls_w, btn_h));
-                    let right_resp = ui.interact(right_rect, egui::Id::new("ctx_shade_dir"), egui::Sense::click());
-                    let right_bg = if right_resp.hovered() { theme.accent } else { theme.surface };
-                    ui.painter().rect_filled(right_rect, 0.0, right_bg);
-                    let right_fg = if right_resp.hovered() { theme.fg } else { theme.fg_muted };
-                    let dir_str = if self.shading_direction_lighten { "Lighten" } else { "Darken" };
-                    ui.painter().text(right_rect.center(), egui::Align2::CENTER_CENTER, dir_str, FontId::new(10.0, FontFamily::Proportional), right_fg);
-                    if right_resp.clicked() { self.shading_direction_lighten = !self.shading_direction_lighten; }
-
-                    shade_y + btn_h + pad
-                } else {
-                    next_y
                 };
 
                 // ── Rows for selection settings (Wand Mode & Connect) ──
@@ -7319,11 +7300,7 @@ print("FAIL")
                                     }
                                     if let Some(p_idx) = found_ramp_idx {
                                         let alt_held = response.ctx.input(|inp| inp.modifiers.alt);
-                                        let dir = if self.shading_direction_lighten {
-                                            if alt_held { -1 } else { 1 }
-                                        } else {
-                                            if alt_held { 1 } else { -1 }
-                                        };
+                                        let dir = if alt_held { -self.shading_dir } else { self.shading_dir };
                                         let next_idx = (p_idx as i32 + dir).clamp(start as i32, end as i32) as usize;
                                         c = self.project.palette[next_idx];
                                     } else {
