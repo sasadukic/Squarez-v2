@@ -9436,17 +9436,39 @@ fn shape_shift_constrain(tool: &ActiveTool, x0: i32, y0: i32, ex: i32, ey: i32) 
             (x0 + side * dx.signum(), y0 + side * dy.signum())
         }
         ActiveTool::Line => {
-            let dx = (ex - x0) as f32;
-            let dy = (ey - y0) as f32;
-            let len = (dx * dx + dy * dy).sqrt();
-            let angle = dy.atan2(dx);
-            let snap = (std::f32::consts::PI / 4.0).round(); // 45° in radians
-            let snapped = (angle / (std::f32::consts::PI / 4.0)).round() * (std::f32::consts::PI / 4.0);
-            let _ = snap;
-            (
-                x0 + (len * snapped.cos()).round() as i32,
-                y0 + (len * snapped.sin()).round() as i32,
-            )
+            let dx = ex - x0;
+            let dy = ey - y0;
+            if dx == 0 && dy == 0 {
+                (ex, ey)
+            } else {
+                let angle = (dy as f32).atan2(dx as f32);
+                let mut angle_deg = angle.to_degrees();
+                if angle_deg < 0.0 {
+                    angle_deg += 360.0;
+                }
+                let sector = (((angle_deg + 22.5) / 45.0).floor() as i32) % 8;
+                match sector {
+                    0 | 4 => (ex, y0), // Horizontal
+                    2 | 6 => (x0, ey), // Vertical
+                    1 => {
+                        let side = dx.abs().max(dy.abs());
+                        (x0 + side, y0 + side)
+                    }
+                    3 => {
+                        let side = dx.abs().max(dy.abs());
+                        (x0 - side, y0 + side)
+                    }
+                    5 => {
+                        let side = dx.abs().max(dy.abs());
+                        (x0 - side, y0 - side)
+                    }
+                    7 => {
+                        let side = dx.abs().max(dy.abs());
+                        (x0 + side, y0 - side)
+                    }
+                    _ => (ex, ey),
+                }
+            }
         }
         _ => (ex, ey),
     }
