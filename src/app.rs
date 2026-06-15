@@ -6300,8 +6300,21 @@ print("FAIL")
                         let shift_held = response.ctx.input(|i| i.modifiers.shift);
                         let alt_held = response.ctx.input(|i| i.modifiers.alt);
                         if rect.2 > 0 && rect.3 > 0 {
-                            let mut temp_mask = crate::tools::SelectionMask::new(w, h);
                             let (rx, ry, rw, rh) = rect;
+                            let ref_layer = if self.project.is_tiled() {
+                                self.stitch_temp_layer(ai, li)
+                            } else {
+                                self.project.animations[ai].frames[fi].layers[li].clone()
+                            };
+                            if rw == 1 && rh == 1 && self.is_empty_space(&ref_layer, rx, ry) {
+                                if !shift_held && !alt_held {
+                                    self.select_state.clear();
+                                }
+                                self.select_state.rect = None;
+                                self.canvas_dirty = true;
+                                return;
+                            }
+                            let mut temp_mask = crate::tools::SelectionMask::new(w, h);
                             for y in ry..ry + rh {
                                 for x in rx..rx + rw {
                                     temp_mask.set(x, y, true);
@@ -6482,6 +6495,18 @@ print("FAIL")
                     } else {
                         self.project.animations[ai].frames[fi].layers[li].clone()
                     };
+                    if self.is_empty_space(&ref_layer, px, py) {
+                        let shift_held = response.ctx.input(|i| i.modifiers.shift);
+                        let alt_held = response.ctx.input(|i| i.modifiers.alt);
+                        if !shift_held && !alt_held {
+                            if self.select_state.has_float() {
+                                self.commit_float_to_layer();
+                            }
+                            self.select_state.clear();
+                            self.canvas_dirty = true;
+                        }
+                        return;
+                    }
                     let new_mask = crate::tools::magic_wand_select(&ref_layer, px, py, self.select_state.wand_eight_way);
                     let shift_held = response.ctx.input(|i| i.modifiers.shift);
                     let alt_held = response.ctx.input(|i| i.modifiers.alt);
@@ -7068,6 +7093,31 @@ print("FAIL")
             (Handle::FlipH,  map(ox - off,    oy + sh/2.)),
             (Handle::FlipV,  map(ox + sw/2.,  oy + sh + off)),
         ])
+    }
+
+    fn is_empty_space(&self, layer: &Layer, x: u32, y: u32) -> bool {
+        let w = layer.width;
+        let h = layer.height;
+        if x >= w || y >= h { return true; }
+        if layer.get_pixel(x, y)[3] != 0 {
+            return false;
+        }
+        let mut transparent_neighbors = 0;
+        let mut total_neighbors = 0;
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                if dx == 0 && dy == 0 { continue; }
+                let nx = x as i32 + dx;
+                let ny = y as i32 + dy;
+                if nx >= 0 && nx < w as i32 && ny >= 0 && ny < h as i32 {
+                    total_neighbors += 1;
+                    if layer.get_pixel(nx as u32, ny as u32)[3] == 0 {
+                        transparent_neighbors += 1;
+                    }
+                }
+            }
+        }
+        transparent_neighbors == total_neighbors
     }
 
     /// Hit-test handles, rotation stem, and inside-rect at a given canvas
