@@ -5939,16 +5939,34 @@ print("FAIL")
                         let hover = ui.rect_contains_pointer(rect);
 
                         if active {
-                            let bg_color = theme.accent.linear_multiply(0.3);
-                            scroll_painter.rect_filled(rect.shrink(1.0), 0.0, bg_color);
-                            scroll_painter.rect_stroke(rect.shrink(1.0), 0.0, egui::Stroke::new(1.0, theme.accent), egui::StrokeKind::Inside);
-                        } else {
-                            let border_color = if hover {
-                                theme.surface.linear_multiply(1.2)
+                            let stroke = egui::Stroke::new(1.0, theme.accent);
+                            let dash = 4.0_f32;
+                            let gap  = 4.0_f32;
+                            let side = size - 2.0;
+                            let perim = 4.0 * side;
+                            let t = ui.ctx().input(|i| i.time) as f32;
+                            ui.ctx().request_repaint();
+                            let off = (t * 20.0).rem_euclid(perim);
+                            
+                            let r = rect.shrink(1.0);
+                            let (start, waypoints): (Pos2, [Pos2; 4]) = if off < side {
+                                (Pos2::new(r.left() + off, r.top()),
+                                 [r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()])
+                            } else if off < 2.0 * side {
+                                (Pos2::new(r.right(), r.top() + (off - side)),
+                                 [r.right_bottom(), r.left_bottom(), r.left_top(), r.right_top()])
+                            } else if off < 3.0 * side {
+                                (Pos2::new(r.right() - (off - 2.0 * side), r.bottom()),
+                                 [r.left_bottom(), r.left_top(), r.right_top(), r.right_bottom()])
                             } else {
-                                theme.surface
+                                (Pos2::new(r.left(), r.bottom() - (off - 3.0 * side)),
+                                 [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom()])
                             };
-                            scroll_painter.rect_stroke(rect.shrink(1.0), 0.0, egui::Stroke::new(1.0, border_color), egui::StrokeKind::Inside);
+                            let path = [start, waypoints[0], waypoints[1], waypoints[2], waypoints[3], start];
+                            let shapes = egui::Shape::dashed_line(&path, stroke, dash, gap);
+                            scroll_painter.extend(shapes);
+                        } else if hover {
+                            scroll_painter.rect_stroke(rect.shrink(1.0), 0.0, egui::Stroke::new(1.0, theme.surface.linear_multiply(1.2)), egui::StrokeKind::Inside);
                         }
 
                         let bw = brush.width as f32;
