@@ -5903,14 +5903,11 @@ print("FAIL")
         let released = ui.input(|i| i.pointer.primary_released());
 
         Frame::new().fill(theme.panel).inner_margin(Margin::same(0)).show(ui, |ui| {
-            let (grid_rect, _) = ui.allocate_exact_size(
-                Vec2::new(grid_width, current_height),
-                egui::Sense::hover(),
-            );
-
-            egui::ScrollArea::vertical()
+            let scroll_output = egui::ScrollArea::vertical()
                 .id_salt("brushes_scroll")
                 .max_height(current_height)
+                .auto_shrink([false, true])
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
                 .show(ui, |ui| {
                     let (scroll_grid_rect, _) = ui.allocate_exact_size(
                         Vec2::new(grid_width, rows as f32 * row_height),
@@ -5988,6 +5985,8 @@ print("FAIL")
                         }
                     }
                 });
+
+            let grid_rect = scroll_output.inner_rect;
 
             // --- Handle drop to reorder ---
             if released {
