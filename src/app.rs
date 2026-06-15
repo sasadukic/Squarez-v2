@@ -4312,7 +4312,30 @@ impl App {
         let theme = self.theme.clone();
         let btn_h = 28.0;
         let pad = 4.0;
-        let ctrl_w = 40.0;                                       // ── Row 0: Mode Toggle (or Pen Size) ──
+        let ctrl_w = 40.0;                       // one control slot
+        let controls_w = ctrl_w * 2.0 + pad;     // two controls + gap between them
+        let content_w = controls_w;
+
+        let is_select_tool = matches!(self.active_tool, ActiveTool::RectSelect | ActiveTool::MagicWand);
+        // Base rows (Pen Size, Grid, Flip, Mirroring). Add 1 row if Sync Mode is active.
+        let show_tile_row = self.wang_blob.mode != crate::wang_blob::WangBlobMode::None;
+        let base_rows = if show_tile_row { 5 } else { 4 };
+        let num_rows = if is_select_tool { base_rows + 2 } else { base_rows };
+        let content_h = btn_h * (num_rows as f32) + pad * ((num_rows - 1) as f32);
+
+        let outcome = show_context_menu(
+            &mut state,
+            ctx,
+            &theme,
+            "canvas_ctx_menu",
+            None,
+            |ui| {
+                let total = ui.allocate_exact_size(Vec2::new(content_w, content_h), egui::Sense::hover()).0;
+                let base = total.min;
+                let controls_x = base.x;
+                let icon_size = egui::Vec2::splat(16.0);
+
+                // ── Row 0: Mode Toggle (or Pen Size) ──
                 let row0_y = base.y;
                 let is_shape_mode_tool = matches!(self.active_tool, ActiveTool::Rectangle { .. } | ActiveTool::Ellipse { .. });
                 if is_shape_mode_tool {
