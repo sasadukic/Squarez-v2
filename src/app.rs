@@ -2247,6 +2247,7 @@ impl App {
                 ui.spacing_mut().item_spacing = Vec2::ZERO;
                 egui::ScrollArea::vertical()
                     .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                    .auto_shrink([false, false])
                     .show(ui, |ui| {
                         ui.set_width(sidebar_w);
                         ui.set_max_width(sidebar_w);
