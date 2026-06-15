@@ -292,7 +292,7 @@ impl App {
             .and_then(|s| s.get_string(LAYOUT_STORAGE_KEY))
             .and_then(|json| serde_json::from_str(&json).ok());
         load_fonts(&cc.egui_ctx);
-        let project = Project::new(16, 16, "Untitled".to_string());
+        let project = Project::new(64, 64, "Untitled".to_string());
         let thumbnails = project
             .animations
             .iter()
@@ -334,10 +334,10 @@ impl App {
             show_new_dialog: false,
             show_shortcuts_window: false,
             replace_project_pending: false,
-            new_width: 16,
-            new_height: 16,
-            new_width_str: "16".to_string(),
-            new_height_str: "16".to_string(),
+            new_width: 64,
+            new_height: 64,
+            new_width_str: "64".to_string(),
+            new_height_str: "64".to_string(),
             new_name: "Untitled".to_string(),
             new_name_focused: false,
             new_width_focused: false,
@@ -708,7 +708,7 @@ impl App {
             // Closing the active tab.
             if self.tab_count() == 1 {
                 // Last tab — close and show new project dialog.
-                self.project = Project::new(16, 16, "Untitled".to_string());
+                self.project = Project::new(64, 64, "Untitled".to_string());
                 self.current_path = None;
                 self.undo_stack = UndoStack::new();
                 self.thumbnails = Self::thumbnails_for(&self.project);
