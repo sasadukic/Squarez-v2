@@ -206,6 +206,14 @@ pub fn iso_box_preview(
                 draw_pixel(x1 as i32, y, color);
             }
         }
+        let mut seen = std::collections::HashSet::new();
+        let mut result = Vec::new();
+        for (x, y, col) in pixels.into_iter().rev() {
+            if seen.insert((x, y)) {
+                result.push((x, y, col));
+            }
+        }
+        result.reverse();
         return result;
     }
 
@@ -590,6 +598,14 @@ pub fn iso_cylinder_preview(
                 draw_pixel(x1 as i32, y, color);
             }
         }
+        let mut seen = std::collections::HashSet::new();
+        let mut result = Vec::new();
+        for (x, y, col) in pixels.into_iter().rev() {
+            if seen.insert((x, y)) {
+                result.push((x, y, col));
+            }
+        }
+        result.reverse();
         return result;
     }
 
