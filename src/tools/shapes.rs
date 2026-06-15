@@ -30,7 +30,7 @@ pub fn apply_ellipse(layer: &Layer, x0: i32, y0: i32, x1: i32, y1: i32, color: R
     let mut y1 = y1;
     
     let mut a = (x1 - x0).abs();
-    let mut b = (y1 - y0).abs();
+    let b = (y1 - y0).abs();
     let mut b1 = b & 1; /* diameter value sign */
     
     let mut dx = 4 * (1 - a) * b * b;
@@ -43,7 +43,7 @@ pub fn apply_ellipse(layer: &Layer, x0: i32, y0: i32, x1: i32, y1: i32, color: R
     }
     if y0 > y1 {
         y0 = y1;
-        y1 += b;
+        let _ = b; // suppress unused warning if necessary, though b is used later
     }
     y0 += (b + 1) / 2;
     y1 = y0 - b1; /* starting pixel */
@@ -58,16 +58,12 @@ pub fn apply_ellipse(layer: &Layer, x0: i32, y0: i32, x1: i32, y1: i32, color: R
         }
     };
 
-    let mut draw_span = |x_start: i32, x_end: i32, y: i32| {
-        for x in x_start..=x_end {
-            draw_pixel(x, y);
-        }
-    };
-
     loop {
         if filled {
-            draw_span(x0, x1, y0);
-            draw_span(x0, x1, y1);
+            for x in x0..=x1 {
+                draw_pixel(x, y0);
+                draw_pixel(x, y1);
+            }
         } else {
             draw_pixel(x1, y0);
             draw_pixel(x0, y0);
