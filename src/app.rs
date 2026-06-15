@@ -6207,6 +6207,7 @@ print("FAIL")
                 if let (Some((x0, y0)), Some(pos)) = (self.drag_start, pos_opt) {
                     let (epx, epy) = self.canvas.screen_to_canvas_i32(pos, canvas_rect, w, h);
                     let shift_commit = response.ctx.input(|i| i.modifiers.shift);
+                    let alt_commit = response.ctx.input(|i| i.modifiers.alt);
                     let active_tool = self.active_tool.clone();
                     let (eff_epx, eff_epy) = if shift_commit {
                         shape_shift_constrain(&active_tool, x0 as i32, y0 as i32, epx, epy)
@@ -6220,14 +6221,14 @@ print("FAIL")
                     };
                     let shape_edits: Vec<_> = match &active_tool {
                         ActiveTool::Rectangle { filled } => {
-                            apply_rect(&ref_layer, x0 as i32, y0 as i32, eff_epx, eff_epy, color, *filled || shift_commit)
+                            apply_rect(&ref_layer, x0 as i32, y0 as i32, eff_epx, eff_epy, color, *filled || alt_commit)
                         }
                         ActiveTool::Ellipse { filled } => {
                             let cx = (x0 as i32 + eff_epx) / 2;
                             let cy = (y0 as i32 + eff_epy) / 2;
                             let rx = (eff_epx - x0 as i32).abs() / 2;
                             let ry = (eff_epy - y0 as i32).abs() / 2;
-                            apply_ellipse(&ref_layer, cx, cy, rx, ry, color, *filled || shift_commit)
+                            apply_ellipse(&ref_layer, cx, cy, rx, ry, color, *filled || alt_commit)
                         }
                         ActiveTool::Line => {
                             apply_line(&ref_layer, x0 as i32, y0 as i32, eff_epx, eff_epy, color)
@@ -6489,6 +6490,7 @@ print("FAIL")
         // beyond canvas edges.  Pixels that fall outside are discarded by get_pixel/set_pixel.
         let (shape_px, shape_py): (i32, i32) = self.canvas.screen_to_canvas_i32(pos, canvas_rect, w, h);
         let shift_held = response.ctx.input(|i| i.modifiers.shift);
+        let alt_held = response.ctx.input(|i| i.modifiers.alt);
 
         // Stroke tools: require cursor to be inside the canvas.
         // For shape tools with an active drag the cursor may be outside — in that case we
@@ -6874,14 +6876,14 @@ print("FAIL")
                     };
                     let preview_edits: Vec<_> = match &active_tool {
                         ActiveTool::Rectangle { filled } => {
-                            apply_rect(&ref_layer, x0 as i32, y0 as i32, eff_px, eff_py, color, *filled || shift_held)
+                            apply_rect(&ref_layer, x0 as i32, y0 as i32, eff_px, eff_py, color, *filled || alt_held)
                         }
                         ActiveTool::Ellipse { filled } => {
                             let cx = (x0 as i32 + eff_px) / 2;
                             let cy = (y0 as i32 + eff_py) / 2;
                             let rx = (eff_px - x0 as i32).abs() / 2;
                             let ry = (eff_py - y0 as i32).abs() / 2;
-                            apply_ellipse(&ref_layer, cx, cy, rx, ry, color, *filled || shift_held)
+                            apply_ellipse(&ref_layer, cx, cy, rx, ry, color, *filled || alt_held)
                         }
                         ActiveTool::Line => {
                             apply_line(&ref_layer, x0 as i32, y0 as i32, eff_px, eff_py, color)
