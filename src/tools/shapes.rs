@@ -136,15 +136,11 @@ pub fn iso_box_preview(
     let (x0, x1) = (x0.min(x1), x0.max(x1));
     let (y0, y1) = (y0.min(y1), y0.max(y1));
 
-    let mut result = Vec::new();
-    let mut seen = std::collections::HashSet::new();
+    let mut pixels = Vec::new();
 
     let mut draw_pixel = |x: i32, y: i32, col: Rgba| {
         if x >= 0 && y >= 0 && (x as u32) < w && (y as u32) < h {
-            let key = (x as u32, y as u32);
-            if seen.insert(key) {
-                result.push((x as u32, y as u32, col));
-            }
+            pixels.push((x as u32, y as u32, col));
         }
     };
 
@@ -354,6 +350,14 @@ pub fn iso_box_preview(
         }
     }
 
+    let mut seen = std::collections::HashSet::new();
+    let mut result = Vec::new();
+    for (x, y, col) in pixels.into_iter().rev() {
+        if seen.insert((x, y)) {
+            result.push((x, y, col));
+        }
+    }
+    result.reverse();
     result
 }
 
@@ -476,15 +480,11 @@ pub fn iso_cylinder_preview(
     let (x0, x1) = (x0.min(x1), x0.max(x1));
     let (y0, y1) = (y0.min(y1), y0.max(y1));
 
-    let mut result = Vec::new();
-    let mut seen = std::collections::HashSet::new();
+    let mut pixels = Vec::new();
 
     let mut draw_pixel = |x: i32, y: i32, col: Rgba| {
         if x >= 0 && y >= 0 && (x as u32) < w && (y as u32) < h {
-            let key = (x as u32, y as u32);
-            if seen.insert(key) {
-                result.push((x as u32, y as u32, col));
-            }
+            pixels.push((x as u32, y as u32, col));
         }
     };
 
@@ -661,6 +661,14 @@ pub fn iso_cylinder_preview(
         }
     }
 
+    let mut seen = std::collections::HashSet::new();
+    let mut result = Vec::new();
+    for (x, y, col) in pixels.into_iter().rev() {
+        if seen.insert((x, y)) {
+            result.push((x, y, col));
+        }
+    }
+    result.reverse();
     result
 }
 
