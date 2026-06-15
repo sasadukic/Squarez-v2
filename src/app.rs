@@ -7074,8 +7074,8 @@ print("FAIL")
     /// pixel position. Returns the Handle that was hit, if any.
     fn hit_test_selection(&self, cx_px: f32, cy_px: f32) -> Option<Handle> {
         let handles = self.selection_handle_positions()?;
-        // Handle hit radius — 16 screen pixels expressed in canvas space.
-        let r = 16.0 / self.canvas.zoom.max(0.0001);
+        // Handle hit radius — 8 screen pixels expressed in canvas space.
+        let r = 8.0 / self.canvas.zoom.max(0.0001);
         for (h, (hx, hy)) in handles {
             let dx = cx_px - hx;
             let dy = cy_px - hy;
