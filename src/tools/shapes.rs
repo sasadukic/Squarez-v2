@@ -180,30 +180,32 @@ pub fn iso_box_preview(
         }
 
         // Draw outlines on top
-        if height == 0 {
-            for x in x0..=x1 {
-                draw_pixel(x as i32, y0 as i32, color);
-                draw_pixel(x as i32, y1 as i32, color);
-            }
-            for y in y0..=y1 {
-                draw_pixel(x0 as i32, y as i32, color);
-                draw_pixel(x1 as i32, y as i32, color);
-            }
-        } else {
-            for x in x0..=x1 {
-                draw_pixel(x as i32, y0 as i32, color);
-                draw_pixel(x as i32, y1 as i32, color);
-            }
-            for y in y0..=y1 {
-                draw_pixel(x0 as i32, y as i32, color);
-                draw_pixel(x1 as i32, y as i32, color);
-            }
-            for x in x0..=x1 {
-                draw_pixel(x as i32, y_bot, color);
-            }
-            for y in y_min..=y_max {
-                draw_pixel(x0 as i32, y, color);
-                draw_pixel(x1 as i32, y, color);
+        if iso_mode == IsoMode::TopDown {
+            if height == 0 {
+                for x in x0..=x1 {
+                    draw_pixel(x as i32, y0 as i32, color);
+                    draw_pixel(x as i32, y1 as i32, color);
+                }
+                for y in y0..=y1 {
+                    draw_pixel(x0 as i32, y as i32, color);
+                    draw_pixel(x1 as i32, y as i32, color);
+                }
+            } else {
+                for x in x0..=x1 {
+                    draw_pixel(x as i32, y0 as i32, color);
+                    draw_pixel(x as i32, y1 as i32, color);
+                }
+                for y in y0..=y1 {
+                    draw_pixel(x0 as i32, y as i32, color);
+                    draw_pixel(x1 as i32, y as i32, color);
+                }
+                for x in x0..=x1 {
+                    draw_pixel(x as i32, y_bot, color);
+                }
+                for y in y_min..=y_max {
+                    draw_pixel(x0 as i32, y, color);
+                    draw_pixel(x1 as i32, y, color);
+                }
             }
         }
         let mut seen = std::collections::HashSet::new();
@@ -326,8 +328,8 @@ pub fn iso_box_preview(
             draw_pixel(cx - 2 * rh, y, color);
             draw_pixel(cx + 2 * rh + 1, y, color);
         }
-    } else {
-        // IsometricHidden or IsometricFill outlines
+    } else if iso_mode == IsoMode::IsometricHidden {
+        // IsometricHidden outlines
         // Draw top face fully
         draw_rhombus_outline!(cy_top);
 
@@ -657,8 +659,8 @@ pub fn iso_cylinder_preview(
             draw_pixel(cx - rw, y, color);
             draw_pixel(cx + rw, y, color);
         }
-    } else {
-        // IsometricHidden or IsometricFill outlines
+    } else if iso_mode == IsoMode::IsometricHidden {
+        // IsometricHidden outlines
         // Draw top face fully
         for (x, y) in ellipse_outline(cx, cy_top, rw, rh) {
             draw_pixel(x, y, color);
