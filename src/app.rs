@@ -6327,6 +6327,7 @@ print("FAIL")
                             };
                             self.select_state.mask = Some(combined);
                             self.select_state.rect = None;
+                            self.lift_mask_to_float();
                             self.canvas_dirty = true;
                         } else {
                             if !shift_held && !alt_held {
@@ -6503,6 +6504,7 @@ print("FAIL")
                         }
                     };
                     self.select_state.mask = Some(combined);
+                    self.lift_mask_to_float();
                     self.canvas_dirty = true;
                 }
             }
@@ -8875,6 +8877,7 @@ impl eframe::App for App {
                 mask.mask.fill(true);
                 self.select_state.mask = Some(mask);
                 self.select_state.rect = None;
+                self.lift_mask_to_float();
                 self.canvas_dirty = true;
             }
             if deselect_shortcut {
