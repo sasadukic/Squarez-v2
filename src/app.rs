@@ -6490,6 +6490,8 @@ print("FAIL")
                 let (cx_px, cy_px) = self.canvas.screen_to_canvas_f32(pos, canvas_rect, w, h);
                 if self.hit_test_selection(cx_px, cy_px).is_none() {
                     self.commit_float_to_layer();
+                } else {
+                    return;
                 }
             }
 
