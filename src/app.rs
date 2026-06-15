@@ -5077,10 +5077,10 @@ impl App {
                         // Handles
                         for (h, p) in handles {
                             let center = to_screen(p);
-                            let size = if matches!(h, Handle::Rotate) { 5.0 } else { 4.0 };
-                            let hr = egui::Rect::from_center_size(center, egui::Vec2::splat(size * 2.0));
-                            painter.rect_filled(hr, 1.0, egui::Color32::WHITE);
-                            painter.rect_stroke(hr, 1.0, egui::Stroke::new(1.0, egui::Color32::BLACK), egui::StrokeKind::Outside);
+                            let size = zoom;
+                            let hr = egui::Rect::from_center_size(center, egui::Vec2::splat(size));
+                            painter.rect_filled(hr, 0.0, egui::Color32::WHITE);
+                            painter.rect_stroke(hr, 0.0, egui::Stroke::new(1.0, egui::Color32::BLACK), egui::StrokeKind::Outside);
                         }
                     }
                 }
