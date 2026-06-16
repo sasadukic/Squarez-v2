@@ -6548,6 +6548,15 @@ print("FAIL")
     }
 
     fn handle_canvas_input(&mut self, response: egui::Response, canvas_rect: egui::Rect) {
+        let middle_down = response.ctx.input(|i| i.pointer.middle_down());
+        let space_held  = response.ctx.input(|i| i.key_down(egui::Key::Space));
+        if middle_down || space_held {
+            self.shape_preview.clear();
+            self.last_pencil_pos = None;
+            self.drag_start = None;
+            return;
+        }
+
         let w = self.project.canvas_width;
         let h = self.project.canvas_height;
         let ai = self.project.active_animation;
@@ -7211,7 +7220,7 @@ print("FAIL")
             if self.project.animations[ai].frames[fi].layers[li].is_group { return; }
         }
 
-        let press_started = response.drag_started() || (response.ctx.input(|i| i.pointer.primary_pressed()) && response.hovered());
+        let press_started = response.drag_started_by(egui::PointerButton::Primary) || (response.ctx.input(|i| i.pointer.primary_pressed()) && response.hovered());
         if press_started && self.drag_start.is_none() {
             if is_select_tool && self.select_state.has_float() {
                 let (cx_px, cy_px) = self.canvas.screen_to_canvas_f32(pos, canvas_rect, w, h);
@@ -7234,7 +7243,7 @@ print("FAIL")
             self.drag_start = Some(start);
 
             // If we have a selection mask and the user dragged inside it (with no modifiers), lift it to float!
-            if is_select_tool && !self.select_state.has_float() && response.drag_started() {
+            if is_select_tool && !self.select_state.has_float() && response.drag_started_by(egui::PointerButton::Primary) {
                 let shift_held = response.ctx.input(|i| i.modifiers.shift);
                 let alt_held = response.ctx.input(|i| i.modifiers.alt);
                 if !shift_held && !alt_held {
@@ -7992,7 +8001,7 @@ print("FAIL")
         let (cx_px, cy_px) = self.canvas.screen_to_canvas_f32(pos, canvas_rect, w, h);
 
         // Start an interaction on drag_started inside a handle or the rect.
-        if response.drag_started() {
+        if response.drag_started_by(egui::PointerButton::Primary) {
             if let Some(handle) = self.hit_test_selection(cx_px, cy_px) {
                 let interaction = match handle {
                     Handle::Inside => SelectInteraction::Moving,
