@@ -580,8 +580,7 @@ impl App {
     /// Return all pixel positions in a square brush centred on (cx, cy) with the
     /// current pen_size.  Clamped to canvas bounds; deduplicated.
     fn pen_square(&self, cx: u32, cy: u32, w: u32, h: u32) -> Vec<(u32, u32)> {
-        let half = (self.pen_size / 2) as i32;
-        let offset = if self.pen_size % 2 == 0 { 0 } else { half };
+        let offset = (self.pen_size as i32) / 2;
         let mut pts = Vec::new();
         for dy in 0..self.pen_size as i32 {
             for dx in 0..self.pen_size as i32 {
