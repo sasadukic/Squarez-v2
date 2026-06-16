@@ -3004,43 +3004,20 @@ impl App {
                     sync_color_caches(&mut self.color_state);
                 }
                 resp.context_menu(|ui| {
-                    ui.horizontal(|ui| {
-                        if ui.button("Swap").clicked() {
-                            let color_a = self.color_state.foreground;
-                            let color_b = swatch;
-                            if color_a != color_b {
-                                for anim in &mut self.project.animations {
-                                    for frame in &mut anim.frames {
-                                        for layer in &mut frame.layers {
-                                            if !layer.is_group {
-                                                let w = layer.width;
-                                                let h = layer.height;
-                                                for y in 0..h {
-                                                    for x in 0..w {
-                                                        let pixel = layer.get_pixel(x, y);
-                                                        if pixel == color_a {
-                                                            layer.set_pixel(x, y, color_b);
-                                                        } else if pixel == color_b {
-                                                            layer.set_pixel(x, y, color_a);
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        frame.dirty = true;
-                                    }
-                                }
-                                self.undo_stack.push(crate::history::Command::SwapColors { color_a, color_b });
-                                self.canvas_dirty = true;
-                                self.active_modified = true;
-                                if self.project.is_tiled() {
-                                    self.mark_all_thumbnails_dirty();
-                                }
-                            }
-                            ui.close_menu();
-                        }
-                        if ui.button("Swap All").clicked() {
-                            // --- Snapshot before ---
+                    ui.set_width(24.0);
+                    ui.set_max_width(24.0);
+                    ui.spacing_mut().item_spacing = Vec2::ZERO;
+
+                    let (r, resp) = ui.allocate_exact_size(Vec2::splat(24.0), egui::Sense::click());
+                    if resp.hovered() { ui.painter().rect_filled(r, 0.0, theme.accent); }
+                    let icon_rect = egui::Rect::from_center_size(r.center(), Vec2::splat(16.0));
+                    let tint = if resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                    ui.put(icon_rect, Image::new(egui::include_image!("../assets/icons/swap.png")).tint(tint).fit_to_exact_size(Vec2::splat(16.0)));
+                    
+                    if resp.clicked() {
+                        let alt_held = ui.input(|i| i.modifiers.alt);
+                        if alt_held {
+                            // --- Swap All ---
                             let before: Vec<Vec<Vec<Vec<u8>>>> = self.project.animations.iter()
                                 .map(|anim| anim.frames.iter()
                                     .map(|frame| frame.layers.iter()
@@ -3051,9 +3028,6 @@ impl App {
 
                             let palette = &self.project.palette;
 
-                            // OKLab Euclidean ΔE — perceptual distance used by Aseprite.
-                            // sRGB → linear → OKLab, distance = sqrt(ΔL² + Δa² + Δb²).
-                            // L (lightness) is a full equal component: dark blue ≠ light pink, ever.
                             fn to_oklab(c: [u8; 4]) -> (f64, f64, f64) {
                                 let r = c[0] as f64 / 255.0;
                                 let g = c[1] as f64 / 255.0;
@@ -3076,14 +3050,8 @@ impl App {
                                 (dl*dl + da*da + db*db).sqrt()
                             }
 
-                            // Pre-compute palette OKLab values once.
                             let pal_lab: Vec<(f64,f64,f64)> = palette.iter().map(|&c| to_oklab(c)).collect();
 
-                             // Pure nearest-neighbor — no 1-to-1 constraint.
-                            // Each canvas color independently picks its closest palette entry.
-                            // Multiple canvas colors CAN map to the same entry — correct behaviour
-                            // when the palette has fewer distinct shades. No greedy assignment
-                            // that can "steal" a dark slot and force another dark color to go light.
                             use std::collections::HashMap;
                             let mut color_map: HashMap<[u8;4], [u8;4]> = HashMap::new();
 
@@ -3119,7 +3087,6 @@ impl App {
                                 }
                             }
 
-                            // --- Snapshot after ---
                             let after: Vec<Vec<Vec<Vec<u8>>>> = self.project.animations.iter()
                                 .map(|anim| anim.frames.iter()
                                     .map(|frame| frame.layers.iter()
@@ -3132,9 +3099,42 @@ impl App {
                             self.canvas_dirty = true;
                             self.active_modified = true;
                             self.mark_all_thumbnails_dirty();
-                            ui.close_menu();
+                        } else {
+                            // --- Swap ---
+                            let color_a = self.color_state.foreground;
+                            let color_b = swatch;
+                            if color_a != color_b {
+                                for anim in &mut self.project.animations {
+                                    for frame in &mut anim.frames {
+                                        for layer in &mut frame.layers {
+                                            if !layer.is_group {
+                                                let w = layer.width;
+                                                let h = layer.height;
+                                                for y in 0..h {
+                                                    for x in 0..w {
+                                                        let pixel = layer.get_pixel(x, y);
+                                                        if pixel == color_a {
+                                                            layer.set_pixel(x, y, color_b);
+                                                        } else if pixel == color_b {
+                                                            layer.set_pixel(x, y, color_a);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        frame.dirty = true;
+                                    }
+                                }
+                                self.undo_stack.push(crate::history::Command::SwapColors { color_a, color_b });
+                                self.canvas_dirty = true;
+                                self.active_modified = true;
+                                if self.project.is_tiled() {
+                                    self.mark_all_thumbnails_dirty();
+                                }
+                            }
                         }
-                    });
+                        ui.close_menu();
+                    }
                 });
 
             }
