@@ -128,11 +128,37 @@ impl CanvasState {
         }
     }
 
-    /// Handle scroll zoom and middle-mouse pan
+    /// Handle scroll zoom, pinch zoom, and panning/moving
     pub fn handle_input(&mut self, ui: &egui::Ui, canvas_rect: Rect) {
-        let scroll = ui.input(|i| i.smooth_scroll_delta.y);
         let pointer_pos = ui.input(|i| i.pointer.hover_pos());
-        self.zoom_from_scroll(scroll, pointer_pos, canvas_rect);
+        
+        // 1. Pinch zoom (Touchpad pinch in/out zooms)
+        let zoom_delta = ui.input(|i| i.zoom_delta());
+        if zoom_delta != 1.0 {
+            if let Some(pos) = pointer_pos {
+                if canvas_rect.contains(pos) {
+                    self.zoom_at_point(zoom_delta, pos, canvas_rect);
+                }
+            }
+        }
+        
+        // 2. Scroll-based Zoom vs Panning
+        let scroll_delta = ui.input(|i| i.smooth_scroll_delta);
+        if scroll_delta != Vec2::ZERO {
+            let has_zoom_modifier = ui.input(|i| {
+                i.modifiers.command || i.modifiers.mac_cmd || i.modifiers.ctrl || i.modifiers.alt
+            });
+            
+            if has_zoom_modifier {
+                // Ctrl / Cmd + Scroll zooms in and out
+                self.zoom_from_scroll(scroll_delta.y, pointer_pos, canvas_rect);
+            } else {
+                // Regular scroll or trackpad drag moves (pans) the canvas
+                self.offset += scroll_delta;
+            }
+        }
+        
+        // 3. Middle-mouse press + drag pans
         let middle_down = ui.input(|i| i.pointer.middle_down());
         let space_held  = ui.input(|i| i.key_down(egui::Key::Space));
         let left_down   = ui.input(|i| i.pointer.primary_down());
