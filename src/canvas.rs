@@ -8,6 +8,7 @@ pub struct CanvasState {
     pub texture: Option<TextureHandle>,
     pub dragging_pan: bool,
     pub last_mouse_pos: Option<Pos2>,
+    pub last_mouse_wheel_time: f64,
 }
 
 impl Default for CanvasState {
@@ -18,6 +19,7 @@ impl Default for CanvasState {
             texture: None,
             dragging_pan: false,
             last_mouse_pos: None,
+            last_mouse_wheel_time: 0.0,
         }
     }
 }
@@ -131,6 +133,7 @@ impl CanvasState {
     /// Handle scroll zoom, pinch zoom, and panning/moving
     pub fn handle_input(&mut self, ui: &egui::Ui, canvas_rect: Rect) {
         let pointer_pos = ui.input(|i| i.pointer.hover_pos());
+        let now = ui.input(|i| i.time);
         
         // 1. Pinch zoom (Touchpad pinch in/out zooms)
         let zoom_delta = ui.input(|i| i.zoom_delta());
@@ -167,11 +170,14 @@ impl CanvasState {
         });
 
         if is_mouse_wheel {
+            self.last_mouse_wheel_time = now;
             // Mouse scroll zooms in/out directly (without modifiers)
             self.zoom_from_scroll(scroll_y, pointer_pos, canvas_rect);
         } else if is_trackpad_scroll {
             // Touchpad two-finger drag moves the canvas
-            self.offset += scroll_vector;
+            if now - self.last_mouse_wheel_time > 0.3 {
+                self.offset += scroll_vector;
+            }
         } else {
             // Fallback for general smooth_scroll_delta if events were consumed
             let scroll_delta = ui.input(|i| i.smooth_scroll_delta);
@@ -181,7 +187,7 @@ impl CanvasState {
                 });
                 if has_zoom_modifier {
                     self.zoom_from_scroll(scroll_delta.y, pointer_pos, canvas_rect);
-                } else {
+                } else if now - self.last_mouse_wheel_time > 0.3 {
                     self.offset += scroll_delta;
                 }
             }
