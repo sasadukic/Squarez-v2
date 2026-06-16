@@ -3015,122 +3015,36 @@ impl App {
                     ui.put(icon_rect, Image::new(egui::include_image!("../assets/icons/swap.png")).tint(tint).fit_to_exact_size(Vec2::splat(16.0)));
                     
                     if resp.clicked() {
-                        let alt_held = ui.input(|i| i.modifiers.alt);
-                        if alt_held {
-                            // --- Swap All ---
-                            let before: Vec<Vec<Vec<Vec<u8>>>> = self.project.animations.iter()
-                                .map(|anim| anim.frames.iter()
-                                    .map(|frame| frame.layers.iter()
-                                        .map(|layer| layer.pixels.clone())
-                                        .collect())
-                                    .collect())
-                                .collect();
-
-                            let palette = &self.project.palette;
-
-                            fn to_oklab(c: [u8; 4]) -> (f64, f64, f64) {
-                                let r = c[0] as f64 / 255.0;
-                                let g = c[1] as f64 / 255.0;
-                                let b = c[2] as f64 / 255.0;
-                                let lin = |v: f64| if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) };
-                                let r = lin(r); let g = lin(g); let b = lin(b);
-                                let l_ = (0.4122214708*r + 0.5363325363*g + 0.0514459929*b).cbrt();
-                                let m_ = (0.2119034982*r + 0.6806995451*g + 0.1073969566*b).cbrt();
-                                let s_ = (0.0883024619*r + 0.2817188376*g + 0.6299787005*b).cbrt();
-                                let l  = 0.2104542553*l_ + 0.7936177850*m_ - 0.0040720468*s_;
-                                let a  = 1.9779984951*l_ - 2.4285922050*m_ + 0.4505937099*s_;
-                                let bv = 0.0259040371*l_ + 0.7827717662*m_ - 0.8086757660*s_;
-                                (l, a, bv)
-                            }
-
-                            fn oklab_dist(x: (f64,f64,f64), y: (f64,f64,f64)) -> f64 {
-                                let dl = x.0 - y.0;
-                                let da = x.1 - y.1;
-                                let db = x.2 - y.2;
-                                (dl*dl + da*da + db*db).sqrt()
-                            }
-
-                            let pal_lab: Vec<(f64,f64,f64)> = palette.iter().map(|&c| to_oklab(c)).collect();
-
-                            use std::collections::HashMap;
-                            let mut color_map: HashMap<[u8;4], [u8;4]> = HashMap::new();
-
+                        // --- Swap ---
+                        let color_a = self.color_state.foreground;
+                        let color_b = swatch;
+                        if color_a != color_b {
                             for anim in &mut self.project.animations {
                                 for frame in &mut anim.frames {
                                     for layer in &mut frame.layers {
-                                        if layer.is_group { continue; }
-                                        let w = layer.width;
-                                        let h = layer.height;
-                                        for y in 0..h {
-                                            for x in 0..w {
-                                                let pixel = layer.get_pixel(x, y);
-                                                if pixel[3] == 0 { continue; }
-                                                let remapped = *color_map.entry(pixel).or_insert_with(|| {
-                                                    let plab = to_oklab(pixel);
-                                                    let mut best_dist = f64::MAX;
-                                                    let mut best_color = pixel;
-                                                    for (pi, &plb) in pal_lab.iter().enumerate() {
-                                                        if palette[pi][3] == 0 { continue; }
-                                                        let d = oklab_dist(plab, plb);
-                                                        if d < best_dist {
-                                                            best_dist = d;
-                                                            best_color = palette[pi];
-                                                        }
+                                        if !layer.is_group {
+                                            let w = layer.width;
+                                            let h = layer.height;
+                                            for y in 0..h {
+                                                for x in 0..w {
+                                                    let pixel = layer.get_pixel(x, y);
+                                                    if pixel == color_a {
+                                                        layer.set_pixel(x, y, color_b);
+                                                    } else if pixel == color_b {
+                                                        layer.set_pixel(x, y, color_a);
                                                     }
-                                                    best_color
-                                                });
-                                                layer.set_pixel(x, y, remapped);
+                                                }
                                             }
                                         }
                                     }
                                     frame.dirty = true;
                                 }
                             }
-
-                            let after: Vec<Vec<Vec<Vec<u8>>>> = self.project.animations.iter()
-                                .map(|anim| anim.frames.iter()
-                                    .map(|frame| frame.layers.iter()
-                                        .map(|layer| layer.pixels.clone())
-                                        .collect())
-                                    .collect())
-                                .collect();
-
-                            self.undo_stack.push(crate::history::Command::SwapAll { before, after });
+                            self.undo_stack.push(crate::history::Command::SwapColors { color_a, color_b });
                             self.canvas_dirty = true;
                             self.active_modified = true;
-                            self.mark_all_thumbnails_dirty();
-                        } else {
-                            // --- Swap ---
-                            let color_a = self.color_state.foreground;
-                            let color_b = swatch;
-                            if color_a != color_b {
-                                for anim in &mut self.project.animations {
-                                    for frame in &mut anim.frames {
-                                        for layer in &mut frame.layers {
-                                            if !layer.is_group {
-                                                let w = layer.width;
-                                                let h = layer.height;
-                                                for y in 0..h {
-                                                    for x in 0..w {
-                                                        let pixel = layer.get_pixel(x, y);
-                                                        if pixel == color_a {
-                                                            layer.set_pixel(x, y, color_b);
-                                                        } else if pixel == color_b {
-                                                            layer.set_pixel(x, y, color_a);
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        frame.dirty = true;
-                                    }
-                                }
-                                self.undo_stack.push(crate::history::Command::SwapColors { color_a, color_b });
-                                self.canvas_dirty = true;
-                                self.active_modified = true;
-                                if self.project.is_tiled() {
-                                    self.mark_all_thumbnails_dirty();
-                                }
+                            if self.project.is_tiled() {
+                                self.mark_all_thumbnails_dirty();
                             }
                         }
                         ui.close_menu();
@@ -5472,7 +5386,7 @@ impl App {
                     };
 
                     let overlay_rect = egui::Rect::from_min_size(
-                        Pos2::new(canvas_rect.min.x + 12.0, canvas_rect.max.y - 52.0),
+                        Pos2::new(art_rect.left(), art_rect.bottom() + 6.0),
                         Vec2::new(180.0, 40.0),
                     );
                     

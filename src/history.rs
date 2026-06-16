@@ -48,12 +48,6 @@ pub enum Command {
         color_a: Rgba,
         color_b: Rgba,
     },
-    /// Replace every pixel on the canvas with the closest palette entry.
-    /// `before` and `after` are indexed [anim][frame][layer] → pixel bytes.
-    SwapAll {
-        before: Vec<Vec<Vec<Vec<u8>>>>,
-        after:  Vec<Vec<Vec<Vec<u8>>>>,
-    },
 }
 
 pub struct UndoStack {
@@ -223,23 +217,6 @@ fn apply_command(project: &mut Project, color_state: Option<&mut ColorState>, cm
                 }
             }
         }
-        Command::SwapAll { before, after } => {
-            let snapshot = match dir {
-                Direction::Forward  => after,
-                Direction::Backward => before,
-            };
-            for (ai, anim) in project.animations.iter_mut().enumerate() {
-                if ai >= snapshot.len() { continue; }
-                for (fi, frame) in anim.frames.iter_mut().enumerate() {
-                    if fi >= snapshot[ai].len() { continue; }
-                    for (li, layer) in frame.layers.iter_mut().enumerate() {
-                        if layer.is_group { continue; }
-                        if li >= snapshot[ai][fi].len() { continue; }
-                        layer.pixels = snapshot[ai][fi][li].clone();
-                    }
-                    frame.dirty = true;
-                }
-            }
-        }
+
     }
 }
