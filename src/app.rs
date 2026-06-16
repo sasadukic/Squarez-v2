@@ -5387,22 +5387,16 @@ impl App {
 
                     let overlay_rect = egui::Rect::from_min_size(
                         Pos2::new(art_rect.left(), art_rect.bottom() + 6.0),
-                        Vec2::new(180.0, 40.0),
+                        Vec2::new(260.0, 20.0),
                     );
                     
-                    let overlay_ui = &mut ui.new_child(egui::UiBuilder::new().max_rect(overlay_rect).layout(egui::Layout::top_down(egui::Align::Min)));
+                    let overlay_ui = &mut ui.new_child(egui::UiBuilder::new().max_rect(overlay_rect).layout(egui::Layout::left_to_right(egui::Align::Center)));
                     
-                    overlay_ui.vertical(|ui| {
-                        let coord_text = RichText::new(&coord_str)
-                            .color(self.theme.surface)
-                            .font(FontId::new(10.0, FontFamily::Monospace));
-                        ui.label(coord_text);
-                        
-                        let sel_text = RichText::new(selection_size_str)
-                            .color(self.theme.surface)
-                            .font(FontId::new(10.0, FontFamily::Proportional));
-                        ui.label(sel_text);
-                    });
+                    let display_str = format!("{}   {}", coord_str, selection_size_str);
+                    let label_text = RichText::new(display_str)
+                        .color(self.theme.accent)
+                        .font(FontId::new(10.0, FontFamily::Monospace));
+                    overlay_ui.label(label_text);
                 }
 
                 let response = ui.allocate_rect(canvas_rect, egui::Sense::click_and_drag());
