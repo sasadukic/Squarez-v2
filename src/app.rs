@@ -4528,15 +4528,16 @@ impl App {
         let content_w = controls_w;
 
         let is_select_tool = matches!(self.active_tool, ActiveTool::RectSelect | ActiveTool::MagicWand);
-        let is_pencil = matches!(self.active_tool, ActiveTool::Pencil);
-        // Base rows (Pen Size, Grid, Flip, Mirroring). Add 1 row if Sync Mode is active.
+        let is_shape_mode_tool = matches!(self.active_tool, ActiveTool::Rectangle { .. } | ActiveTool::Ellipse { .. });
         let show_tile_row = self.wang_blob.mode != crate::wang_blob::WangBlobMode::None;
-        let base_rows = if show_tile_row { 5 } else { 4 };
-        let num_rows = if is_select_tool {
-            base_rows + 2
-        } else {
-            base_rows
-        };
+        
+        let mut num_rows = if show_tile_row { 4 } else { 3 };
+        if is_shape_mode_tool {
+            num_rows += 1;
+        }
+        if is_select_tool {
+            num_rows += 2;
+        }
         let content_h = btn_h * (num_rows as f32) + pad * ((num_rows - 1) as f32);
 
         let outcome = show_context_menu(
@@ -4550,11 +4551,11 @@ impl App {
                 let base = total.min;
                 let controls_x = base.x;
                 let icon_size = egui::Vec2::splat(16.0);
+                let mut current_y = base.y;
 
-                // ── Row 0: Mode Toggle (or Pen Size) ──
-                let row0_y = base.y;
-                let is_shape_mode_tool = matches!(self.active_tool, ActiveTool::Rectangle { .. } | ActiveTool::Ellipse { .. });
+                // ── Row 0: Mode Toggle (only for shape tools) ──
                 if is_shape_mode_tool {
+                    let row0_y = current_y;
                     let row0_rect = egui::Rect::from_min_size(egui::Pos2::new(base.x, row0_y), Vec2::new(content_w, btn_h));
                     let row0_resp = ui.interact(row0_rect, egui::Id::new("ctx_row0_hover"), egui::Sense::hover());
                     row0_resp.on_hover_text("Projection & Style");
@@ -4658,47 +4659,12 @@ impl App {
                             crate::tools::IsoMode::Off => crate::tools::IsoMode::Off,
                         };
                     }
-                } else {
-                    let row0_rect = egui::Rect::from_min_size(egui::Pos2::new(base.x, row0_y), Vec2::new(content_w, btn_h));
-                    let row0_resp = ui.interact(row0_rect, egui::Id::new("ctx_row0_hover"), egui::Sense::hover());
-                    row0_resp.on_hover_text("Pen Size");
-
-                    let minus_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row0_y), Vec2::new(ctrl_w, btn_h));
-                    let minus_resp = ui.interact(minus_rect, egui::Id::new("ctx_pen_minus"), egui::Sense::click());
-                    let minus_bg = if minus_resp.hovered() { theme.accent } else { Color32::TRANSPARENT };
-                    ui.painter().rect_filled(minus_rect, 0.0, minus_bg);
-                    let minus_fg = if minus_resp.hovered() { theme.fg } else { theme.fg_muted };
-                    let minus_icon_size = egui::Vec2::splat(11.0);
-                    let minus_icon_rect = egui::Rect::from_center_size(minus_rect.center(), minus_icon_size);
-                    ui.put(
-                        minus_icon_rect,
-                        egui::Image::new(egui::include_image!("../assets/icons/pencil.svg"))
-                            .tint(minus_fg)
-                            .fit_to_exact_size(minus_icon_size),
-                    );
-                    if minus_resp.clicked() && self.pen_size > 1 { self.pen_size -= 1; }
-
-                    let size_val_x = controls_x + ctrl_w + pad / 2.0;
-                    ui.painter().text(egui::Pos2::new(size_val_x, row0_y + btn_h / 2.0), egui::Align2::CENTER_CENTER, format!("{}", self.pen_size), FontId::new(11.0, FontFamily::Proportional), theme.fg_desc);
-
-                    let plus_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x + ctrl_w + pad, row0_y), Vec2::new(ctrl_w, btn_h));
-                    let plus_resp = ui.interact(plus_rect, egui::Id::new("ctx_pen_plus"), egui::Sense::click());
-                    let plus_bg = if plus_resp.hovered() { theme.accent } else { Color32::TRANSPARENT };
-                    ui.painter().rect_filled(plus_rect, 0.0, plus_bg);
-                    let plus_fg = if plus_resp.hovered() { theme.fg } else { theme.fg_muted };
-                    let plus_icon_size = egui::Vec2::splat(16.0);
-                    let plus_icon_rect = egui::Rect::from_center_size(plus_rect.center(), plus_icon_size);
-                    ui.put(
-                        plus_icon_rect,
-                        egui::Image::new(egui::include_image!("../assets/icons/pencil.svg"))
-                            .tint(plus_fg)
-                            .fit_to_exact_size(plus_icon_size),
-                    );
-                    if plus_resp.clicked() && self.pen_size < 8 { self.pen_size += 1; }
+                    current_y += btn_h + pad;
                 }
 
                 // ── Row 1: Grid ──
-                let row1_y = row0_y + btn_h + pad;
+                let row1_y = current_y;
+                current_y += btn_h + pad;
                 let row1_rect = egui::Rect::from_min_size(egui::Pos2::new(base.x, row1_y), Vec2::new(content_w, btn_h));
                 let row1_resp = ui.interact(row1_rect, egui::Id::new("ctx_row1_hover"), egui::Sense::hover());
                 row1_resp.on_hover_text("Grid");
@@ -4730,7 +4696,8 @@ impl App {
                 }
 
                 // ── Row 2: Flip ──
-                let row2_y = row1_y + btn_h + pad;
+                let row2_y = current_y;
+                current_y += btn_h + pad;
                 let row2_rect = egui::Rect::from_min_size(egui::Pos2::new(base.x, row2_y), Vec2::new(content_w, btn_h));
                 let row2_resp = ui.interact(row2_rect, egui::Id::new("ctx_row2_hover"), egui::Sense::hover());
                 row2_resp.on_hover_text("Flip Selection");
@@ -4766,7 +4733,8 @@ impl App {
                 if can_flip && v_resp.clicked() { self.flip_selection_vertical(); }
 
                 // ── Row 3: Mirroring ──
-                let row3_y = row2_y + btn_h + pad;
+                let row3_y = current_y;
+                current_y += btn_h + pad;
                 let row3_rect = egui::Rect::from_min_size(egui::Pos2::new(base.x, row3_y), Vec2::new(content_w, btn_h));
                 let row3_resp = ui.interact(row3_rect, egui::Id::new("ctx_row3_hover"), egui::Sense::hover());
                 row3_resp.on_hover_text("Mirroring");
@@ -4809,11 +4777,12 @@ impl App {
 
                 // ── Row 4: Tile Mode or Sync Mode ──
                 let next_y = if show_tile_row {
-                    let row4_y = row3_y + btn_h + pad;
+                    let row4_y = current_y;
+                    current_y += btn_h + pad;
                     let row4_rect = egui::Rect::from_min_size(egui::Pos2::new(base.x, row4_y), Vec2::new(content_w, btn_h));
                     let row4_resp = ui.interact(row4_rect, egui::Id::new("ctx_row4_hover"), egui::Sense::hover());
                     row4_resp.on_hover_text("Sync Mode");
-
+ 
                     // Sync Mode (only shown when WangBlob active)
                     let bi_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x, row4_y), Vec2::new(ctrl_w, btn_h));
                     let bi_resp = ui.interact(bi_rect, egui::Id::new("ctx_sync_bi"), egui::Sense::click());
@@ -4822,7 +4791,7 @@ impl App {
                     let bi_fg = if bi_resp.hovered() || self.wang_blob.sync_mode == crate::wang_blob::SyncMode::Bidirectional { theme.fg } else { theme.fg_muted };
                     ui.painter().text(bi_rect.center(), egui::Align2::CENTER_CENTER, "Bi", FontId::new(10.0, FontFamily::Proportional), bi_fg);
                     if bi_resp.clicked() { self.wang_blob.sync_mode = crate::wang_blob::SyncMode::Bidirectional; }
-
+ 
                     let uni_rect = egui::Rect::from_min_size(egui::Pos2::new(controls_x + ctrl_w + pad, row4_y), Vec2::new(ctrl_w, btn_h));
                     let uni_resp = ui.interact(uni_rect, egui::Id::new("ctx_sync_uni"), egui::Sense::click());
                     let uni_bg = if uni_resp.hovered() { theme.accent } else if self.wang_blob.sync_mode == crate::wang_blob::SyncMode::Unidirectional { theme.surface } else { Color32::TRANSPARENT };
@@ -4830,10 +4799,10 @@ impl App {
                     let uni_fg = if uni_resp.hovered() || self.wang_blob.sync_mode == crate::wang_blob::SyncMode::Unidirectional { theme.fg } else { theme.fg_muted };
                     ui.painter().text(uni_rect.center(), egui::Align2::CENTER_CENTER, "Uni", FontId::new(10.0, FontFamily::Proportional), uni_fg);
                     if uni_resp.clicked() { self.wang_blob.sync_mode = crate::wang_blob::SyncMode::Unidirectional; }
-
+ 
                     row4_y + btn_h + pad
                 } else {
-                    row3_y + btn_h + pad
+                    current_y
                 };
 
                 // ── Rows for selection settings (Wand Mode & Connect) ──
@@ -5469,6 +5438,184 @@ impl App {
 
                         }
                     }
+                }
+
+                // Render info overlay box in the top-right corner of the canvas
+                {
+                    let hover_canvas = ctx.pointer_hover_pos()
+                        .and_then(|p| self.canvas.screen_to_canvas(p, canvas_rect, disp_w, disp_h))
+                        .filter(|&(hx, hy)| hx < disp_w && hy < disp_h);
+                    let coord_str = if let Some((hx, hy)) = hover_canvas {
+                        format!("X: {}, Y: {}", hx, hy)
+                    } else {
+                        "X: --, Y: --".to_string()
+                    };
+
+                    let selection_size_str = if let Some(ref float) = self.select_state.float_pixels {
+                        format!("{}×{}", float.width, float.height)
+                    } else if let Some((_, _, w, h)) = self.select_state.rect {
+                        format!("{}×{}", w, h)
+                    } else if let Some(ref mask) = self.select_state.mask {
+                        if let Some((_, _, w, h)) = mask.bounding_box() {
+                            format!("{}×{}", w, h)
+                        } else {
+                            "0×0".to_string()
+                        }
+                    } else {
+                        "0×0".to_string()
+                    };
+
+                    let mut keys = Vec::new();
+                    ctx.input(|i| {
+                        if i.modifiers.command || i.modifiers.mac_cmd { keys.push("Cmd"); }
+                        if i.modifiers.ctrl { keys.push("Ctrl"); }
+                        if i.modifiers.alt { keys.push("Alt"); }
+                        if i.modifiers.shift { keys.push("Shift"); }
+                        for key in &i.keys_down {
+                            let s = match key {
+                                egui::Key::A => "A",
+                                egui::Key::B => "B",
+                                egui::Key::C => "C",
+                                egui::Key::D => "D",
+                                egui::Key::E => "E",
+                                egui::Key::F => "F",
+                                egui::Key::G => "G",
+                                egui::Key::H => "H",
+                                egui::Key::I => "I",
+                                egui::Key::J => "J",
+                                egui::Key::K => "K",
+                                egui::Key::L => "L",
+                                egui::Key::M => "M",
+                                egui::Key::N => "N",
+                                egui::Key::O => "O",
+                                egui::Key::P => "P",
+                                egui::Key::Q => "Q",
+                                egui::Key::R => "R",
+                                egui::Key::S => "S",
+                                egui::Key::T => "T",
+                                egui::Key::U => "U",
+                                egui::Key::V => "V",
+                                egui::Key::W => "W",
+                                egui::Key::X => "X",
+                                egui::Key::Y => "Y",
+                                egui::Key::Z => "Z",
+                                egui::Key::Num0 => "0",
+                                egui::Key::Num1 => "1",
+                                egui::Key::Num2 => "2",
+                                egui::Key::Num3 => "3",
+                                egui::Key::Num4 => "4",
+                                egui::Key::Num5 => "5",
+                                egui::Key::Num6 => "6",
+                                egui::Key::Num7 => "7",
+                                egui::Key::Num8 => "8",
+                                egui::Key::Num9 => "9",
+                                egui::Key::Minus => "-",
+                                egui::Key::Equals => "=",
+                                egui::Key::OpenBracket => "[",
+                                egui::Key::CloseBracket => "]",
+                                egui::Key::Space => "Space",
+                                egui::Key::Escape => "Escape",
+                                egui::Key::Enter => "Enter",
+                                egui::Key::Delete => "Delete",
+                                egui::Key::Backspace => "Backspace",
+                                egui::Key::Tab => "Tab",
+                                egui::Key::ArrowLeft => "Left",
+                                egui::Key::ArrowRight => "Right",
+                                egui::Key::ArrowUp => "Up",
+                                egui::Key::ArrowDown => "Down",
+                                _ => "",
+                            };
+                            if !s.is_empty() {
+                                keys.push(s);
+                            }
+                        }
+                    });
+
+                    let combo = keys.join("+");
+                    let action_name = match combo.as_str() {
+                        "Cmd+N" => Some("New Project"),
+                        "Cmd+O" => Some("Open Project"),
+                        "Cmd+S" => Some("Save Project"),
+                        "Shift+Cmd+S" => Some("Save Project As"),
+                        "Cmd+E" => Some("Toggle PNG Export"),
+                        "Cmd+Z" => Some("Undo Paint"),
+                        "Shift+Cmd+Z" | "Ctrl+Y" => Some("Redo Paint"),
+                        "Cmd+V" => Some("Paste Float"),
+                        "Delete" | "Backspace" => Some("Delete Float"),
+                        "Escape" => Some("Cancel/Commit"),
+                        "Space" => Some("Play/Pause Playback"),
+                        "A" => Some("Prev Frame"),
+                        "D" => Some("Next Frame"),
+                        "-" => Some("Decrease Pen Size"),
+                        "=" => Some("Increase Pen Size"),
+                        "[" => Some("Select Prev Color"),
+                        "]" => Some("Select Next Color"),
+                        _ => None,
+                    };
+
+                    let overlay_rect = egui::Rect::from_min_size(
+                        Pos2::new(canvas_rect.max.x - 224.0, canvas_rect.min.y + 12.0),
+                        Vec2::new(212.0, 72.0),
+                    );
+                    
+                    let overlay_ui = &mut ui.child_ui(overlay_rect, egui::Layout::top_down(egui::Align::Min));
+                    
+                    Frame::new()
+                        .fill(self.theme.panel.linear_multiply(0.85))
+                        .corner_radius(egui::CornerRadius::same(5))
+                        .stroke(egui::Stroke::new(1.0, self.theme.accent.linear_multiply(0.3)))
+                        .inner_margin(Margin::same(8))
+                        .show(overlay_ui, |ui| {
+                            ui.vertical(|ui| {
+                                // Line 1: Coordinates & Selection Size
+                                ui.horizontal(|ui| {
+                                    let coord_text = RichText::new(&coord_str)
+                                        .color(self.theme.fg)
+                                        .font(FontId::new(10.0, FontFamily::Monospace));
+                                    ui.label(coord_text);
+                                    
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        let sel_text = RichText::new(format!("Sel: {}", selection_size_str))
+                                            .color(self.theme.fg_desc)
+                                            .font(FontId::new(10.0, FontFamily::Proportional));
+                                        ui.label(sel_text);
+                                    });
+                                });
+                                
+                                ui.add_space(4.0);
+                                ui.separator();
+                                ui.add_space(4.0);
+                                
+                                // Line 2: Keys pressed
+                                ui.horizontal(|ui| {
+                                    let key_label = RichText::new("Keys: ")
+                                        .color(self.theme.fg_desc)
+                                        .font(FontId::new(10.0, FontFamily::Proportional));
+                                    ui.label(key_label);
+                                    
+                                    let keys_val_str = if keys.is_empty() { "--" } else { &combo };
+                                    let val_text = RichText::new(keys_val_str)
+                                        .color(self.theme.fg)
+                                        .font(FontId::new(10.0, FontFamily::Monospace));
+                                    ui.label(val_text);
+                                });
+                                
+                                // Line 3: Shortcut Tool Name (if matches)
+                                if let Some(action) = action_name {
+                                    ui.add_space(2.0);
+                                    let action_text = RichText::new(action)
+                                        .color(self.theme.accent)
+                                        .font(FontId::new(10.0, FontFamily::Name("bold".into())));
+                                    ui.label(action_text);
+                                } else {
+                                    ui.add_space(2.0);
+                                    let action_text = RichText::new("--")
+                                        .color(self.theme.fg_muted)
+                                        .font(FontId::new(10.0, FontFamily::Proportional));
+                                    ui.label(action_text);
+                                }
+                            });
+                        });
                 }
 
                 let response = ui.allocate_rect(canvas_rect, egui::Sense::click_and_drag());
@@ -8826,6 +8973,8 @@ print("FAIL")
                                         ("Mouse Scroll", "Zoom in / out at cursor position"),
                                     ]),
                                     ("DRAWING MODIFIERS", vec![
+                                        ("- / =", "Decrease / increase pen size"),
+                                        ("[ / ]", "Select previous / next palette color swatch"),
                                         ("Shift + Pencil", "Auto-close open paths & flood-fill shape"),
                                         ("Shift + Rect / Ellipse", "Draw shape filled with color"),
                                         ("Ctrl + Rectangle drag", "Start Isometric Box mode"),
