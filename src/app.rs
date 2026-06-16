@@ -4966,8 +4966,8 @@ impl App {
                         color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
                     })
                     .show(ui, |ui| {
-                        ui.set_width(94.0);
-                        ui.set_max_width(94.0);
+                        ui.set_width(86.0);
+                        ui.set_max_width(86.0);
                         let theme = self.theme.clone();
                         ui.vertical(|ui| {
                             ui.spacing_mut().item_spacing = Vec2::new(0.0, 4.0);
