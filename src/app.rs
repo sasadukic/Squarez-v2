@@ -2947,7 +2947,7 @@ impl App {
 
                 let current_fg = self.color_state.foreground;
                 let is_active = self.active_palette_idx == Some(i) || (self.active_palette_idx.is_none() && swatch == current_fg);
-                if is_active {
+                if is_active && self.shading_ramp.is_none() {
                     let stroke = egui::Stroke::new(1.0, Color32::WHITE);
                     let dash = 3.0_f32;
                     let gap  = 3.0_f32;
@@ -3298,7 +3298,32 @@ impl App {
                         let max_y = grid_rect.min.y + (r + 1) as f32 * sh;
                         let row_rect = egui::Rect::from_min_max(Pos2::new(min_x, min_y), Pos2::new(max_x, max_y));
                         
-                        painter.rect_stroke(row_rect, 0.0, egui::Stroke::new(1.5, theme.accent), egui::StrokeKind::Inside);
+                        let stroke = egui::Stroke::new(1.0, Color32::WHITE);
+                        let dash = 3.0_f32;
+                        let gap  = 3.0_f32;
+                        let w_side = row_rect.width();
+                        let h_side = row_rect.height();
+                        let perim = 2.0 * (w_side + h_side);
+                        let t = ui.ctx().input(|inp| inp.time) as f32;
+                        ui.ctx().request_repaint();
+                        let off = (t * 15.0).rem_euclid(perim);
+                        
+                        let (start_pos, waypoints): (Pos2, [Pos2; 4]) = if off < w_side {
+                            (Pos2::new(row_rect.left() + off, row_rect.top()),
+                             [row_rect.right_top(), row_rect.right_bottom(), row_rect.left_bottom(), row_rect.left_top()])
+                        } else if off < w_side + h_side {
+                            (Pos2::new(row_rect.right(), row_rect.top() + (off - w_side)),
+                             [row_rect.right_bottom(), row_rect.left_bottom(), row_rect.left_top(), row_rect.right_top()])
+                        } else if off < 2.0 * w_side + h_side {
+                            (Pos2::new(row_rect.right() - (off - w_side - h_side), row_rect.bottom()),
+                             [row_rect.left_bottom(), row_rect.left_top(), row_rect.right_top(), row_rect.right_bottom()])
+                        } else {
+                            (Pos2::new(row_rect.left(), row_rect.bottom() - (off - 2.0 * w_side - h_side)),
+                             [row_rect.left_top(), row_rect.right_top(), row_rect.right_bottom(), row_rect.left_bottom()])
+                        };
+                        let path = [start_pos, waypoints[0], waypoints[1], waypoints[2], waypoints[3], start_pos];
+                        let shapes = egui::Shape::dashed_line(&path, stroke, dash, gap);
+                        painter.extend(shapes);
                     }
                 }
             }
