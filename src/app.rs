@@ -5095,6 +5095,7 @@ impl App {
                         || self.open_tool_submenu.is_some()
                         || self.palette_browser.open
                         || self.tile_browser.open
+                        || self.show_shortcuts_window
                         || self.any_modal_open();
                     if !any_menu_open {
                         self.pen_size_scroll_accum = 0.0;
@@ -5466,7 +5467,7 @@ impl App {
                     };
 
                     let overlay_rect = egui::Rect::from_min_size(
-                        Pos2::new(canvas_rect.min.x + 50.0, canvas_rect.min.y + 12.0),
+                        Pos2::new(canvas_rect.min.x + 12.0, canvas_rect.min.y + TOP_BAR_HEIGHT + 12.0),
                         Vec2::new(180.0, 40.0),
                     );
                     
