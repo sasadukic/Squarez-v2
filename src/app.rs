@@ -9712,6 +9712,40 @@ impl eframe::App for App {
             if ctx.input(|i| i.key_pressed(egui::Key::Space)) {
                 self.playback.is_playing = !self.playback.is_playing;
             }
+            if ctx.input(|i| i.key_pressed(egui::Key::Minus)) {
+                self.pen_size = (self.pen_size as i32 - 1).max(1) as u32;
+                self.canvas_dirty = true;
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::Equals)) {
+                self.pen_size = (self.pen_size as i32 + 1).min(64) as u32;
+                self.canvas_dirty = true;
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::OpenBracket)) {
+                let palette_len = self.project.palette.len();
+                if palette_len > 0 {
+                    let prev_idx = self.active_palette_idx.unwrap_or(0);
+                    let new_idx = if prev_idx > 0 { prev_idx - 1 } else { palette_len - 1 };
+                    self.active_palette_idx = Some(new_idx);
+                    self.color_state.foreground = self.project.palette[new_idx];
+                    sync_color_caches(&mut self.color_state);
+                    self.shading_ramp = None;
+                    self.shading_mode = false;
+                    self.canvas_dirty = true;
+                }
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::CloseBracket)) {
+                let palette_len = self.project.palette.len();
+                if palette_len > 0 {
+                    let prev_idx = self.active_palette_idx.unwrap_or(0);
+                    let new_idx = (prev_idx + 1) % palette_len;
+                    self.active_palette_idx = Some(new_idx);
+                    self.color_state.foreground = self.project.palette[new_idx];
+                    sync_color_caches(&mut self.color_state);
+                    self.shading_ramp = None;
+                    self.shading_mode = false;
+                    self.canvas_dirty = true;
+                }
+            }
             // Arrow keys: nudge floating selection
             if self.select_state.has_float() {
                 let shift_down = ctx.input(|i| i.modifiers.shift);
