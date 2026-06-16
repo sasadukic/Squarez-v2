@@ -2952,9 +2952,35 @@ impl App {
                 } else {
                     false
                 };
-                if is_active || in_ramp {
-                    let stroke_color = if is_active { theme.fg } else { theme.accent };
-                    painter.rect_stroke(rect, 0.0, egui::Stroke::new(2.0, stroke_color), egui::StrokeKind::Inside);
+                if is_active {
+                    let stroke = egui::Stroke::new(1.0, Color32::WHITE);
+                    let dash = 3.0_f32;
+                    let gap  = 3.0_f32;
+                    let w_side = sw;
+                    let h_side = sh;
+                    let perim = 2.0 * (w_side + h_side);
+                    let t = ui.ctx().input(|inp| inp.time) as f32;
+                    ui.ctx().request_repaint();
+                    let off = (t * 15.0).rem_euclid(perim);
+                    
+                    let (start, waypoints): (Pos2, [Pos2; 4]) = if off < w_side {
+                        (Pos2::new(rect.left() + off, rect.top()),
+                         [rect.right_top(), rect.right_bottom(), rect.left_bottom(), rect.left_top()])
+                    } else if off < w_side + h_side {
+                        (Pos2::new(rect.right(), rect.top() + (off - w_side)),
+                         [rect.right_bottom(), rect.left_bottom(), rect.left_top(), rect.right_top()])
+                    } else if off < 2.0 * w_side + h_side {
+                        (Pos2::new(rect.right() - (off - w_side - h_side), rect.bottom()),
+                         [rect.left_bottom(), rect.left_top(), rect.right_top(), rect.right_bottom()])
+                    } else {
+                        (Pos2::new(rect.left(), rect.bottom() - (off - 2.0 * w_side - h_side)),
+                         [rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom()])
+                    };
+                    let path = [start, waypoints[0], waypoints[1], waypoints[2], waypoints[3], start];
+                    let shapes = egui::Shape::dashed_line(&path, stroke, dash, gap);
+                    painter.extend(shapes);
+                } else if in_ramp {
+                    painter.rect_stroke(rect, 0.0, egui::Stroke::new(1.5, theme.accent), egui::StrokeKind::Inside);
                 }
 
                 let resp = ui.interact(rect, ui.id().with(("swatch", i)), egui::Sense::click_and_drag());
