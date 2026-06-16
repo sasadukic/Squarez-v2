@@ -4257,7 +4257,7 @@ impl App {
                             }
                             if response.secondary_clicked() && !self.menu_was_open_at_frame_start {
                                 self.project.active_frame = idx;
-                                let menu_outer_w = 94.0;
+                                let menu_outer_w = 84.0;
                                 let menu_outer_h = 60.0;
                                 let x = response.rect.center().x - menu_outer_w / 2.0;
                                 let y = response.rect.top() - menu_outer_h - 4.0;
@@ -4966,8 +4966,8 @@ impl App {
                         color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
                     })
                     .show(ui, |ui| {
-                        ui.set_width(86.0);
-                        ui.set_max_width(86.0);
+                        ui.set_width(76.0);
+                        ui.set_max_width(76.0);
                         let theme = self.theme.clone();
                         ui.vertical(|ui| {
                             ui.spacing_mut().item_spacing = Vec2::new(0.0, 4.0);
@@ -4977,7 +4977,7 @@ impl App {
                             let mut d = if *duration == 0 { 100 } else { *duration };
                             ui.visuals_mut().override_text_color = Some(theme.fg_desc);
                             ui.add_sized(
-                                Vec2::new(86.0, 24.0),
+                                Vec2::new(76.0, 24.0),
                                 egui::DragValue::new(&mut d).range(10..=5000).suffix("ms"),
                             );
                             ui.visuals_mut().override_text_color = None;
@@ -4988,7 +4988,7 @@ impl App {
                                 ui.spacing_mut().item_spacing = Vec2::new(4.0, 0.0);
                                 
                                 // Duplicate
-                                let btn_w = 41.0;
+                                let btn_w = 36.0;
                                 let btn_h = 24.0;
                                 let (r, resp) = ui.allocate_exact_size(Vec2::new(btn_w, btn_h), egui::Sense::click());
                                 if resp.hovered() { ui.painter().rect_filled(r, 0.0, theme.accent); }
