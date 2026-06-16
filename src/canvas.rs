@@ -142,19 +142,48 @@ impl CanvasState {
             }
         }
         
-        // 2. Scroll-based Zoom vs Panning
-        let scroll_delta = ui.input(|i| i.smooth_scroll_delta);
-        if scroll_delta != Vec2::ZERO {
-            let has_zoom_modifier = ui.input(|i| {
-                i.modifiers.command || i.modifiers.mac_cmd || i.modifiers.ctrl || i.modifiers.alt
-            });
-            
-            if has_zoom_modifier {
-                // Ctrl / Cmd + Scroll zooms in and out
-                self.zoom_from_scroll(scroll_delta.y, pointer_pos, canvas_rect);
-            } else {
-                // Regular scroll or trackpad drag moves (pans) the canvas
-                self.offset += scroll_delta;
+        // 2. Event-based scroll zoom vs panning
+        // Differentiate:
+        // - Mouse scroll wheel (MouseWheelUnit::Line) -> zooms
+        // - Trackpad panning (MouseWheelUnit::Point) -> pans/moves
+        // Also support zoom modifiers if they occur
+        let mut is_mouse_wheel = false;
+        let mut is_trackpad_scroll = false;
+        let mut scroll_y = 0.0;
+        let mut scroll_vector = Vec2::ZERO;
+
+        ui.input(|i| {
+            for event in &i.events {
+                if let egui::Event::MouseWheel { unit, delta, .. } = event {
+                    if *unit == egui::MouseWheelUnit::Line {
+                        is_mouse_wheel = true;
+                        scroll_y += delta.y;
+                    } else {
+                        is_trackpad_scroll = true;
+                        scroll_vector += *delta;
+                    }
+                }
+            }
+        });
+
+        if is_mouse_wheel {
+            // Mouse scroll zooms in/out directly (without modifiers)
+            self.zoom_from_scroll(scroll_y, pointer_pos, canvas_rect);
+        } else if is_trackpad_scroll {
+            // Touchpad two-finger drag moves the canvas
+            self.offset += scroll_vector;
+        } else {
+            // Fallback for general smooth_scroll_delta if events were consumed
+            let scroll_delta = ui.input(|i| i.smooth_scroll_delta);
+            if scroll_delta != Vec2::ZERO {
+                let has_zoom_modifier = ui.input(|i| {
+                    i.modifiers.command || i.modifiers.mac_cmd || i.modifiers.ctrl || i.modifiers.alt
+                });
+                if has_zoom_modifier {
+                    self.zoom_from_scroll(scroll_delta.y, pointer_pos, canvas_rect);
+                } else {
+                    self.offset += scroll_delta;
+                }
             }
         }
         
