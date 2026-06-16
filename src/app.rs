@@ -2979,8 +2979,6 @@ impl App {
                     let path = [start, waypoints[0], waypoints[1], waypoints[2], waypoints[3], start];
                     let shapes = egui::Shape::dashed_line(&path, stroke, dash, gap);
                     painter.extend(shapes);
-                } else if in_ramp {
-                    painter.rect_stroke(rect, 0.0, egui::Stroke::new(1.5, theme.accent), egui::StrokeKind::Inside);
                 }
 
                 let resp = ui.interact(rect, ui.id().with(("swatch", i)), egui::Sense::click_and_drag());
@@ -3285,6 +3283,28 @@ impl App {
                     };
                     self.palette_browser.save_dialog_name = name;
                     self.palette_browser.save_dialog_colors = Some(colors);
+                }
+            }
+
+            // --- Shading ramp group highlights (grouped by row) ---
+            if let Some((start, end)) = self.shading_ramp {
+                let start_row = start / cols;
+                let end_row = end / cols;
+                for r in start_row..=end_row {
+                    let row_start = start.max(r * cols);
+                    let row_end = end.min((r + 1) * cols - 1);
+                    if row_start <= row_end {
+                        let col_start = row_start % cols;
+                        let col_end = row_end % cols;
+                        
+                        let min_x = grid_rect.min.x + col_start as f32 * sw;
+                        let max_x = grid_rect.min.x + (col_end + 1) as f32 * sw;
+                        let min_y = grid_rect.min.y + r as f32 * sh;
+                        let max_y = grid_rect.min.y + (r + 1) as f32 * sh;
+                        let row_rect = egui::Rect::from_min_max(Pos2::new(min_x, min_y), Pos2::new(max_x, max_y));
+                        
+                        painter.rect_stroke(row_rect, 0.0, egui::Stroke::new(1.5, theme.accent), egui::StrokeKind::Inside);
+                    }
                 }
             }
 
