@@ -4257,8 +4257,8 @@ impl App {
                             }
                             if response.secondary_clicked() && !self.menu_was_open_at_frame_start {
                                 self.project.active_frame = idx;
-                                let menu_outer_w = 144.0;
-                                let menu_outer_h = 44.0;
+                                let menu_outer_w = 84.0;
+                                let menu_outer_h = 60.0;
                                 let x = response.rect.center().x - menu_outer_w / 2.0;
                                 let y = response.rect.top() - menu_outer_h - 4.0;
                                 let now = ui.ctx().input(|i| i.time);
