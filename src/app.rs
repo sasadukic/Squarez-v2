@@ -2947,11 +2947,6 @@ impl App {
 
                 let current_fg = self.color_state.foreground;
                 let is_active = self.active_palette_idx == Some(i) || (self.active_palette_idx.is_none() && swatch == current_fg);
-                let in_ramp = if let Some((start, end)) = self.shading_ramp {
-                    i >= start && i <= end
-                } else {
-                    false
-                };
                 if is_active {
                     let stroke = egui::Stroke::new(1.0, Color32::WHITE);
                     let dash = 3.0_f32;
