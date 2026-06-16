@@ -7151,8 +7151,53 @@ print("FAIL")
                                 } else {
                                     self.pen_square(mx, my, w, h).into_iter().map(|(x, y)| (x, y, color)).collect()
                                 };
-                                for (sx, sy, c) in points {
+                                for (sx, sy, mut c) in points {
                                     if seen.insert((sx, sy)) {
+                                        if self.shading_mode {
+                                            let (target_fi, ox, oy) = if self.project.is_tiled() {
+                                                let tile_w = self.project.tile_w;
+                                                let tile_h = self.project.tile_h;
+                                                let tiles_w = self.project.tiles_w;
+                                                let tiles_h = self.project.tiles_h;
+                                                let tx = sx / tile_w;
+                                                let ty = sy / tile_h;
+                                                if tx < tiles_w && ty < tiles_h {
+                                                    let t_fi = (ty * tiles_w + tx) as usize;
+                                                    if t_fi < self.project.animations[ai].frames.len() {
+                                                        (t_fi, sx % tile_w, sy % tile_h)
+                                                    } else {
+                                                        (fi, sx, sy)
+                                                    }
+                                                } else {
+                                                    (fi, sx, sy)
+                                                }
+                                            } else {
+                                                (fi, sx, sy)
+                                            };
+                                            
+                                            let current_pixel_color = self.project.animations[ai].frames[target_fi].layers[li].get_pixel(ox, oy);
+                                            let mut found_ramp_idx = None;
+                                            if let Some((start, end)) = self.shading_ramp {
+                                                for p_idx in start..=end {
+                                                    if p_idx < self.project.palette.len() {
+                                                        if self.project.palette[p_idx] == current_pixel_color {
+                                                            found_ramp_idx = Some(p_idx);
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                                if let Some(p_idx) = found_ramp_idx {
+                                                    let alt_held = response.ctx.input(|inp| inp.modifiers.alt);
+                                                    let dir = if alt_held { -self.shading_dir } else { self.shading_dir };
+                                                    let next_idx = (p_idx as i32 + dir).clamp(start as i32, end as i32) as usize;
+                                                    c = self.project.palette[next_idx];
+                                                } else {
+                                                    continue;
+                                                }
+                                            } else {
+                                                continue;
+                                            }
+                                        }
                                         pts.push((sx, sy, c));
                                     }
                                 }
