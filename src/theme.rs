@@ -46,8 +46,8 @@ impl Default for Theme {
             fg:            Color32::from_hex("#e1f2f9").unwrap(),
             fg_desc:       Color32::from_hex("#636b6e").unwrap(),
             fg_muted:      Color32::from_hex("#636b6e").unwrap(),
-            checker_dark:  Color32::from_hex("#2d3032").unwrap(),
-            checker_light: Color32::from_hex("#43484b").unwrap(),
+            checker_dark:  Color32::from_hex("#AAB2C2").unwrap(),
+            checker_light: Color32::from_hex("#C5CCDA").unwrap(),
         }
     }
 }

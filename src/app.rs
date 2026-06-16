@@ -5467,7 +5467,7 @@ impl App {
                     };
 
                     let overlay_rect = egui::Rect::from_min_size(
-                        Pos2::new(canvas_rect.min.x + 12.0, canvas_rect.min.y + TOP_BAR_HEIGHT + 12.0),
+                        Pos2::new(canvas_rect.min.x + 12.0, canvas_rect.max.y - 52.0),
                         Vec2::new(180.0, 40.0),
                     );
                     
@@ -5475,12 +5475,12 @@ impl App {
                     
                     overlay_ui.vertical(|ui| {
                         let coord_text = RichText::new(&coord_str)
-                            .color(self.theme.panel)
+                            .color(self.theme.surface)
                             .font(FontId::new(10.0, FontFamily::Monospace));
                         ui.label(coord_text);
                         
                         let sel_text = RichText::new(selection_size_str)
-                            .color(self.theme.panel)
+                            .color(self.theme.surface)
                             .font(FontId::new(10.0, FontFamily::Proportional));
                         ui.label(sel_text);
                     });
