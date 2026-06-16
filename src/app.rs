@@ -5475,12 +5475,12 @@ impl App {
                     
                     overlay_ui.vertical(|ui| {
                         let coord_text = RichText::new(&coord_str)
-                            .color(self.theme.fg)
+                            .color(self.theme.panel)
                             .font(FontId::new(10.0, FontFamily::Monospace));
                         ui.label(coord_text);
                         
                         let sel_text = RichText::new(selection_size_str)
-                            .color(self.theme.fg_desc)
+                            .color(self.theme.panel)
                             .font(FontId::new(10.0, FontFamily::Proportional));
                         ui.label(sel_text);
                     });
