@@ -5440,7 +5440,7 @@ impl App {
                     }
                 }
 
-                // Render info overlay box in the top-right corner of the canvas
+                // Render info overlay box in the top-left corner of the canvas (under logo, next to tools)
                 {
                     let hover_canvas = ctx.pointer_hover_pos()
                         .and_then(|p| self.canvas.screen_to_canvas(p, canvas_rect, disp_w, disp_h))
@@ -5452,170 +5452,37 @@ impl App {
                     };
 
                     let selection_size_str = if let Some(ref float) = self.select_state.float_pixels {
-                        format!("{}×{}", float.width, float.height)
+                        format!("Sel: {}×{}", float.w, float.h)
                     } else if let Some((_, _, w, h)) = self.select_state.rect {
-                        format!("{}×{}", w, h)
+                        format!("Sel: {}×{}", w, h)
                     } else if let Some(ref mask) = self.select_state.mask {
                         if let Some((_, _, w, h)) = mask.bounding_box() {
-                            format!("{}×{}", w, h)
+                            format!("Sel: {}×{}", w, h)
                         } else {
-                            "0×0".to_string()
+                            "Sel: 0×0".to_string()
                         }
                     } else {
-                        "0×0".to_string()
-                    };
-
-                    let mut keys = Vec::new();
-                    ctx.input(|i| {
-                        if i.modifiers.command || i.modifiers.mac_cmd { keys.push("Cmd"); }
-                        if i.modifiers.ctrl { keys.push("Ctrl"); }
-                        if i.modifiers.alt { keys.push("Alt"); }
-                        if i.modifiers.shift { keys.push("Shift"); }
-                        for key in &i.keys_down {
-                            let s = match key {
-                                egui::Key::A => "A",
-                                egui::Key::B => "B",
-                                egui::Key::C => "C",
-                                egui::Key::D => "D",
-                                egui::Key::E => "E",
-                                egui::Key::F => "F",
-                                egui::Key::G => "G",
-                                egui::Key::H => "H",
-                                egui::Key::I => "I",
-                                egui::Key::J => "J",
-                                egui::Key::K => "K",
-                                egui::Key::L => "L",
-                                egui::Key::M => "M",
-                                egui::Key::N => "N",
-                                egui::Key::O => "O",
-                                egui::Key::P => "P",
-                                egui::Key::Q => "Q",
-                                egui::Key::R => "R",
-                                egui::Key::S => "S",
-                                egui::Key::T => "T",
-                                egui::Key::U => "U",
-                                egui::Key::V => "V",
-                                egui::Key::W => "W",
-                                egui::Key::X => "X",
-                                egui::Key::Y => "Y",
-                                egui::Key::Z => "Z",
-                                egui::Key::Num0 => "0",
-                                egui::Key::Num1 => "1",
-                                egui::Key::Num2 => "2",
-                                egui::Key::Num3 => "3",
-                                egui::Key::Num4 => "4",
-                                egui::Key::Num5 => "5",
-                                egui::Key::Num6 => "6",
-                                egui::Key::Num7 => "7",
-                                egui::Key::Num8 => "8",
-                                egui::Key::Num9 => "9",
-                                egui::Key::Minus => "-",
-                                egui::Key::Equals => "=",
-                                egui::Key::OpenBracket => "[",
-                                egui::Key::CloseBracket => "]",
-                                egui::Key::Space => "Space",
-                                egui::Key::Escape => "Escape",
-                                egui::Key::Enter => "Enter",
-                                egui::Key::Delete => "Delete",
-                                egui::Key::Backspace => "Backspace",
-                                egui::Key::Tab => "Tab",
-                                egui::Key::ArrowLeft => "Left",
-                                egui::Key::ArrowRight => "Right",
-                                egui::Key::ArrowUp => "Up",
-                                egui::Key::ArrowDown => "Down",
-                                _ => "",
-                            };
-                            if !s.is_empty() {
-                                keys.push(s);
-                            }
-                        }
-                    });
-
-                    let combo = keys.join("+");
-                    let action_name = match combo.as_str() {
-                        "Cmd+N" => Some("New Project"),
-                        "Cmd+O" => Some("Open Project"),
-                        "Cmd+S" => Some("Save Project"),
-                        "Shift+Cmd+S" => Some("Save Project As"),
-                        "Cmd+E" => Some("Toggle PNG Export"),
-                        "Cmd+Z" => Some("Undo Paint"),
-                        "Shift+Cmd+Z" | "Ctrl+Y" => Some("Redo Paint"),
-                        "Cmd+V" => Some("Paste Float"),
-                        "Delete" | "Backspace" => Some("Delete Float"),
-                        "Escape" => Some("Cancel/Commit"),
-                        "Space" => Some("Play/Pause Playback"),
-                        "A" => Some("Prev Frame"),
-                        "D" => Some("Next Frame"),
-                        "-" => Some("Decrease Pen Size"),
-                        "=" => Some("Increase Pen Size"),
-                        "[" => Some("Select Prev Color"),
-                        "]" => Some("Select Next Color"),
-                        _ => None,
+                        "Sel: 0×0".to_string()
                     };
 
                     let overlay_rect = egui::Rect::from_min_size(
-                        Pos2::new(canvas_rect.max.x - 224.0, canvas_rect.min.y + 12.0),
-                        Vec2::new(212.0, 72.0),
+                        Pos2::new(canvas_rect.min.x + 50.0, canvas_rect.min.y + 12.0),
+                        Vec2::new(180.0, 40.0),
                     );
                     
-                    let overlay_ui = &mut ui.child_ui(overlay_rect, egui::Layout::top_down(egui::Align::Min));
+                    let overlay_ui = &mut ui.new_child(egui::UiBuilder::new().max_rect(overlay_rect).layout(egui::Layout::top_down(egui::Align::Min)));
                     
-                    Frame::new()
-                        .fill(self.theme.panel.linear_multiply(0.85))
-                        .corner_radius(egui::CornerRadius::same(5))
-                        .stroke(egui::Stroke::new(1.0, self.theme.accent.linear_multiply(0.3)))
-                        .inner_margin(Margin::same(8))
-                        .show(overlay_ui, |ui| {
-                            ui.vertical(|ui| {
-                                // Line 1: Coordinates & Selection Size
-                                ui.horizontal(|ui| {
-                                    let coord_text = RichText::new(&coord_str)
-                                        .color(self.theme.fg)
-                                        .font(FontId::new(10.0, FontFamily::Monospace));
-                                    ui.label(coord_text);
-                                    
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        let sel_text = RichText::new(format!("Sel: {}", selection_size_str))
-                                            .color(self.theme.fg_desc)
-                                            .font(FontId::new(10.0, FontFamily::Proportional));
-                                        ui.label(sel_text);
-                                    });
-                                });
-                                
-                                ui.add_space(4.0);
-                                ui.separator();
-                                ui.add_space(4.0);
-                                
-                                // Line 2: Keys pressed
-                                ui.horizontal(|ui| {
-                                    let key_label = RichText::new("Keys: ")
-                                        .color(self.theme.fg_desc)
-                                        .font(FontId::new(10.0, FontFamily::Proportional));
-                                    ui.label(key_label);
-                                    
-                                    let keys_val_str = if keys.is_empty() { "--" } else { &combo };
-                                    let val_text = RichText::new(keys_val_str)
-                                        .color(self.theme.fg)
-                                        .font(FontId::new(10.0, FontFamily::Monospace));
-                                    ui.label(val_text);
-                                });
-                                
-                                // Line 3: Shortcut Tool Name (if matches)
-                                if let Some(action) = action_name {
-                                    ui.add_space(2.0);
-                                    let action_text = RichText::new(action)
-                                        .color(self.theme.accent)
-                                        .font(FontId::new(10.0, FontFamily::Name("bold".into())));
-                                    ui.label(action_text);
-                                } else {
-                                    ui.add_space(2.0);
-                                    let action_text = RichText::new("--")
-                                        .color(self.theme.fg_muted)
-                                        .font(FontId::new(10.0, FontFamily::Proportional));
-                                    ui.label(action_text);
-                                }
-                            });
-                        });
+                    overlay_ui.vertical(|ui| {
+                        let coord_text = RichText::new(&coord_str)
+                            .color(self.theme.fg)
+                            .font(FontId::new(10.0, FontFamily::Monospace));
+                        ui.label(coord_text);
+                        
+                        let sel_text = RichText::new(selection_size_str)
+                            .color(self.theme.fg_desc)
+                            .font(FontId::new(10.0, FontFamily::Proportional));
+                        ui.label(sel_text);
+                    });
                 }
 
                 let response = ui.allocate_rect(canvas_rect, egui::Sense::click_and_drag());
