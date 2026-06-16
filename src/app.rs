@@ -249,6 +249,7 @@ pub struct App {
     menu_was_open_at_frame_start: bool,
     brushes: Vec<CustomBrush>,
     active_brush_index: Option<usize>,
+    use_swatch_color: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -290,6 +291,7 @@ struct LayoutState {
     color_state: Option<ColorState>,
     brushes: Vec<CustomBrush>,
     active_brush_index: Option<usize>,
+    use_swatch_color: bool,
 }
 
 impl Default for LayoutState {
@@ -300,6 +302,7 @@ impl Default for LayoutState {
             color_state: None,
             brushes: Vec::new(),
             active_brush_index: None,
+            use_swatch_color: false,
         }
     }
 }
@@ -498,6 +501,7 @@ impl App {
             menu_was_open_at_frame_start: false,
             brushes: layout.as_ref().map(|l| l.brushes.clone()).unwrap_or_default(),
             active_brush_index: layout.as_ref().and_then(|l| l.active_brush_index),
+            use_swatch_color: layout.as_ref().map(|l| l.use_swatch_color).unwrap_or(false),
         }
     }
 
@@ -5995,6 +5999,10 @@ print("FAIL")
             self.delete_active_brush();
         }
 
+        ui.add_space(4.0);
+        ui.checkbox(&mut self.use_swatch_color, "Use Swatch Color");
+        ui.add_space(4.0);
+
         let cols = 4;
         let brush_len = self.brushes.len();
         let rows = ((brush_len + 3) / 4).max(1);
@@ -7078,7 +7086,7 @@ print("FAIL")
                             let mut seen = std::collections::HashSet::new();
                             let mut pts = Vec::new();
                             for (mx, my) in self.mirror_positions(hx, hy, w, h) {
-                                let points: Vec<(u32, u32, Rgba)> = if let Some(brush_idx) = self.active_brush_index {
+                                let mut points: Vec<(u32, u32, Rgba)> = if let Some(brush_idx) = self.active_brush_index {
                                     if brush_idx < self.brushes.len() {
                                         self.brush_stamp(brush_idx, mx, my, w, h)
                                     } else {
@@ -7087,6 +7095,11 @@ print("FAIL")
                                 } else {
                                     self.pen_square(mx, my, w, h).into_iter().map(|(x, y)| (x, y, color)).collect()
                                 };
+                                if self.active_brush_index.is_some() && self.use_swatch_color {
+                                    for p in &mut points {
+                                        p.2 = color;
+                                    }
+                                }
                                 for (sx, sy, mut c) in points {
                                     if seen.insert((sx, sy)) {
                                         if self.shading_mode {
@@ -7364,7 +7377,7 @@ print("FAIL")
                         }
                     }
                     for &((mx, my), _) in &streamed {
-                        let points: Vec<(u32, u32, Rgba)> = if let Some(brush_idx) = self.active_brush_index {
+                        let mut points: Vec<(u32, u32, Rgba)> = if let Some(brush_idx) = self.active_brush_index {
                             if brush_idx < self.brushes.len() {
                                 self.brush_stamp(brush_idx, mx, my, w, h)
                             } else {
@@ -7373,6 +7386,11 @@ print("FAIL")
                         } else {
                             self.pen_square(mx, my, w, h).into_iter().map(|(x, y)| (x, y, color)).collect()
                         };
+                        if self.active_brush_index.is_some() && self.use_swatch_color {
+                            for p in &mut points {
+                                p.2 = color;
+                            }
+                        }
                         for (sx, sy, mut c) in points {
                             if self.stroke_painted.contains(&(sx, sy)) { continue; }
                             let (target_fi, ox, oy) = if self.project.is_tiled() {
@@ -9544,6 +9562,7 @@ impl eframe::App for App {
             color_state: Some(self.color_state.clone()),
             brushes: self.brushes.clone(),
             active_brush_index: self.active_brush_index,
+            use_swatch_color: self.use_swatch_color,
         };
         if let Ok(json) = serde_json::to_string(&state) {
             storage.set_string(LAYOUT_STORAGE_KEY, json);
