@@ -37,17 +37,17 @@ pub struct Theme {
 impl Default for Theme {
     fn default() -> Self {
         Self {
-            bg:            Color32::from_hex("#171B22").unwrap(),
-            panel:         Color32::from_hex("#242B35").unwrap(),
-            surface:       Color32::from_hex("#343B48").unwrap(),
-            accent:        Color32::from_hex("#4B5667").unwrap(),
-            border:        Color32::from_hex("#343B48").unwrap(),
-            muted:         Color32::from_hex("#8792A3").unwrap(),
-            fg:            Color32::from_hex("#DDE7F5").unwrap(),
-            fg_desc:       Color32::from_hex("#8792A3").unwrap(),
-            fg_muted:      Color32::from_hex("#8792A3").unwrap(),
-            checker_dark:  Color32::from_hex("#AAB2C2").unwrap(),
-            checker_light: Color32::from_hex("#C5CCDA").unwrap(),
+            bg:            Color32::from_hex("#1a1a1a").unwrap(),
+            panel:         Color32::from_hex("#202122").unwrap(),
+            surface:       Color32::from_hex("#2d3032").unwrap(),
+            accent:        Color32::from_hex("#43484b").unwrap(),
+            border:        Color32::from_hex("#2d3032").unwrap(),
+            muted:         Color32::from_hex("#636b6e").unwrap(),
+            fg:            Color32::from_hex("#e1f2f9").unwrap(),
+            fg_desc:       Color32::from_hex("#636b6e").unwrap(),
+            fg_muted:      Color32::from_hex("#636b6e").unwrap(),
+            checker_dark:  Color32::from_hex("#2d3032").unwrap(),
+            checker_light: Color32::from_hex("#43484b").unwrap(),
         }
     }
 }
