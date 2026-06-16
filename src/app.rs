@@ -4966,47 +4966,55 @@ impl App {
                         color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
                     })
                     .show(ui, |ui| {
-                    // Single row: [DragValue ms] [duplicate] [delete]
-                    const BTN: f32 = 36.0;
-                    const PAD: f32 = 4.0;
-                    let theme = self.theme.clone();
-                    ui.horizontal(|ui| {
-                        ui.style_mut().spacing.item_spacing = Vec2::ZERO;
-                        // DragValue for duration — first
-                        let duration = &mut self.project.active_anim_mut().frames[frame_index].duration_ms;
-                        let mut d = if *duration == 0 { 100 } else { *duration };
-                        ui.visuals_mut().override_text_color = Some(theme.fg_desc);
-                        ui.add_sized(
-                            Vec2::new(52.0, BTN),
-                            egui::DragValue::new(&mut d).range(10..=5000).suffix("ms"),
-                        );
-                        ui.visuals_mut().override_text_color = None;
-                        if d != *duration { *duration = d; }
-                        // Duplicate
-                        let (r, resp) = ui.allocate_exact_size(Vec2::splat(BTN), egui::Sense::click());
-                        if resp.hovered() { ui.painter().rect_filled(r, 0.0, theme.accent); }
-                        let icon_rect = egui::Rect::from_center_size(r.center(), Vec2::splat(20.0));
-                        let tint = if resp.hovered() { Color32::WHITE } else { theme.fg_desc };
-                        ui.put(icon_rect, Image::new(egui::include_image!("../assets/icons/duplicate.svg")).tint(tint).fit_to_exact_size(Vec2::splat(20.0)));
-                        if resp.clicked() {
-                            self.project.active_frame = frame_index;
-                            self.duplicate_active_frame();
-                            self.frame_menu = None;
-                        }
-                        ui.add_space(PAD);
-                        // Delete
-                        let (r, resp) = ui.allocate_exact_size(Vec2::splat(BTN), egui::Sense::click());
-                        if resp.hovered() { ui.painter().rect_filled(r, 0.0, theme.accent); }
-                        let icon_rect = egui::Rect::from_center_size(r.center(), Vec2::splat(20.0));
-                        let tint = if resp.hovered() { Color32::WHITE } else { theme.fg_desc };
-                        ui.put(icon_rect, Image::new(egui::include_image!("../assets/icons/delete.svg")).tint(tint).fit_to_exact_size(Vec2::splat(20.0)));
-                        if resp.clicked() {
-                            self.project.active_frame = frame_index;
-                            self.delete_active_frame();
-                            self.frame_menu = None;
-                        }
+                        ui.set_width(84.0);
+                        ui.set_max_width(84.0);
+                        let theme = self.theme.clone();
+                        ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing = Vec2::new(0.0, 4.0);
+                            
+                            // Row 1: Duration DragValue
+                            let duration = &mut self.project.active_anim_mut().frames[frame_index].duration_ms;
+                            let mut d = if *duration == 0 { 100 } else { *duration };
+                            ui.visuals_mut().override_text_color = Some(theme.fg_desc);
+                            ui.add_sized(
+                                Vec2::new(76.0, 24.0),
+                                egui::DragValue::new(&mut d).range(10..=5000).suffix("ms"),
+                            );
+                            ui.visuals_mut().override_text_color = None;
+                            if d != *duration { *duration = d; }
+                            
+                            // Row 2: Duplicate and Delete side-by-side
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing = Vec2::new(4.0, 0.0);
+                                
+                                // Duplicate
+                                let btn_w = 36.0;
+                                let btn_h = 24.0;
+                                let (r, resp) = ui.allocate_exact_size(Vec2::new(btn_w, btn_h), egui::Sense::click());
+                                if resp.hovered() { ui.painter().rect_filled(r, 0.0, theme.accent); }
+                                let icon_rect = egui::Rect::from_center_size(r.center(), Vec2::splat(16.0));
+                                let tint = if resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                                ui.put(icon_rect, Image::new(egui::include_image!("../assets/icons/duplicate.svg")).tint(tint).fit_to_exact_size(Vec2::splat(16.0)));
+                                if resp.clicked() {
+                                    self.project.active_frame = frame_index;
+                                    self.duplicate_active_frame();
+                                    self.frame_menu = None;
+                                }
+                                
+                                // Delete
+                                let (r, resp) = ui.allocate_exact_size(Vec2::new(btn_w, btn_h), egui::Sense::click());
+                                if resp.hovered() { ui.painter().rect_filled(r, 0.0, theme.accent); }
+                                let icon_rect = egui::Rect::from_center_size(r.center(), Vec2::splat(16.0));
+                                let tint = if resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                                ui.put(icon_rect, Image::new(egui::include_image!("../assets/icons/delete.svg")).tint(tint).fit_to_exact_size(Vec2::splat(16.0)));
+                                if resp.clicked() {
+                                    self.project.active_frame = frame_index;
+                                    self.delete_active_frame();
+                                    self.frame_menu = None;
+                                }
+                            });
+                        });
                     });
-                });
             });
 
         // Auto-close after 2s hover-away
