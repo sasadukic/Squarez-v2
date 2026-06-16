@@ -3285,46 +3285,74 @@ impl App {
             if let Some((start, end)) = self.shading_ramp {
                 let start_row = start / cols;
                 let end_row = end / cols;
-                for r in start_row..=end_row {
-                    let row_start = start.max(r * cols);
-                    let row_end = end.min((r + 1) * cols - 1);
-                    if row_start <= row_end {
-                        let col_start = row_start % cols;
-                        let col_end = row_end % cols;
-                        
-                        let min_x = grid_rect.min.x + col_start as f32 * sw;
-                        let max_x = grid_rect.min.x + (col_end + 1) as f32 * sw;
-                        let min_y = grid_rect.min.y + r as f32 * sh;
-                        let max_y = grid_rect.min.y + (r + 1) as f32 * sh;
-                        let row_rect = egui::Rect::from_min_max(Pos2::new(min_x, min_y), Pos2::new(max_x, max_y));
-                        
-                        let stroke = egui::Stroke::new(1.0, Color32::WHITE);
-                        let dash = 3.0_f32;
-                        let gap  = 3.0_f32;
-                        let w_side = row_rect.width();
-                        let h_side = row_rect.height();
-                        let perim = 2.0 * (w_side + h_side);
-                        let t = ui.ctx().input(|inp| inp.time) as f32;
-                        ui.ctx().request_repaint();
-                        let off = (t * 15.0).rem_euclid(perim);
-                        
-                        let (start_pos, waypoints): (Pos2, [Pos2; 4]) = if off < w_side {
-                            (Pos2::new(row_rect.left() + off, row_rect.top()),
-                             [row_rect.right_top(), row_rect.right_bottom(), row_rect.left_bottom(), row_rect.left_top()])
-                        } else if off < w_side + h_side {
-                            (Pos2::new(row_rect.right(), row_rect.top() + (off - w_side)),
-                             [row_rect.right_bottom(), row_rect.left_bottom(), row_rect.left_top(), row_rect.right_top()])
-                        } else if off < 2.0 * w_side + h_side {
-                            (Pos2::new(row_rect.right() - (off - w_side - h_side), row_rect.bottom()),
-                             [row_rect.left_bottom(), row_rect.left_top(), row_rect.right_top(), row_rect.right_bottom()])
-                        } else {
-                            (Pos2::new(row_rect.left(), row_rect.bottom() - (off - 2.0 * w_side - h_side)),
-                             [row_rect.left_top(), row_rect.right_top(), row_rect.right_bottom(), row_rect.left_bottom()])
-                        };
-                        let path = [start_pos, waypoints[0], waypoints[1], waypoints[2], waypoints[3], start_pos];
-                        let shapes = egui::Shape::dashed_line(&path, stroke, dash, gap);
-                        painter.extend(shapes);
-                    }
+                if start_row == end_row {
+                    let col_start = start % cols;
+                    let col_end = end % cols;
+                    let min_x = grid_rect.min.x + col_start as f32 * sw;
+                    let max_x = grid_rect.min.x + (col_end + 1) as f32 * sw;
+                    let min_y = grid_rect.min.y + start_row as f32 * sh;
+                    let max_y = grid_rect.min.y + (start_row + 1) as f32 * sh;
+                    let row_rect = egui::Rect::from_min_max(Pos2::new(min_x, min_y), Pos2::new(max_x, max_y));
+                    
+                    let stroke = egui::Stroke::new(1.0, Color32::WHITE);
+                    let dash = 3.0_f32;
+                    let gap  = 3.0_f32;
+                    let w_side = row_rect.width();
+                    let h_side = row_rect.height();
+                    let perim = 2.0 * (w_side + h_side);
+                    let t = ui.ctx().input(|inp| inp.time) as f32;
+                    ui.ctx().request_repaint();
+                    let off = (t * 15.0).rem_euclid(perim);
+                    
+                    let (start_pos, waypoints): (Pos2, [Pos2; 4]) = if off < w_side {
+                        (Pos2::new(row_rect.left() + off, row_rect.top()),
+                         [row_rect.right_top(), row_rect.right_bottom(), row_rect.left_bottom(), row_rect.left_top()])
+                    } else if off < w_side + h_side {
+                        (Pos2::new(row_rect.right(), row_rect.top() + (off - w_side)),
+                         [row_rect.right_bottom(), row_rect.left_bottom(), row_rect.left_top(), row_rect.right_top()])
+                    } else if off < 2.0 * w_side + h_side {
+                        (Pos2::new(row_rect.right() - (off - w_side - h_side), row_rect.bottom()),
+                         [row_rect.left_bottom(), row_rect.left_top(), row_rect.right_top(), row_rect.right_bottom()])
+                    } else {
+                        (Pos2::new(row_rect.left(), row_rect.bottom() - (off - 2.0 * w_side - h_side)),
+                         [row_rect.left_top(), row_rect.right_top(), row_rect.right_bottom(), row_rect.left_bottom()])
+                    };
+                    let path = [start_pos, waypoints[0], waypoints[1], waypoints[2], waypoints[3], start_pos];
+                    let shapes = egui::Shape::dashed_line(&path, stroke, dash, gap);
+                    painter.extend(shapes);
+                } else {
+                    let col_start = start % cols;
+                    let col_end = end % cols;
+                    
+                    let x_start = grid_rect.min.x + col_start as f32 * sw;
+                    let x_end = grid_rect.min.x + (col_end + 1) as f32 * sw;
+                    let x_right = grid_rect.min.x + cols as f32 * sw;
+                    let x_left = grid_rect.min.x;
+                    
+                    let y0 = grid_rect.min.y + start_row as f32 * sh;
+                    let y1 = grid_rect.min.y + (start_row + 1) as f32 * sh;
+                    let y2 = grid_rect.min.y + end_row as f32 * sh;
+                    let y3 = grid_rect.min.y + (end_row + 1) as f32 * sh;
+                    
+                    let path = vec![
+                        Pos2::new(x_start, y0),
+                        Pos2::new(x_right, y0),
+                        Pos2::new(x_right, y2),
+                        Pos2::new(x_end, y2),
+                        Pos2::new(x_end, y3),
+                        Pos2::new(x_left, y3),
+                        Pos2::new(x_left, y1),
+                        Pos2::new(x_start, y1),
+                        Pos2::new(x_start, y0),
+                    ];
+                    
+                    let stroke = egui::Stroke::new(1.0, Color32::WHITE);
+                    let dash = 3.0_f32;
+                    let gap  = 3.0_f32;
+                    ui.ctx().request_repaint();
+                    
+                    let shapes = egui::Shape::dashed_line(&path, stroke, dash, gap);
+                    painter.extend(shapes);
                 }
             }
 
