@@ -3350,8 +3350,43 @@ impl App {
                     let dash = 3.0_f32;
                     let gap  = 3.0_f32;
                     ui.ctx().request_repaint();
+
+                    let mut segments = Vec::new();
+                    let mut total_perimeter = 0.0_f32;
+                    for window in path.windows(2) {
+                        let p1 = window[0];
+                        let p2 = window[1];
+                        let len = (p2 - p1).length();
+                        segments.push((p1, p2, len));
+                        total_perimeter += len;
+                    }
                     
-                    let shapes = egui::Shape::dashed_line(&path, stroke, dash, gap);
+                    let t = ui.ctx().input(|inp| inp.time) as f32;
+                    let off = (t * 15.0).rem_euclid(total_perimeter);
+                    
+                    let mut accumulated = 0.0_f32;
+                    let mut start_seg_idx = 0;
+                    let mut start_pos = path[0];
+                    for (idx, &(_p1, p2, len)) in segments.iter().enumerate() {
+                        if accumulated + len >= off {
+                            start_seg_idx = idx;
+                            let ratio = (off - accumulated) / len;
+                            start_pos = _p1 + (p2 - _p1) * ratio;
+                            break;
+                        }
+                        accumulated += len;
+                    }
+                    
+                    let mut shifted_path = vec![start_pos];
+                    for idx in start_seg_idx..segments.len() {
+                        shifted_path.push(segments[idx].1);
+                    }
+                    for idx in 0..start_seg_idx {
+                        shifted_path.push(segments[idx].1);
+                    }
+                    shifted_path.push(start_pos);
+                    
+                    let shapes = egui::Shape::dashed_line(&shifted_path, stroke, dash, gap);
                     painter.extend(shapes);
                 }
             }
