@@ -5999,10 +5999,6 @@ print("FAIL")
             self.delete_active_brush();
         }
 
-        ui.add_space(4.0);
-        ui.checkbox(&mut self.use_swatch_color, "Use Swatch Color");
-        ui.add_space(4.0);
-
         let cols = 4;
         let brush_len = self.brushes.len();
         let rows = ((brush_len + 3) / 4).max(1);
@@ -6050,31 +6046,35 @@ print("FAIL")
 
                         if active {
                             let stroke = egui::Stroke::new(1.0, theme.accent);
-                            let dash = 4.0_f32;
-                            let gap  = 4.0_f32;
-                            let side = size - 2.0;
-                            let perim = 4.0 * side;
-                            let t = ui.ctx().input(|i| i.time) as f32;
-                            ui.ctx().request_repaint();
-                            let off = (t * 20.0).rem_euclid(perim);
-                            
-                            let r = rect.shrink(1.0);
-                            let (start, waypoints): (Pos2, [Pos2; 4]) = if off < side {
-                                (Pos2::new(r.left() + off, r.top()),
-                                 [r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()])
-                            } else if off < 2.0 * side {
-                                (Pos2::new(r.right(), r.top() + (off - side)),
-                                 [r.right_bottom(), r.left_bottom(), r.left_top(), r.right_top()])
-                            } else if off < 3.0 * side {
-                                (Pos2::new(r.right() - (off - 2.0 * side), r.bottom()),
-                                 [r.left_bottom(), r.left_top(), r.right_top(), r.right_bottom()])
+                            if self.use_swatch_color {
+                                scroll_painter.rect_stroke(rect.shrink(1.0), 0.0, stroke, egui::StrokeKind::Inside);
                             } else {
-                                (Pos2::new(r.left(), r.bottom() - (off - 3.0 * side)),
-                                 [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom()])
-                            };
-                            let path = [start, waypoints[0], waypoints[1], waypoints[2], waypoints[3], start];
-                            let shapes = egui::Shape::dashed_line(&path, stroke, dash, gap);
-                            scroll_painter.extend(shapes);
+                                let dash = 4.0_f32;
+                                let gap  = 4.0_f32;
+                                let side = size - 2.0;
+                                let perim = 4.0 * side;
+                                let t = ui.ctx().input(|i| i.time) as f32;
+                                ui.ctx().request_repaint();
+                                let off = (t * 20.0).rem_euclid(perim);
+                                
+                                let r = rect.shrink(1.0);
+                                let (start, waypoints): (Pos2, [Pos2; 4]) = if off < side {
+                                    (Pos2::new(r.left() + off, r.top()),
+                                     [r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()])
+                                } else if off < 2.0 * side {
+                                    (Pos2::new(r.right(), r.top() + (off - side)),
+                                     [r.right_bottom(), r.left_bottom(), r.left_top(), r.right_top()])
+                                } else if off < 3.0 * side {
+                                    (Pos2::new(r.right() - (off - 2.0 * side), r.bottom()),
+                                     [r.left_bottom(), r.left_top(), r.right_top(), r.right_bottom()])
+                                } else {
+                                    (Pos2::new(r.left(), r.bottom() - (off - 3.0 * side)),
+                                     [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom()])
+                                };
+                                let path = [start, waypoints[0], waypoints[1], waypoints[2], waypoints[3], start];
+                                let shapes = egui::Shape::dashed_line(&path, stroke, dash, gap);
+                                scroll_painter.extend(shapes);
+                            }
                         } else if hover {
                             scroll_painter.rect_stroke(rect.shrink(1.0), 0.0, egui::Stroke::new(1.0, theme.surface.linear_multiply(1.2)), egui::StrokeKind::Inside);
                         }
@@ -6107,10 +6107,22 @@ print("FAIL")
                             self.brushes_drag_idx = Some(i);
                         }
                         if resp.clicked() {
-                            if active {
-                                self.active_brush_index = None;
+                            let ctrl_held = ui.input(|inp| inp.modifiers.ctrl || inp.modifiers.command);
+                            if ctrl_held {
+                                if self.active_brush_index == Some(i) {
+                                    self.use_swatch_color = !self.use_swatch_color;
+                                } else {
+                                    self.active_brush_index = Some(i);
+                                    self.use_swatch_color = true;
+                                }
                             } else {
-                                self.active_brush_index = Some(i);
+                                if active {
+                                    self.active_brush_index = None;
+                                    self.use_swatch_color = false;
+                                } else {
+                                    self.active_brush_index = Some(i);
+                                    self.use_swatch_color = false;
+                                }
                             }
                         }
                     }
