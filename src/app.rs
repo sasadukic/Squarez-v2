@@ -4986,6 +4986,7 @@ impl App {
                 }
                 let painter = ui.painter_at(canvas_rect);
                 self.canvas.draw(
+                    ctx,
                     &painter,
                     canvas_rect,
                     disp_w,

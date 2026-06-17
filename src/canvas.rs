@@ -6,6 +6,10 @@ pub struct CanvasState {
     pub zoom: f32,
     pub offset: Vec2,      // pan offset in screen pixels
     pub texture: Option<TextureHandle>,
+    pub checker_texture: Option<TextureHandle>,
+    pub checker_w: u32,
+    pub checker_h: u32,
+    pub checker_colors: Option<(Color32, Color32)>,
     pub dragging_pan: bool,
     pub last_mouse_pos: Option<Pos2>,
     pub last_mouse_wheel_time: f64,
@@ -17,6 +21,10 @@ impl Default for CanvasState {
             zoom: 12.0,
             offset: Vec2::ZERO,
             texture: None,
+            checker_texture: None,
+            checker_w: 0,
+            checker_h: 0,
+            checker_colors: None,
             dragging_pan: false,
             last_mouse_pos: None,
             last_mouse_wheel_time: 0.0,
@@ -104,26 +112,60 @@ impl CanvasState {
     }
 
     /// Draw checkerboard background + canvas texture.
-    pub fn draw(&self, painter: &Painter, canvas_rect: Rect, width: u32, height: u32, theme: &Theme) {
+    pub fn draw(
+        &mut self,
+        ctx: &egui::Context,
+        painter: &Painter,
+        canvas_rect: Rect,
+        width: u32,
+        height: u32,
+        theme: &Theme,
+    ) {
         let canvas_screen_rect = self.art_rect(canvas_rect, width, height);
         let clipped = painter.with_clip_rect(canvas_screen_rect);
-        // Checkerboard — use panel/surface so transparency is visible but subtle
-        let cell = self.zoom.max(1.0);
-        let cols = (canvas_screen_rect.width() / cell).ceil() as u32;
-        let rows = (canvas_screen_rect.height() / cell).ceil() as u32;
-        for row in 0..rows {
-            for col in 0..cols {
-                let color = if (row + col) % 2 == 0 { theme.checker_dark } else { theme.checker_light };
-                let rect = Rect::from_min_size(
-                    Pos2::new(
-                        canvas_screen_rect.min.x + col as f32 * cell,
-                        canvas_screen_rect.min.y + row as f32 * cell,
-                    ),
-                    Vec2::splat(cell),
-                );
-                clipped.rect_filled(rect, 0.0, color);
+
+        // Rebuild checkerboard texture if width, height, or colors changed
+        let colors = (theme.checker_dark, theme.checker_light);
+        if self.checker_texture.is_none()
+            || self.checker_w != width
+            || self.checker_h != height
+            || self.checker_colors != Some(colors)
+        {
+            let mut pixels = vec![0u8; (width * height * 4) as usize];
+            for y in 0..height {
+                for x in 0..width {
+                    let color = if (x + y) % 2 == 0 { theme.checker_dark } else { theme.checker_light };
+                    let idx = ((y * width + x) * 4) as usize;
+                    pixels[idx] = color.r();
+                    pixels[idx + 1] = color.g();
+                    pixels[idx + 2] = color.b();
+                    pixels[idx + 3] = color.a();
+                }
             }
+            let image = egui::ColorImage::from_rgba_unmultiplied(
+                [width as usize, height as usize],
+                &pixels,
+            );
+            self.checker_texture = Some(ctx.load_texture(
+                "checkerboard",
+                image,
+                TextureOptions::NEAREST,
+            ));
+            self.checker_w = width;
+            self.checker_h = height;
+            self.checker_colors = Some(colors);
         }
+
+        // Draw checkerboard
+        if let Some(tex) = &self.checker_texture {
+            clipped.image(
+                tex.id(),
+                canvas_screen_rect,
+                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        }
+
         // Canvas texture
         if let Some(tex) = &self.texture {
             clipped.image(tex.id(), canvas_screen_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
