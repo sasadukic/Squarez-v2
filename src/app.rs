@@ -8805,6 +8805,7 @@ print("FAIL")
                                         ("Double-click", "Select entire active layer (Select tool)"),
                                         ("Arrow keys", "Nudge active floating selection by 1 pixel"),
                                         ("Shift + Arrow keys", "Nudge active floating selection by 10 pixels"),
+                                        ("Ctrl + Click brush", "Toggle 'Use Swatch Color' mode on custom brush"),
                                         ("A / D", "Navigate to previous / next frame"),
                                         ("Space", "Toggle animation playback play/pause"),
                                     ]),
