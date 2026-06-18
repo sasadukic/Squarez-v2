@@ -250,6 +250,7 @@ pub struct App {
     brushes: Vec<CustomBrush>,
     active_brush_index: Option<usize>,
     use_swatch_color: bool,
+    picking_background_color: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -502,6 +503,7 @@ impl App {
             brushes: layout.as_ref().map(|l| l.brushes.clone()).unwrap_or_default(),
             active_brush_index: layout.as_ref().and_then(|l| l.active_brush_index),
             use_swatch_color: layout.as_ref().map(|l| l.use_swatch_color).unwrap_or(false),
+            picking_background_color: false,
         }
     }
 
@@ -2984,6 +2986,29 @@ impl App {
                     self.palette_drag_idx = Some(i);
                 }
                 if resp.clicked() {
+                    if self.picking_background_color {
+                        self.picking_background_color = false;
+                        let color_val = swatch;
+                        let w = self.project.canvas_width;
+                        let h = self.project.canvas_height;
+                        for anim in &mut self.project.animations {
+                            for frame in &mut anim.frames {
+                                if !frame.layers.is_empty() {
+                                    let layer = &mut frame.layers[0];
+                                    layer.name = "Background".to_string();
+                                    layer.background_color = Some(color_val);
+                                    layer.pixels = vec![0u8; (w * h * 4) as usize];
+                                    for idx in 0..(w * h) as usize {
+                                        layer.pixels[idx * 4]     = color_val[0];
+                                        layer.pixels[idx * 4 + 1] = color_val[1];
+                                        layer.pixels[idx * 4 + 2] = color_val[2];
+                                        layer.pixels[idx * 4 + 3] = color_val[3];
+                                    }
+                                }
+                            }
+                        }
+                        self.canvas_dirty = true;
+                    }
                     let shift_held = ui.input(|inp| inp.modifiers.shift);
                     if shift_held {
                         if let Some(prev_idx) = self.active_palette_idx {
@@ -3669,6 +3694,45 @@ impl App {
                                             self.canvas_dirty = true;
                                         }
                                     }
+                                }
+
+                                if idx == 0 && layer_count >= 2 && !is_group {
+                                    ui.add_space(6.0);
+                                    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(16.0), egui::Sense::click());
+                                    if resp.secondary_clicked() {
+                                        let w = self.project.canvas_width;
+                                        let h = self.project.canvas_height;
+                                        for anim in &mut self.project.animations {
+                                            for frame in &mut anim.frames {
+                                                if !frame.layers.is_empty() {
+                                                    let layer = &mut frame.layers[0];
+                                                    layer.background_color = None;
+                                                    layer.pixels = vec![0u8; (w * h * 4) as usize];
+                                                }
+                                            }
+                                        }
+                                        self.canvas_dirty = true;
+                                    }
+                                    if resp.clicked() {
+                                        self.picking_background_color = !self.picking_background_color;
+                                    }
+                                    let bg_color = self.project.animations[ai].frames[fi].layers[0].background_color;
+                                    if let Some(c) = bg_color {
+                                        let fill_color = Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]);
+                                        ui.painter().rect_filled(rect, 1.0, fill_color);
+                                        let stroke_color = if self.picking_background_color { theme.accent } else { theme.fg_desc };
+                                        ui.painter().rect_stroke(rect, 1.0, egui::Stroke::new(1.0, stroke_color), egui::epaint::StrokeKind::Outside);
+                                    } else {
+                                        let stroke_color = if self.picking_background_color { theme.accent } else { theme.fg_muted };
+                                        let stroke_style = if self.picking_background_color {
+                                            egui::Stroke::new(1.5, theme.accent)
+                                        } else {
+                                            egui::Stroke::new(1.0, stroke_color)
+                                        };
+                                        ui.painter().rect_stroke(rect, 1.0, stroke_style, egui::epaint::StrokeKind::Inside);
+                                        ui.painter().line_segment([rect.left_top(), rect.right_bottom()], egui::Stroke::new(1.0, theme.fg_muted));
+                                    }
+                                    resp.on_hover_text("Solid Background Fill (Right-click to clear)");
                                 }
                             });
                         },
@@ -7244,6 +7308,7 @@ print("FAIL")
         if !is_select_tool {
             if self.project.animations[ai].frames[fi].layers[li].locked { return; }
             if self.project.animations[ai].frames[fi].layers[li].is_group { return; }
+            if self.project.animations[ai].frames[fi].layers[li].background_color.is_some() { return; }
         }
 
         let press_started = response.drag_started_by(egui::PointerButton::Primary) || (response.ctx.input(|i| i.pointer.primary_pressed()) && response.hovered());

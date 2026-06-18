@@ -87,6 +87,8 @@ pub struct LayerMeta {
     pub is_group: bool,
     pub group_id: Option<u64>,
     pub collapsed: bool,
+    #[serde(default)]
+    pub background_color: Option<[u8; 4]>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -207,6 +209,7 @@ pub fn prepare_entries(project: &Project, snapshots: &[UndoSnapshotV2], _work_di
                     is_group: layer.is_group,
                     group_id: layer.group_id,
                     collapsed: layer.collapsed,
+                    background_color: layer.background_color,
                 };
                 let lb = serde_json::to_vec(&lm)?;
                 entries.push(PreparedEntry {
@@ -493,6 +496,7 @@ pub fn load_v2(path: &Path) -> Result<Project, LoadError> {
                     is_group: lm.is_group,
                     group_id: lm.group_id,
                     collapsed: lm.collapsed,
+                    background_color: lm.background_color,
                 });
             }
             frames.push(Frame { duration_ms: 0, layers, dirty: false });

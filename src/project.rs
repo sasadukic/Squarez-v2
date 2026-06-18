@@ -235,6 +235,8 @@ pub struct Layer {
     pub group_id: Option<u64>,
     #[serde(default)]
     pub collapsed: bool,
+    #[serde(default)]
+    pub background_color: Option<Rgba>,
 }
 
 impl Layer {
@@ -253,6 +255,7 @@ impl Layer {
             is_group: false,
             group_id: None,
             collapsed: false,
+            background_color: None,
         }
     }
 
