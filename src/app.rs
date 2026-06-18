@@ -3710,8 +3710,8 @@ impl App {
                                         self.project.animations[ai].frames[fi].layers[idx].collapsed = !collapsed;
                                     }
                                 }
-                                // Opacity input (0-100). Skipped for group rows (no pixel data).
-                                if !is_group {
+                                // Opacity input (0-100). Skipped for group rows (no pixel data) and layers with background color chosen.
+                                if !is_group && self.project.animations[ai].frames[fi].layers[idx].background_color.is_none() {
                                     ui.add_space(6.0);
                                     let current_u8 = self.project.animations[ai].frames[fi].layers[idx].opacity;
                                     let mut pct: u32 = ((current_u8 as f32 / 255.0) * 100.0).round() as u32;
