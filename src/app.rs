@@ -3611,16 +3611,68 @@ impl App {
                                 }
                             } else {
                                 let name = self.project.animations[ai].frames[fi].layers[idx].name.clone();
+                                let bg_color = self.project.animations[ai].frames[fi].layers[idx].background_color;
+                                let name_color = if idx == 0 && self.picking_background_color {
+                                    theme.accent
+                                } else if let Some(c) = bg_color {
+                                    Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3])
+                                } else if is_active {
+                                    theme.fg
+                                } else {
+                                    theme.fg_desc
+                                };
                                 let label_rt = if is_group {
                                     egui::RichText::new(&name)
-                                        .color(if is_active { theme.fg } else { theme.fg_desc })
+                                        .color(name_color)
                                         .font(egui::FontId::new(FONT_SIZE_SM, FontFamily::Name("bold".into())))
                                 } else {
                                     egui::RichText::new(&name)
-                                        .color(if is_active { theme.fg } else { theme.fg_desc })
+                                        .color(name_color)
                                         .font(egui::FontId::new(FONT_SIZE_SM, egui::FontFamily::Proportional))
                                 };
-                                ui.add(egui::Label::new(label_rt).sense(egui::Sense::hover()));
+                                let label_resp = ui.add(egui::Label::new(label_rt).sense(egui::Sense::click()));
+                                if idx == 0 && layer_count >= 2 && !is_group {
+                                    label_resp.on_hover_text("Ctrl+Click (or Cmd+Click) to set Solid Background Fill / clear");
+                                }
+                                
+                                if label_resp.clicked() && !is_renaming {
+                                    let ctrl_or_cmd = ui.input(|i| i.modifiers.ctrl || i.modifiers.command || i.modifiers.mac_cmd);
+                                    if ctrl_or_cmd && idx == 0 && layer_count >= 2 && !is_group {
+                                        let has_bg = self.project.animations[ai].frames[fi].layers[0].background_color.is_some();
+                                        if has_bg {
+                                            let w = self.project.canvas_width;
+                                            let h = self.project.canvas_height;
+                                            for anim in &mut self.project.animations {
+                                                for frame in &mut anim.frames {
+                                                    if !frame.layers.is_empty() {
+                                                        let layer = &mut frame.layers[0];
+                                                        layer.background_color = None;
+                                                        layer.pixels = vec![0u8; (w * h * 4) as usize];
+                                                    }
+                                                }
+                                            }
+                                            self.picking_background_color = false;
+                                            self.canvas_dirty = true;
+                                        } else {
+                                            self.picking_background_color = !self.picking_background_color;
+                                        }
+                                    } else {
+                                        let now = ui.ctx().input(|i| i.time);
+                                        if let Some((last_idx, last_t)) = self.last_layer_click {
+                                            if last_idx == idx && (now - last_t) < 0.4 {
+                                                let name = self.project.animations[ai].frames[fi].layers[idx].name.clone();
+                                                self.renaming_layer = Some((idx, name));
+                                                self.last_layer_click = None;
+                                            } else {
+                                                self.project.active_layer = idx;
+                                                self.last_layer_click = Some((idx, now));
+                                            }
+                                        } else {
+                                            self.project.active_layer = idx;
+                                            self.last_layer_click = Some((idx, now));
+                                        }
+                                    }
+                                }
                             }
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -3694,45 +3746,6 @@ impl App {
                                             self.canvas_dirty = true;
                                         }
                                     }
-                                }
-
-                                if idx == 0 && layer_count >= 2 && !is_group {
-                                    ui.add_space(6.0);
-                                    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(16.0), egui::Sense::click());
-                                    if resp.secondary_clicked() {
-                                        let w = self.project.canvas_width;
-                                        let h = self.project.canvas_height;
-                                        for anim in &mut self.project.animations {
-                                            for frame in &mut anim.frames {
-                                                if !frame.layers.is_empty() {
-                                                    let layer = &mut frame.layers[0];
-                                                    layer.background_color = None;
-                                                    layer.pixels = vec![0u8; (w * h * 4) as usize];
-                                                }
-                                            }
-                                        }
-                                        self.canvas_dirty = true;
-                                    }
-                                    if resp.clicked() {
-                                        self.picking_background_color = !self.picking_background_color;
-                                    }
-                                    let bg_color = self.project.animations[ai].frames[fi].layers[0].background_color;
-                                    if let Some(c) = bg_color {
-                                        let fill_color = Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]);
-                                        ui.painter().rect_filled(rect, 1.0, fill_color);
-                                        let stroke_color = if self.picking_background_color { theme.accent } else { theme.fg_desc };
-                                        ui.painter().rect_stroke(rect, 1.0, egui::Stroke::new(1.0, stroke_color), egui::epaint::StrokeKind::Outside);
-                                    } else {
-                                        let stroke_color = if self.picking_background_color { theme.accent } else { theme.fg_muted };
-                                        let stroke_style = if self.picking_background_color {
-                                            egui::Stroke::new(1.5, theme.accent)
-                                        } else {
-                                            egui::Stroke::new(1.0, stroke_color)
-                                        };
-                                        ui.painter().rect_stroke(rect, 1.0, stroke_style, egui::epaint::StrokeKind::Inside);
-                                        ui.painter().line_segment([rect.left_top(), rect.right_bottom()], egui::Stroke::new(1.0, theme.fg_muted));
-                                    }
-                                    resp.on_hover_text("Solid Background Fill (Right-click to clear)");
                                 }
                             });
                         },
