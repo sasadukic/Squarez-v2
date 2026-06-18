@@ -135,6 +135,7 @@ impl LegacyLayerV1 {
             is_group: false,
             group_id: None,
             collapsed: false,
+            background_color: None,
         }
     }
 }
