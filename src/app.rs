@@ -3621,7 +3621,7 @@ impl App {
                                 } else {
                                     theme.fg_desc
                                 };
-                                let label_rt = if is_group {
+                                let label_rt = if is_group || (idx == 0 && bg_color.is_some()) {
                                     egui::RichText::new(&name)
                                         .color(name_color)
                                         .font(egui::FontId::new(FONT_SIZE_SM, FontFamily::Name("bold".into())))
