@@ -3630,9 +3630,9 @@ impl App {
                                         .color(name_color)
                                         .font(egui::FontId::new(FONT_SIZE_SM, egui::FontFamily::Proportional))
                                 };
-                                let label_resp = ui.add(egui::Label::new(label_rt).sense(egui::Sense::click()));
+                                let mut label_resp = ui.add(egui::Label::new(label_rt).sense(egui::Sense::click()));
                                 if idx == 0 && layer_count >= 2 && !is_group {
-                                    label_resp.on_hover_text("Ctrl+Click (or Cmd+Click) to set Solid Background Fill / clear");
+                                    label_resp = label_resp.on_hover_text("Ctrl+Click (or Cmd+Click) to set Solid Background Fill / clear");
                                 }
                                 
                                 if label_resp.clicked() && !is_renaming {
