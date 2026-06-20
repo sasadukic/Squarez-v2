@@ -251,6 +251,7 @@ pub struct App {
     active_brush_index: Option<usize>,
     use_swatch_color: bool,
     picking_background_color: bool,
+    last_autosave_time: Option<f64>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -907,6 +908,7 @@ impl App {
             active_brush_index: layout.as_ref().and_then(|l| l.active_brush_index),
             use_swatch_color: layout.as_ref().map(|l| l.use_swatch_color).unwrap_or(false),
             picking_background_color: false,
+            last_autosave_time: None,
         }
     }
 
@@ -1222,6 +1224,32 @@ impl App {
             }
         }
         false
+    }
+
+    fn autosave_all_tabs(&mut self) {
+        if let Some(ref path) = self.current_path {
+            if save_sqr(&self.project, path).is_ok() {
+                self.active_modified = false;
+            }
+        } else {
+            let backup_dir = std::path::Path::new("/Users/sasadukic/.gemini/antigravity/recovery");
+            let _ = std::fs::create_dir_all(backup_dir);
+            let backup_path = backup_dir.join("recovery_active.sqr");
+            let _ = save_sqr(&self.project, &backup_path);
+        }
+
+        for (i, tab) in self.other_tabs.iter_mut().enumerate() {
+            if let Some(ref path) = tab.current_path {
+                if save_sqr(&tab.project, path).is_ok() {
+                    tab.modified = false;
+                }
+            } else {
+                let backup_dir = std::path::Path::new("/Users/sasadukic/.gemini/antigravity/recovery");
+                let _ = std::fs::create_dir_all(backup_dir);
+                let backup_path = backup_dir.join(format!("recovery_inactive_{}.sqr", i));
+                let _ = save_sqr(&tab.project, &backup_path);
+            }
+        }
     }
 
     /// Close with check: show save dialog if modified, else close immediately.
@@ -10065,6 +10093,17 @@ impl eframe::App for App {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Autosave check (every 5 minutes = 300 seconds)
+        let now = ctx.input(|i| i.time);
+        if let Some(last_save) = self.last_autosave_time {
+            if now - last_save >= 300.0 {
+                self.autosave_all_tabs();
+                self.last_autosave_time = Some(now);
+            }
+        } else {
+            self.last_autosave_time = Some(now);
+        }
+
         self.menu_was_open_at_frame_start = self.any_menu_open();
         self.theme.apply(ctx);
 
