@@ -177,13 +177,13 @@ impl CanvasState {
         let pointer_pos = ui.input(|i| i.pointer.hover_pos());
         let now = ui.input(|i| i.time);
         
+        let pointer_over_canvas = pointer_pos.is_some_and(|pos| canvas_rect.contains(pos));
+
         // 1. Pinch zoom (Touchpad pinch in/out zooms)
         let zoom_delta = ui.input(|i| i.zoom_delta());
-        if zoom_delta != 1.0 {
+        if zoom_delta != 1.0 && pointer_over_canvas {
             if let Some(pos) = pointer_pos {
-                if canvas_rect.contains(pos) {
-                    self.zoom_at_point(zoom_delta, pos, canvas_rect);
-                }
+                self.zoom_at_point(zoom_delta, pos, canvas_rect);
             }
         }
         
@@ -197,19 +197,21 @@ impl CanvasState {
         let mut scroll_y = 0.0;
         let mut scroll_vector = Vec2::ZERO;
 
-        ui.input(|i| {
-            for event in &i.events {
-                if let egui::Event::MouseWheel { unit, delta, .. } = event {
-                    if *unit == egui::MouseWheelUnit::Line {
-                        is_mouse_wheel = true;
-                        scroll_y += delta.y;
-                    } else {
-                        is_trackpad_scroll = true;
-                        scroll_vector += *delta;
+        if pointer_over_canvas {
+            ui.input(|i| {
+                for event in &i.events {
+                    if let egui::Event::MouseWheel { unit, delta, .. } = event {
+                        if *unit == egui::MouseWheelUnit::Line {
+                            is_mouse_wheel = true;
+                            scroll_y += delta.y;
+                        } else {
+                            is_trackpad_scroll = true;
+                            scroll_vector += *delta;
+                        }
                     }
                 }
-            }
-        });
+            });
+        }
 
         if is_mouse_wheel {
             self.last_mouse_wheel_time = now;
@@ -220,7 +222,7 @@ impl CanvasState {
             if now - self.last_mouse_wheel_time > 0.3 {
                 self.offset += scroll_vector;
             }
-        } else {
+        } else if pointer_over_canvas {
             // Fallback for general smooth_scroll_delta if events were consumed
             let scroll_delta = ui.input(|i| i.smooth_scroll_delta);
             if scroll_delta != Vec2::ZERO {
