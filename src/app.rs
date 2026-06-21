@@ -2945,6 +2945,7 @@ impl App {
                         .tint(icon_tint)
                         .fit_to_exact_size(icon_size),
                 );
+                let icon_resp = icon_resp.on_hover_text("Show Color Mixer");
                 if icon_resp.clicked() {
                     self.ui_state.toggle_visible(Panel::Color);
                 }
@@ -3390,6 +3391,7 @@ impl App {
                         .tint(icon_tint)
                         .fit_to_exact_size(icon_size),
                 );
+                let icon_resp = icon_resp.on_hover_text("Expand Palette");
                 if icon_resp.clicked() {
                     self.ui_state.toggle_collapsed(Panel::Palette);
                 }
@@ -3620,6 +3622,7 @@ impl App {
                     FontId::new(24.0, FontFamily::Proportional),
                     plus_fg,
                 );
+                let resp = resp.on_hover_text("Add Current Color to Palette");
                 if resp.clicked() && palette_len < 256 {
                     self.project.palette.push(self.color_state.foreground);
                 }
@@ -3644,6 +3647,7 @@ impl App {
                     .tint(icon_fg)
                     .fit_to_exact_size(icon_size);
                 ui.put(icon_rect, palette_icon);
+                let resp = resp.on_hover_text("Browse & Load Palettes");
                 if resp.clicked() && !self.any_modal_open() {
                     self.palette_browser.open = !self.palette_browser.open;
                     if self.palette_browser.open {
@@ -3671,6 +3675,7 @@ impl App {
                     .tint(img_fg)
                     .fit_to_exact_size(icon_size);
                 ui.put(icon_rect, img_icon);
+                let resp = resp.on_hover_text("Export Palette as PNG");
                 if resp.clicked() {
                     let colors = self.project.palette.clone();
                     if let Some(path) = rfd::FileDialog::new()
@@ -3701,6 +3706,7 @@ impl App {
                     .tint(if resp.hovered() { theme.fg } else { theme.fg_desc })
                     .fit_to_exact_size(icon_size);
                 ui.put(icon_rect, save_icon);
+                let resp = resp.on_hover_text("Save Palette to Library");
                 if resp.clicked() {
                     let colors = self.project.palette.clone();
                     let name = if self.project.name.is_empty() {
@@ -6289,6 +6295,7 @@ print("FAIL")
                         .tint(icon_tint)
                         .fit_to_exact_size(icon_size),
                 );
+                let icon_resp = icon_resp.on_hover_text("Expand Tiles");
                 if icon_resp.clicked() {
                     self.ui_state.toggle_collapsed(Panel::Tiles);
                 }
@@ -6680,6 +6687,7 @@ print("FAIL")
                         .tint(icon_tint)
                         .fit_to_exact_size(icon_size),
                 );
+                let icon_resp = icon_resp.on_hover_text("Expand Brushes");
                 if icon_resp.clicked() {
                     self.ui_state.toggle_collapsed(Panel::Brushes);
                 }
@@ -6991,6 +6999,7 @@ print("FAIL")
             ui.put(icon_rect, egui::Image::new(egui::include_image!("../assets/icons/visibility.svg"))
                 .tint(tint)
                 .fit_to_exact_size(icon_size));
+            let icon_resp = icon_resp.on_hover_text(if collapsed { "Expand Preview" } else { "Collapse Preview" });
             if icon_resp.clicked() {
                 self.ui_state.toggle_collapsed(Panel::Preview);
             }
@@ -7010,6 +7019,7 @@ print("FAIL")
                         .tint(pin_tint)
                         .fit_to_exact_size(pin_size),
                 );
+                let pin_resp = pin_resp.on_hover_text("Pop Out Preview Window");
                 if pin_resp.clicked() {
                     self.preview_popped_out = true;
                 }
