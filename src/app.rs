@@ -3957,7 +3957,7 @@ impl App {
                     Pos2::new(list_origin.x, list_origin.y + self.layer_sel_y),
                     Vec2::new(list_width, ROW_H),
                 );
-                ui.painter().with_clip_rect(list_rect).rect_filled(sel_rect, 0.0, theme.bg);
+                ui.painter().with_clip_rect(list_rect).rect_filled(sel_rect, 0.0, theme.surface);
 
                 for idx in (0..layer_count).rev() {
                     // Skip children whose parent group is collapsed
@@ -4346,7 +4346,7 @@ impl App {
                     Pos2::new(list_origin.x, list_origin.y + self.anim_sel_y),
                     Vec2::new(list_width, ROW_H),
                 );
-                ui.painter().with_clip_rect(list_rect).rect_filled(sel_rect, 0.0, theme.bg);
+                ui.painter().with_clip_rect(list_rect).rect_filled(sel_rect, 0.0, theme.surface);
 
                 for i in 0..anim_count {
                     let selected = self.project.active_animation == i;
