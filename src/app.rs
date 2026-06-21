@@ -108,6 +108,7 @@ pub struct App {
     anim_tile_menu: Option<(usize, Pos2, f64)>,  // (anim_idx, screen_pos, opened_at_time) for tile range
     layer_ctx_menu: Option<(usize, Pos2, f64)>,  // (layer_idx, screen_pos, opened_at_time)
     brush_ctx_menu: Option<(usize, Pos2, f64)>,  // (brush_idx, screen_pos, opened_at_time)
+    brush_import_menu: Option<(Pos2, f64)>,       // import-brush popup (right-click on + slot)
     top_menu_open: Option<(TopMenu, Pos2)>,
     export_menu_open: Option<Pos2>,
     export_menu_frame: u64,
@@ -827,6 +828,7 @@ impl App {
             anim_tile_menu: None,
             layer_ctx_menu: None,
             brush_ctx_menu: None,
+            brush_import_menu: None,
             top_menu_open: None,
             export_menu_open: None,
             export_menu_frame: 0,
@@ -1128,6 +1130,7 @@ impl App {
             || self.frame_menu.is_some()
             || self.layer_ctx_menu.is_some()
             || self.brush_ctx_menu.is_some()
+            || self.brush_import_menu.is_some()
             || self.anim_tile_menu.is_some()
             || self.tab_resize_menu.is_some()
             || self.canvas_ctx_menu.is_some()
@@ -6756,19 +6759,29 @@ print("FAIL")
                             Vec2::new(size, size),
                         );
                         let plus_resp = ui.interact(rect, ui.id().with("brush_add_slot"), egui::Sense::click());
-                        let plus_bg = if plus_resp.hovered() { theme.surface } else { theme.panel };
+                        let hovered = plus_resp.hovered();
+                        let plus_bg = if hovered { theme.surface } else { theme.panel };
                         scroll_painter.rect_filled(rect, 0.0, plus_bg);
-                        let plus_fg = if plus_resp.hovered() { theme.fg } else { theme.fg_desc };
+                        let plus_fg = if hovered { Color32::WHITE } else { theme.fg_desc };
                         scroll_painter.text(
                             rect.center(),
                             egui::Align2::CENTER_CENTER,
                             "+",
-                            FontId::new(24.0, FontFamily::Proportional),
+                            FontId::new(16.0, FontFamily::Proportional),
                             plus_fg,
                         );
-                        let plus_resp = plus_resp.on_hover_text("Add Custom Brush from Selection");
+                        let plus_resp = plus_resp.on_hover_text("Add Custom Brush from Selection  |  Right-click for more options");
                         if plus_resp.clicked() {
                             self.add_brush_from_selection();
+                        }
+                        // Right-click on + → import popup
+                        if !menu_was_open && ui.input(|inp| {
+                            inp.pointer.secondary_clicked() &&
+                            inp.pointer.interact_pos().map(|p| rect.contains(p)).unwrap_or(false)
+                        }) {
+                            let now = ui.ctx().input(|inp| inp.time);
+                            let menu_pos = Pos2::new(self.sidebar_left_x, rect.center().y);
+                            self.brush_import_menu = Some((menu_pos, now));
                         }
                     }
 
@@ -7044,6 +7057,82 @@ print("FAIL")
                 self.brushes_drag_idx = None;
             }
         }
+    }
+
+    fn draw_brush_import_menu(&mut self, ctx: &egui::Context) {
+        let Some((pos, opened_at)) = self.brush_import_menu else { return; };
+
+        let theme = self.theme.clone();
+        const BTN: f32 = 36.0;
+        const PAD: f32 = 4.0;
+
+        let mut import_single = false;
+        let mut import_anim = false;
+        let inner = egui::Area::new(egui::Id::new("brush_import_menu"))
+            .fixed_pos(pos)
+            .pivot(egui::Align2::RIGHT_CENTER)
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                egui::Frame::new()
+                    .fill(theme.panel)
+                    .stroke(egui::Stroke::NONE)
+                    .corner_radius(egui::CornerRadius::same(6))
+                    .inner_margin(egui::Margin::same(PAD as i8))
+                    .shadow(egui::Shadow {
+                        offset: [0, 14],
+                        blur: 36,
+                        spread: 0,
+                        color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
+                    })
+                    .show(ui, |ui| {
+                        ui.style_mut().spacing.item_spacing = Vec2::ZERO;
+                        ui.horizontal(|ui| {
+                            ui.style_mut().spacing.item_spacing = Vec2::ZERO;
+
+                            // Import single image
+                            let (r, resp) = ui.allocate_exact_size(Vec2::splat(BTN), egui::Sense::click());
+                            if resp.hovered() { ui.painter().rect_filled(r, 0.0, theme.accent); }
+                            let icon_rect = egui::Rect::from_center_size(r.center(), Vec2::splat(20.0));
+                            let tint = if resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                            ui.put(icon_rect, Image::new(egui::include_image!("../assets/icons/image.svg")).tint(tint).fit_to_exact_size(Vec2::splat(20.0)));
+                            let resp = resp.on_hover_text("Import Single Image as Brush");
+                            if resp.clicked() { import_single = true; }
+
+                            ui.add_space(PAD);
+
+                            // Import animated brush
+                            let (r, resp) = ui.allocate_exact_size(Vec2::splat(BTN), egui::Sense::click());
+                            if resp.hovered() { ui.painter().rect_filled(r, 0.0, theme.accent); }
+                            let icon_rect = egui::Rect::from_center_size(r.center(), Vec2::splat(20.0));
+                            let tint = if resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                            ui.put(icon_rect, Image::new(egui::include_image!("../assets/icons/animation.svg")).tint(tint).fit_to_exact_size(Vec2::splat(20.0)));
+                            let resp = resp.on_hover_text("Import Multiple Images as Animated Brush");
+                            if resp.clicked() { import_anim = true; }
+                        });
+                    });
+            });
+
+        // Auto-close after 2s hover-away
+        let menu_id = egui::Id::new("brush_import_menu_timer");
+        let now = ctx.input(|i| i.time);
+        let is_hovered = ctx.pointer_hover_pos()
+            .map(|p| inner.response.rect.contains(p))
+            .unwrap_or(false);
+        let age = now - opened_at;
+        let should_close_timer = ctx.data_mut(|d| {
+            let last: &mut f64 = d.get_temp_mut_or_insert_with(menu_id, || now);
+            if age < 0.15 || is_hovered { *last = now; false } else { now - *last > 2.0 }
+        });
+        ctx.request_repaint();
+
+        let clicked_outside = age > 0.15 && ctx.input(|i| i.pointer.any_click()) && !is_hovered;
+
+        if import_single || import_anim || should_close_timer || clicked_outside {
+            self.brush_import_menu = None;
+        }
+
+        if import_single { self.import_single_brush(); }
+        if import_anim   { self.import_animated_brush(); }
     }
 
     fn draw_preview_content(&mut self, ui: &mut egui::Ui) {
@@ -10867,6 +10956,7 @@ impl eframe::App for App {
         self.draw_workspace(ctx);
         self.draw_layer_context_menu(ctx);
         self.draw_brush_context_menu(ctx);
+        self.draw_brush_import_menu(ctx);
         self.draw_canvas_context_menu(ctx);
         self.draw_new_project_dialog(ctx);
         self.draw_shortcuts_dialog(ctx);
@@ -10956,11 +11046,8 @@ fn section_header_brushes(
         return (false, false, false);
     }
     let collapsed = state.is_collapsed(panel);
-    let mut import_single_clicked = false;
-    let mut import_animated_clicked = false;
     Frame::new().fill(theme.panel).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
         let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), egui::Sense::hover());
-        let painter = ui.painter_at(rect);
         let icon_size = Vec2::splat(16.0);
         let icon_rect = egui::Rect::from_center_size(Pos2::new(rect.left() + 8.0, rect.center().y), icon_size);
         let icon_resp = ui.interact(icon_rect, egui::Id::new(("hdr_icon", panel)), egui::Sense::click());
@@ -10970,40 +11057,8 @@ fn section_header_brushes(
         if icon_resp.clicked() {
             state.toggle_collapsed(panel);
         }
-        if !collapsed {
-            // Single image import button
-            let single_rect = egui::Rect::from_center_size(Pos2::new(rect.right() - 24.0, rect.center().y), Vec2::splat(14.0));
-            let single_resp = ui.interact(single_rect, egui::Id::new(("hdr_import_single", panel)), egui::Sense::click());
-            let single_color = if single_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
-            ui.put(
-                single_rect,
-                Image::new(egui::include_image!("../assets/icons/image.svg"))
-                    .tint(single_color)
-                    .fit_to_exact_size(Vec2::splat(14.0)),
-            );
-            let single_resp = single_resp.on_hover_text("Import Single Image as Brush");
-            if single_resp.clicked() {
-                import_single_clicked = true;
-            }
-
-            // Animated brush (multiple images) import button
-            let anim_rect = egui::Rect::from_center_size(Pos2::new(rect.right() - 8.0, rect.center().y), Vec2::splat(14.0));
-            let anim_resp = ui.interact(anim_rect, egui::Id::new(("hdr_import_anim", panel)), egui::Sense::click());
-            let anim_color = if anim_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
-            ui.put(
-                anim_rect,
-                Image::new(egui::include_image!("../assets/icons/animation.svg"))
-                    .tint(anim_color)
-                    .fit_to_exact_size(Vec2::splat(14.0)),
-            );
-            let _ = painter; // suppress unused warning
-            let anim_resp = anim_resp.on_hover_text("Import Multiple Images as Animated Brush");
-            if anim_resp.clicked() {
-                import_animated_clicked = true;
-            }
-        }
     });
-    (!collapsed, import_single_clicked, import_animated_clicked)
+    (!collapsed, false, false)
 }
 
 /// Returns `(show_content, add_clicked, extra_clicked)`.
