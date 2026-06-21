@@ -3957,7 +3957,33 @@ impl App {
                     Pos2::new(list_origin.x, list_origin.y + self.layer_sel_y),
                     Vec2::new(list_width, ROW_H),
                 );
-                ui.painter().with_clip_rect(list_rect).rect_filled(sel_rect, 0.0, theme.surface);
+                {
+                    let stroke = egui::Stroke::new(1.0, theme.accent);
+                    let dash = 4.0_f32;
+                    let gap  = 4.0_f32;
+                    let w = sel_rect.width();
+                    let h = sel_rect.height();
+                    let perim = 2.0 * (w + h);
+                    let t = ui.ctx().input(|i| i.time) as f32;
+                    ui.ctx().request_repaint();
+                    let off = (t * 20.0).rem_euclid(perim);
+                    let (start, waypoints): (Pos2, [Pos2; 4]) = if off < w {
+                        (Pos2::new(sel_rect.left() + off, sel_rect.top()),
+                         [sel_rect.right_top(), sel_rect.right_bottom(), sel_rect.left_bottom(), sel_rect.left_top()])
+                    } else if off < w + h {
+                        (Pos2::new(sel_rect.right(), sel_rect.top() + (off - w)),
+                         [sel_rect.right_bottom(), sel_rect.left_bottom(), sel_rect.left_top(), sel_rect.right_top()])
+                    } else if off < 2.0 * w + h {
+                        (Pos2::new(sel_rect.right() - (off - w - h), sel_rect.bottom()),
+                         [sel_rect.left_bottom(), sel_rect.left_top(), sel_rect.right_top(), sel_rect.right_bottom()])
+                    } else {
+                        (Pos2::new(sel_rect.left(), sel_rect.bottom() - (off - 2.0 * w - h)),
+                         [sel_rect.left_top(), sel_rect.right_top(), sel_rect.right_bottom(), sel_rect.left_bottom()])
+                    };
+                    let path = [start, waypoints[0], waypoints[1], waypoints[2], waypoints[3], start];
+                    let shapes = egui::Shape::dashed_line(&path, stroke, dash, gap);
+                    ui.painter().with_clip_rect(list_rect).extend(shapes);
+                }
 
                 for idx in (0..layer_count).rev() {
                     // Skip children whose parent group is collapsed
@@ -4346,7 +4372,33 @@ impl App {
                     Pos2::new(list_origin.x, list_origin.y + self.anim_sel_y),
                     Vec2::new(list_width, ROW_H),
                 );
-                ui.painter().with_clip_rect(list_rect).rect_filled(sel_rect, 0.0, theme.surface);
+                {
+                    let stroke = egui::Stroke::new(1.0, theme.accent);
+                    let dash = 4.0_f32;
+                    let gap  = 4.0_f32;
+                    let w = sel_rect.width();
+                    let h = sel_rect.height();
+                    let perim = 2.0 * (w + h);
+                    let t = ui.ctx().input(|i| i.time) as f32;
+                    ui.ctx().request_repaint();
+                    let off = (t * 20.0).rem_euclid(perim);
+                    let (start, waypoints): (Pos2, [Pos2; 4]) = if off < w {
+                        (Pos2::new(sel_rect.left() + off, sel_rect.top()),
+                         [sel_rect.right_top(), sel_rect.right_bottom(), sel_rect.left_bottom(), sel_rect.left_top()])
+                    } else if off < w + h {
+                        (Pos2::new(sel_rect.right(), sel_rect.top() + (off - w)),
+                         [sel_rect.right_bottom(), sel_rect.left_bottom(), sel_rect.left_top(), sel_rect.right_top()])
+                    } else if off < 2.0 * w + h {
+                        (Pos2::new(sel_rect.right() - (off - w - h), sel_rect.bottom()),
+                         [sel_rect.left_bottom(), sel_rect.left_top(), sel_rect.right_top(), sel_rect.right_bottom()])
+                    } else {
+                        (Pos2::new(sel_rect.left(), sel_rect.bottom() - (off - 2.0 * w - h)),
+                         [sel_rect.left_top(), sel_rect.right_top(), sel_rect.right_bottom(), sel_rect.left_bottom()])
+                    };
+                    let path = [start, waypoints[0], waypoints[1], waypoints[2], waypoints[3], start];
+                    let shapes = egui::Shape::dashed_line(&path, stroke, dash, gap);
+                    ui.painter().with_clip_rect(list_rect).extend(shapes);
+                }
 
                 for i in 0..anim_count {
                     let selected = self.project.active_animation == i;
