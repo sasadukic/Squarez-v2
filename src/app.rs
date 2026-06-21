@@ -6436,15 +6436,15 @@ print("FAIL")
                     let mut list = Vec::new();
                     for r in row_start..=row_end {
                         for c in col_start..=col_end {
-                            let tx = c * tile_w;
-                            let ty = r * tile_h;
                             let mut frame_pixels = Vec::with_capacity((tile_w * tile_h) as usize);
+                            let dx = (c - col_start) * tile_w;
+                            let dy = (r - row_start) * tile_h;
                             for y in 0..tile_h {
                                 for x in 0..tile_w {
-                                    let cx = tx + x;
-                                    let cy = ty + y;
-                                    let p = if cx < ref_layer.width && cy < ref_layer.height {
-                                        ref_layer.get_pixel(cx, cy)
+                                    let lx = dx + x;
+                                    let ly = dy + y;
+                                    let p = if lx < rw && ly < rh {
+                                        pixels[(ly * rw + lx) as usize]
                                     } else {
                                         [0, 0, 0, 0]
                                     };
