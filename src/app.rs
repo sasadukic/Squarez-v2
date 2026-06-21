@@ -1638,9 +1638,9 @@ impl App {
         const TAB_PADDING_RIGHT: f32 = 4.0;
         const TAB_MIN_W: f32         = 100.0; // Fixed static width for all tabs
 
-        let tab_count  = self.tab_count();
-        let tab_names: Vec<String> = (0..tab_count).map(|i| self.tab_display_name(i)).collect();
-        let tab_widths: Vec<f32>   = vec![TAB_MIN_W; tab_count];
+        let tab_count  = if self.project_created { self.tab_count() } else { 0 };
+        let tab_names: Vec<String> = if self.project_created { (0..tab_count).map(|i| self.tab_display_name(i)).collect() } else { Vec::new() };
+        let tab_widths: Vec<f32>   = if self.project_created { vec![TAB_MIN_W; tab_count] } else { Vec::new() };
 
         let total_tabs_w: f32 = tab_widths.iter().sum();
         // Strip is only as wide as the tabs need, capped before the right sidebar.
