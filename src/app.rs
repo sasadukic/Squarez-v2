@@ -7846,6 +7846,7 @@ print("FAIL")
                 if brush_idx < self.brushes.len() {
                     let brush = &self.brushes[brush_idx];
                     if let Some(ref frames) = brush.frames {
+                        if !frames.is_empty() {
                             let now_ns = std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .map(|d| d.as_nanos())
