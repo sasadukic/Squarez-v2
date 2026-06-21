@@ -253,6 +253,8 @@ pub struct App {
     picking_background_color: bool,
     last_autosave_time: Option<f64>,
     active_brush_frame_idx: Option<usize>,
+    last_brush_frame_idx: Option<usize>,
+    last_active_brush_idx: Option<usize>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
@@ -913,6 +915,8 @@ impl App {
             picking_background_color: false,
             last_autosave_time: None,
             active_brush_frame_idx: None,
+            last_brush_frame_idx: None,
+            last_active_brush_idx: None,
         }
     }
 
@@ -7834,19 +7838,31 @@ print("FAIL")
 
         let press_started = response.drag_started_by(egui::PointerButton::Primary) || (response.ctx.input(|i| i.pointer.primary_pressed()) && response.hovered());
         if press_started && self.drag_start.is_none() {
+            if self.active_brush_index != self.last_active_brush_idx {
+                self.last_brush_frame_idx = None;
+                self.last_active_brush_idx = self.active_brush_index;
+            }
             if let Some(brush_idx) = self.active_brush_index {
                 if brush_idx < self.brushes.len() {
                     let brush = &self.brushes[brush_idx];
                     if let Some(ref frames) = brush.frames {
-                        if !frames.is_empty() {
                             let now_ns = std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .map(|d| d.as_nanos())
                                 .unwrap_or(0);
-                            let idx = (now_ns % (frames.len() as u128)) as usize;
+                            let mut idx = (now_ns % (frames.len() as u128)) as usize;
+                            if frames.len() > 1 {
+                                if let Some(last_idx) = self.last_brush_frame_idx {
+                                    if last_idx < frames.len() && idx == last_idx {
+                                        idx = (idx + 1) % frames.len();
+                                    }
+                                }
+                            }
                             self.active_brush_frame_idx = Some(idx);
+                            self.last_brush_frame_idx = Some(idx);
                         } else {
                             self.active_brush_frame_idx = None;
+                            self.last_brush_frame_idx = None;
                         }
                     } else {
                         self.active_brush_frame_idx = None;
