@@ -266,6 +266,44 @@ pub struct CustomBrush {
     pub frames: Option<Vec<Vec<Rgba>>>,
 }
 
+fn get_embedded_animated_brush() -> CustomBrush {
+    let raw_frames: &[&[u8]] = &[
+        include_bytes!("/Users/sasadukic/Desktop/untitled folder/animated brush/1.png"),
+        include_bytes!("/Users/sasadukic/Desktop/untitled folder/animated brush/2.png"),
+        include_bytes!("/Users/sasadukic/Desktop/untitled folder/animated brush/3.png"),
+        include_bytes!("/Users/sasadukic/Desktop/untitled folder/animated brush/4.png"),
+        include_bytes!("/Users/sasadukic/Desktop/untitled folder/animated brush/5.png"),
+        include_bytes!("/Users/sasadukic/Desktop/untitled folder/animated brush/6.png"),
+    ];
+
+    let mut frames = Vec::new();
+    let mut w = 0;
+    let mut h = 0;
+
+    for bytes in raw_frames {
+        if let Ok(img) = image::load_from_memory(bytes) {
+            let rgba = img.to_rgba8();
+            if w == 0 {
+                w = rgba.width();
+                h = rgba.height();
+            }
+            let mut pixels = Vec::with_capacity((w * h) as usize);
+            for chunk in rgba.into_raw().chunks_exact(4) {
+                pixels.push([chunk[0], chunk[1], chunk[2], chunk[3]]);
+            }
+            frames.push(pixels);
+        }
+    }
+
+    let first = frames.first().cloned().unwrap_or_default();
+    CustomBrush {
+        width: w,
+        height: h,
+        pixels: first,
+        frames: Some(frames),
+    }
+}
+
 pub fn get_default_brushes() -> Vec<CustomBrush> {
     vec![
         // Brush 1 (from 1.png)
@@ -907,6 +945,13 @@ impl App {
                 let mut b = layout.as_ref().map(|l| l.brushes.clone()).unwrap_or_default();
                 if b.is_empty() {
                     b = get_default_brushes();
+                }
+                let anim_brush = get_embedded_animated_brush();
+                let already_has = b.iter().any(|brush| {
+                    brush.width == anim_brush.width && brush.height == anim_brush.height && brush.frames.is_some()
+                });
+                if !already_has {
+                    b.push(anim_brush);
                 }
                 b
             },
@@ -6480,6 +6525,82 @@ print("FAIL")
         }
     }
 
+    fn import_single_brush(&mut self) {
+        if let Some(path) = rfd_pick_image() {
+            if let Ok(img) = image::open(&path) {
+                let rgba = img.to_rgba8();
+                let w = rgba.width();
+                let h = rgba.height();
+                let mut pixels = Vec::with_capacity((w * h) as usize);
+                for chunk in rgba.into_raw().chunks_exact(4) {
+                    pixels.push([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                }
+                let brush = CustomBrush {
+                    width: w,
+                    height: h,
+                    pixels,
+                    frames: None,
+                };
+                if self.brushes.len() < 512 {
+                    self.brushes.push(brush);
+                    self.active_brush_index = Some(self.brushes.len() - 1);
+                }
+            }
+        }
+    }
+
+    fn import_animated_brush(&mut self) {
+        if let Some(paths) = rfd_pick_images() {
+            if paths.is_empty() { return; }
+            // Sort pathnames alphabetically so animations load in the correct sequence (e.g. 1.png, 2.png)
+            let mut sorted_paths = paths.clone();
+            sorted_paths.sort_by(|a, b| a.to_string_lossy().cmp(&b.to_string_lossy()));
+
+            let mut list = Vec::new();
+            let mut brush_w = 0;
+            let mut brush_h = 0;
+
+            for path in &sorted_paths {
+                if let Ok(img) = image::open(path) {
+                    let rgba = img.to_rgba8();
+                    let w = rgba.width();
+                    let h = rgba.height();
+                    if brush_w == 0 {
+                        brush_w = w;
+                        brush_h = h;
+                    }
+                    let mut frame_pixels = Vec::with_capacity((brush_w * brush_h) as usize);
+                    for y in 0..brush_h {
+                        for x in 0..brush_w {
+                            let p = if x < w && y < h {
+                                let pixel = rgba.get_pixel(x, y);
+                                [pixel[0], pixel[1], pixel[2], pixel[3]]
+                            } else {
+                                [0, 0, 0, 0]
+                            };
+                            frame_pixels.push(p);
+                        }
+                    }
+                    list.push(frame_pixels);
+                }
+            }
+
+            if !list.is_empty() {
+                let first_pixels = list[0].clone();
+                let brush = CustomBrush {
+                    width: brush_w,
+                    height: brush_h,
+                    pixels: first_pixels,
+                    frames: Some(list),
+                };
+                if self.brushes.len() < 512 {
+                    self.brushes.push(brush);
+                    self.active_brush_index = Some(self.brushes.len() - 1);
+                }
+            }
+        }
+    }
+
     fn brush_stamp(&self, idx: usize, cx: u32, cy: u32, cw: u32, ch: u32, frame_idx: Option<usize>) -> Vec<(u32, u32, Rgba)> {
         let brush = &self.brushes[idx];
         let bw = brush.width;
@@ -6556,7 +6677,7 @@ print("FAIL")
         }
 
         let has_active = self.active_brush_index.is_some();
-        let (show, add_clicked, minus_clicked) = section_header_with_minus_and_add(
+        let (show, add_clicked, minus_clicked, import_single_clicked, import_animated_clicked) = section_header_with_minus_and_add(
             ui,
             &self.theme,
             &mut self.ui_state,
@@ -6574,6 +6695,14 @@ print("FAIL")
 
         if minus_clicked {
             self.delete_active_brush();
+        }
+
+        if import_single_clicked {
+            self.import_single_brush();
+        }
+
+        if import_animated_clicked {
+            self.import_animated_brush();
         }
 
         let cols = 4;
@@ -10698,13 +10827,15 @@ fn section_header_with_minus_and_add(
     icon: ImageSource<'static>,
     show_minus: bool,
     minus_enabled: bool,
-) -> (bool, bool, bool) {
+) -> (bool, bool, bool, bool, bool) {
     if !state.is_visible(panel) {
-        return (false, false, false);
+        return (false, false, false, false, false);
     }
     let collapsed = state.is_collapsed(panel);
     let mut add_clicked = false;
     let mut minus_clicked = false;
+    let mut import_single_clicked = false;
+    let mut import_animated_clicked = false;
     Frame::new().fill(theme.panel).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
         let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), egui::Sense::hover());
         let painter = ui.painter_at(rect);
@@ -10741,9 +10872,39 @@ fn section_header_with_minus_and_add(
                     minus_clicked = true;
                 }
             }
+
+            // Single image import button
+            let single_rect = egui::Rect::from_center_size(Pos2::new(rect.right() - 56.0, rect.center().y), Vec2::splat(14.0));
+            let single_resp = ui.interact(single_rect, egui::Id::new(("hdr_import_single", panel)), egui::Sense::click());
+            let single_color = if single_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+            ui.put(
+                single_rect,
+                Image::new(egui::include_image!("../assets/icons/image.svg"))
+                    .tint(single_color)
+                    .fit_to_exact_size(Vec2::splat(14.0)),
+            );
+            single_resp.on_hover_text("Import Single Image as Brush");
+            if single_resp.clicked() {
+                import_single_clicked = true;
+            }
+
+            // Animated brush (multiple images) import button
+            let anim_rect = egui::Rect::from_center_size(Pos2::new(rect.right() - 40.0, rect.center().y), Vec2::splat(14.0));
+            let anim_resp = ui.interact(anim_rect, egui::Id::new(("hdr_import_anim", panel)), egui::Sense::click());
+            let anim_color = if anim_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+            ui.put(
+                anim_rect,
+                Image::new(egui::include_image!("../assets/icons/animation.svg"))
+                    .tint(anim_color)
+                    .fit_to_exact_size(Vec2::splat(14.0)),
+            );
+            anim_resp.on_hover_text("Import Multiple Images as Animated Brush");
+            if anim_resp.clicked() {
+                import_animated_clicked = true;
+            }
         }
     });
-    (!collapsed, add_clicked, minus_clicked)
+    (!collapsed, add_clicked, minus_clicked, import_single_clicked, import_animated_clicked)
 }
 
 /// Returns `(show_content, add_clicked, extra_clicked)`.
@@ -11009,6 +11170,18 @@ fn rfd_open() -> Option<std::path::PathBuf> {
     rfd::FileDialog::new()
         .add_filter("Squarez Project", &["sqr"])
         .pick_file()
+}
+
+fn rfd_pick_image() -> Option<std::path::PathBuf> {
+    rfd::FileDialog::new()
+        .add_filter("Image Files", &["png", "jpg", "jpeg", "gif", "bmp"])
+        .pick_file()
+}
+
+fn rfd_pick_images() -> Option<Vec<std::path::PathBuf>> {
+    rfd::FileDialog::new()
+        .add_filter("Image Files", &["png", "jpg", "jpeg", "gif", "bmp"])
+        .pick_files()
 }
 
 fn rfd_save_as(default_name: &str) -> Option<std::path::PathBuf> {
