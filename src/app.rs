@@ -6760,16 +6760,49 @@ print("FAIL")
                         );
                         let plus_resp = ui.interact(rect, ui.id().with("brush_add_slot"), egui::Sense::click());
                         let hovered = plus_resp.hovered();
-                        let plus_bg = if hovered { theme.surface } else { theme.panel };
-                        scroll_painter.rect_filled(rect, 0.0, plus_bg);
-                        let plus_fg = if hovered { Color32::WHITE } else { theme.fg_desc };
+                        
+                        // Text symbol color (accent on hover, surface color when idle)
+                        let symbol_color = if hovered { theme.accent } else { theme.surface };
                         scroll_painter.text(
                             rect.center(),
                             egui::Align2::CENTER_CENTER,
                             "+",
-                            FontId::new(16.0, FontFamily::Proportional),
-                            plus_fg,
+                            FontId::new(22.0, FontFamily::Proportional),
+                            symbol_color,
                         );
+
+                        // Dashed outline — marches only when hovered
+                        {
+                            let stroke = egui::Stroke::new(1.0, symbol_color);
+                            let dash = 4.0_f32;
+                            let gap  = 4.0_f32;
+                            let side = size;
+                            let perim = 4.0 * side;
+                            let off = if hovered {
+                                let t = ui.ctx().input(|i| i.time) as f32;
+                                ui.ctx().request_repaint();
+                                (t * 20.0).rem_euclid(perim)
+                            } else {
+                                0.0
+                            };
+                            let (start, waypoints): (Pos2, [Pos2; 4]) = if off < side {
+                                (Pos2::new(rect.left() + off, rect.top()),
+                                 [rect.right_top(), rect.right_bottom(), rect.left_bottom(), rect.left_top()])
+                            } else if off < 2.0 * side {
+                                (Pos2::new(rect.right(), rect.top() + (off - side)),
+                                 [rect.right_bottom(), rect.left_bottom(), rect.left_top(), rect.right_top()])
+                            } else if off < 3.0 * side {
+                                (Pos2::new(rect.right() - (off - 2.0 * side), rect.bottom()),
+                                 [rect.left_bottom(), rect.left_top(), rect.right_top(), rect.right_bottom()])
+                            } else {
+                                (Pos2::new(rect.left(), rect.bottom() - (off - 3.0 * side)),
+                                 [rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom()])
+                            };
+                            let path = [start, waypoints[0], waypoints[1], waypoints[2], waypoints[3], start];
+                            let shapes = egui::Shape::dashed_line(&path, stroke, dash, gap);
+                            scroll_painter.extend(shapes);
+                        }
+
                         let plus_resp = plus_resp.on_hover_text("Add Custom Brush from Selection  |  Right-click for more options");
                         if plus_resp.clicked() {
                             self.add_brush_from_selection();
