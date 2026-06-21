@@ -255,7 +255,7 @@ pub struct App {
     active_brush_frame_idx: Option<usize>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct CustomBrush {
     pub width: u32,
     pub height: u32,
@@ -267,7 +267,7 @@ pub struct CustomBrush {
 pub fn get_default_brushes() -> Vec<CustomBrush> {
     vec![
         // Brush 1 (from 1.png)
-        CustomBrush {
+        CustomBrush { frames: None,
             width: 16,
             height: 16,
             pixels: vec![
@@ -290,7 +290,7 @@ pub fn get_default_brushes() -> Vec<CustomBrush> {
             ],
         },
         // Brush 2 (from 2.png)
-        CustomBrush {
+        CustomBrush { frames: None,
             width: 16,
             height: 16,
             pixels: vec![
@@ -313,7 +313,7 @@ pub fn get_default_brushes() -> Vec<CustomBrush> {
             ],
         },
         // Brush 3 (from 3.png)
-        CustomBrush {
+        CustomBrush { frames: None,
             width: 16,
             height: 16,
             pixels: vec![
@@ -336,7 +336,7 @@ pub fn get_default_brushes() -> Vec<CustomBrush> {
             ],
         },
         // Brush 4 (from 4.png)
-        CustomBrush {
+        CustomBrush { frames: None,
             width: 16,
             height: 16,
             pixels: vec![
@@ -359,7 +359,7 @@ pub fn get_default_brushes() -> Vec<CustomBrush> {
             ],
         },
         // Brush 5 (from 5.png)
-        CustomBrush {
+        CustomBrush { frames: None,
             width: 16,
             height: 16,
             pixels: vec![
@@ -382,7 +382,7 @@ pub fn get_default_brushes() -> Vec<CustomBrush> {
             ],
         },
         // Brush 6 (from 6.png)
-        CustomBrush {
+        CustomBrush { frames: None,
             width: 16,
             height: 16,
             pixels: vec![
@@ -405,7 +405,7 @@ pub fn get_default_brushes() -> Vec<CustomBrush> {
             ],
         },
         // Brush 7 (from 7.png)
-        CustomBrush {
+        CustomBrush { frames: None,
             width: 16,
             height: 16,
             pixels: vec![
@@ -428,7 +428,7 @@ pub fn get_default_brushes() -> Vec<CustomBrush> {
             ],
         },
         // Brush 8 (from 8.png)
-        CustomBrush {
+        CustomBrush { frames: None,
             width: 16,
             height: 16,
             pixels: vec![
@@ -451,7 +451,7 @@ pub fn get_default_brushes() -> Vec<CustomBrush> {
             ],
         },
         // Brush 9 (from 9.png)
-        CustomBrush {
+        CustomBrush { frames: None,
             width: 16,
             height: 16,
             pixels: vec![
@@ -474,7 +474,7 @@ pub fn get_default_brushes() -> Vec<CustomBrush> {
             ],
         },
         // Brush 10 (from 10.png)
-        CustomBrush {
+        CustomBrush { frames: None,
             width: 16,
             height: 16,
             pixels: vec![
@@ -497,7 +497,7 @@ pub fn get_default_brushes() -> Vec<CustomBrush> {
             ],
         },
         // Brush 11 (from 11.png)
-        CustomBrush {
+        CustomBrush { frames: None,
             width: 16,
             height: 16,
             pixels: vec![
@@ -520,7 +520,7 @@ pub fn get_default_brushes() -> Vec<CustomBrush> {
             ],
         },
         // Brush 12 (from 12.png)
-        CustomBrush {
+        CustomBrush { frames: None,
             width: 16,
             height: 16,
             pixels: vec![
@@ -543,7 +543,7 @@ pub fn get_default_brushes() -> Vec<CustomBrush> {
             ],
         },
         // Brush 13 (from 13.png)
-        CustomBrush {
+        CustomBrush { frames: None,
             width: 16,
             height: 16,
             pixels: vec![
@@ -566,7 +566,7 @@ pub fn get_default_brushes() -> Vec<CustomBrush> {
             ],
         },
         // Brush 14 (from 14.png)
-        CustomBrush {
+        CustomBrush { frames: None,
             width: 16,
             height: 16,
             pixels: vec![
@@ -589,7 +589,7 @@ pub fn get_default_brushes() -> Vec<CustomBrush> {
             ],
         },
         // Brush 15 (from 15.png)
-        CustomBrush {
+        CustomBrush { frames: None,
             width: 16,
             height: 16,
             pixels: vec![
@@ -612,7 +612,7 @@ pub fn get_default_brushes() -> Vec<CustomBrush> {
             ],
         },
         // Brush 16 (from 16.png)
-        CustomBrush {
+        CustomBrush { frames: None,
             width: 16,
             height: 16,
             pixels: vec![
@@ -635,7 +635,7 @@ pub fn get_default_brushes() -> Vec<CustomBrush> {
             ],
         },
         // Brush 17 (from 17.png)
-        CustomBrush {
+        CustomBrush { frames: None,
             width: 16,
             height: 16,
             pixels: vec![
