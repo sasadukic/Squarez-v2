@@ -9815,6 +9815,7 @@ print("FAIL")
                                         ("G", "Fill / Bucket tool"),
                                         ("M", "Toggle Select / Eyedropper tool"),
                                         ("S", "Cycle Shapes (Rect / Ellipse / Line)"),
+                                        ("Z", "Zoom tool"),
                                     ]),
                                     ("CANVAS NAVIGATION", vec![
                                         ("Space + Left Drag", "Pan the viewport canvas"),
@@ -10747,6 +10748,9 @@ impl eframe::App for App {
                         _ => ActiveTool::Rectangle { filled: false },
                     };
                     self.set_active_tool(next);
+                }
+                if ctx.input(|i| i.key_pressed(egui::Key::Z)) {
+                    self.set_active_tool(ActiveTool::Zoom);
                 }
             }
             if ctx.input(|i| i.key_pressed(egui::Key::Space)) {
