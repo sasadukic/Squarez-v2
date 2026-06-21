@@ -2795,7 +2795,7 @@ impl App {
                             let color = if handle_active {
                                 if dragging == Some(panel) { Color32::WHITE } else { self.theme.fg_muted }
                             } else {
-                                self.theme.fg_muted.linear_multiply(0.2)
+                                self.theme.border.linear_multiply(0.4)
                             };
                             let y = handle_rect.center().y;
                             ui.painter().line_segment(
