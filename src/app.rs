@@ -6994,7 +6994,7 @@ print("FAIL")
                     .fill(theme.panel)
                     .stroke(egui::Stroke::NONE)
                     .corner_radius(egui::CornerRadius::same(6))
-                    .inner_margin(egui::Margin::same(PAD))
+                    .inner_margin(egui::Margin::same(PAD as i8))
                     .shadow(egui::Shadow {
                         offset: [0, 14],
                         blur: 36,
