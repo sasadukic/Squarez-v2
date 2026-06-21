@@ -1169,6 +1169,18 @@ impl App {
                 project.name = stem.to_string();
             }
         }
+        if !self.project_created {
+            self.project = project;
+            self.current_path = path;
+            self.undo_stack = UndoStack::new();
+            self.thumbnails = Self::thumbnails_for(&self.project);
+            self.active_modified = false;
+            self.clear_transient_state();
+            self.canvas_dirty = true;
+            self.pending_zoom_fit = true;
+            self.project_created = true;
+            return;
+        }
         // Pack the currently active tab into other_tabs at active_tab_idx.
         let snap = InactiveTab {
             project: std::mem::replace(&mut self.project, project),
