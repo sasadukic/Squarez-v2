@@ -2788,7 +2788,7 @@ impl App {
                             let y_before = ui.next_widget_position().y;
 
                             let (handle_rect, handle_resp) = ui.allocate_exact_size(
-                                Vec2::new(ui.available_width(), 4.0),
+                                Vec2::new(ui.available_width(), 1.0),
                                 egui::Sense::click_and_drag(),
                             );
                             let handle_active = handle_resp.hovered() || dragging == Some(panel);
