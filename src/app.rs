@@ -7278,7 +7278,7 @@ print("FAIL")
         let collapsed = self.ui_state.is_collapsed(Panel::Preview);
         let theme = self.theme.clone();
         // Header — same visual as section_header but without the "+" button.
-        Frame::new().fill(theme.panel).inner_margin(egui::Margin::symmetric(10, 3)).show(ui, |ui| {
+        Frame::new().fill(theme.border.linear_multiply(0.4)).inner_margin(egui::Margin::symmetric(10, 3)).show(ui, |ui| {
             let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), egui::Sense::hover());
             let icon_size = Vec2::splat(16.0);
             let icon_rect = egui::Rect::from_center_size(
