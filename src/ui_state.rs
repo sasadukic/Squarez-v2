@@ -88,25 +88,7 @@ impl UiState {
         }
         *self.collapsed_mut(panel) = !self.is_collapsed(panel);
     }
-    pub fn expand_all(&mut self) {
-        self.collapse_color = false;
-        self.collapse_palette = false;
-        self.collapse_preview = false;
-        self.collapse_layers = false;
-        self.collapse_animations = false;
-        self.collapse_tiles = false;
-        self.collapse_brushes = false;
-    }
 
-    pub fn collapse_all(&mut self) {
-        self.collapse_color = true;
-        self.collapse_palette = true;
-        self.collapse_preview = true;
-        self.collapse_layers = true;
-        self.collapse_animations = true;
-        self.collapse_tiles = true;
-        self.collapse_brushes = true;
-    }
     pub fn close(&mut self, panel: Panel) {
         *self.visible_mut(panel) = false;
     }
