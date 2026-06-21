@@ -81,6 +81,7 @@ pub struct App {
     stroke_pixel_sequence: Vec<(u32, u32)>,
     canvas_dirty: bool,
     show_new_dialog: bool,
+    project_created: bool,
     show_shortcuts_window: bool,
     replace_project_pending: bool, // replace project in-place instead of new tab
     new_width: u32,
@@ -801,7 +802,8 @@ impl App {
             stroke_painted: std::collections::HashSet::new(),
             stroke_pixel_sequence: Vec::new(),
             canvas_dirty: true,
-            show_new_dialog: false,
+            show_new_dialog: true,
+            project_created: false,
             show_shortcuts_window: false,
             replace_project_pending: false,
             new_width: 64,
@@ -1184,6 +1186,7 @@ impl App {
         self.clear_transient_state();
         self.canvas_dirty = true;
         self.pending_zoom_fit = true;
+        self.project_created = true;
     }
 
     /// Switch to the tab at logical index `i`.
@@ -9726,6 +9729,7 @@ print("FAIL")
                                         self.clear_transient_state();
                                         self.canvas_dirty = true;
                                         self.pending_zoom_fit = true;
+                                        self.project_created = true;
                                     } else {
                                         self.open_in_new_tab(new_proj, None);
                                     }
@@ -11087,6 +11091,14 @@ impl eframe::App for App {
                 self.export_menu_open = Some(pos);
                 self.export_menu_frame = ctx.cumulative_pass_nr();
             }
+        }
+
+        if !self.project_created {
+            CentralPanel::default()
+                .frame(Frame::new().fill(self.theme.panel))
+                .show(ctx, |_ui| {});
+            self.draw_new_project_dialog(ctx);
+            return;
         }
 
         self.draw_top_bar(ctx);
