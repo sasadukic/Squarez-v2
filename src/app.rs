@@ -5618,6 +5618,9 @@ impl App {
         CentralPanel::default()
             .frame(Frame::new().fill(self.theme.bg))
             .show(ctx, |ui| {
+                if !self.project_created {
+                    return;
+                }
                 if self.canvas_dirty {
                     self.rebuild_canvas_texture(ctx);
                 }
@@ -11093,13 +11096,7 @@ impl eframe::App for App {
             }
         }
 
-        if !self.project_created {
-            CentralPanel::default()
-                .frame(Frame::new().fill(self.theme.panel))
-                .show(ctx, |_ui| {});
-            self.draw_new_project_dialog(ctx);
-            return;
-        }
+
 
         self.draw_top_bar(ctx);
         self.draw_right_sidebar(ctx); // full height — right edge
