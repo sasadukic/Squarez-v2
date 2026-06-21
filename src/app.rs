@@ -252,6 +252,7 @@ pub struct App {
     use_swatch_color: bool,
     picking_background_color: bool,
     last_autosave_time: Option<f64>,
+    active_brush_frame_idx: Option<usize>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -259,6 +260,8 @@ pub struct CustomBrush {
     pub width: u32,
     pub height: u32,
     pub pixels: Vec<Rgba>,
+    #[serde(default)]
+    pub frames: Option<Vec<Vec<Rgba>>>,
 }
 
 pub fn get_default_brushes() -> Vec<CustomBrush> {
@@ -909,6 +912,7 @@ impl App {
             use_swatch_color: layout.as_ref().map(|l| l.use_swatch_color).unwrap_or(false),
             picking_background_color: false,
             last_autosave_time: None,
+            active_brush_frame_idx: None,
         }
     }
 
@@ -6414,10 +6418,57 @@ print("FAIL")
             }
         }
 
+        let mut frames = None;
+        let mut brush_w = rw;
+        let mut brush_h = rh;
+        let mut final_pixels = pixels;
+
+        if self.project.is_tiled() {
+            let tile_w = self.project.tile_w;
+            let tile_h = self.project.tile_h;
+            if tile_w > 0 && tile_h > 0 {
+                let col_start = rx / tile_w;
+                let col_end = (rx + rw).saturating_sub(1) / tile_w;
+                let row_start = ry / tile_h;
+                let row_end = (ry + rh).saturating_sub(1) / tile_h;
+
+                if col_start != col_end || row_start != row_end {
+                    let mut list = Vec::new();
+                    for r in row_start..=row_end {
+                        for c in col_start..=col_end {
+                            let tx = c * tile_w;
+                            let ty = r * tile_h;
+                            let mut frame_pixels = Vec::with_capacity((tile_w * tile_h) as usize);
+                            for y in 0..tile_h {
+                                for x in 0..tile_w {
+                                    let cx = tx + x;
+                                    let cy = ty + y;
+                                    let p = if cx < ref_layer.width && cy < ref_layer.height {
+                                        ref_layer.get_pixel(cx, cy)
+                                    } else {
+                                        [0, 0, 0, 0]
+                                    };
+                                    frame_pixels.push(p);
+                                }
+                            }
+                            list.push(frame_pixels);
+                        }
+                    }
+                    if !list.is_empty() {
+                        brush_w = tile_w;
+                        brush_h = tile_h;
+                        final_pixels = list[0].clone();
+                        frames = Some(list);
+                    }
+                }
+            }
+        }
+
         let brush = CustomBrush {
-            width: rw,
-            height: rh,
-            pixels,
+            width: brush_w,
+            height: brush_h,
+            pixels: final_pixels,
+            frames,
         };
         if self.brushes.len() < 512 {
             self.brushes.push(brush);
@@ -6425,14 +6476,27 @@ print("FAIL")
         }
     }
 
-    fn brush_stamp(&self, idx: usize, cx: u32, cy: u32, cw: u32, ch: u32) -> Vec<(u32, u32, Rgba)> {
+    fn brush_stamp(&self, idx: usize, cx: u32, cy: u32, cw: u32, ch: u32, frame_idx: Option<usize>) -> Vec<(u32, u32, Rgba)> {
         let brush = &self.brushes[idx];
         let bw = brush.width;
         let bh = brush.height;
         let mut pts = Vec::new();
+        let pixels = if let Some(f_idx) = frame_idx {
+            if let Some(ref frames) = brush.frames {
+                if f_idx < frames.len() {
+                    &frames[f_idx]
+                } else {
+                    &brush.pixels
+                }
+            } else {
+                &brush.pixels
+            }
+        } else {
+            &brush.pixels
+        };
         for by in 0..bh {
             for bx in 0..bw {
-                let p = brush.pixels[(by * bw + bx) as usize];
+                let p = pixels[(by * bw + bx) as usize];
                 if p[3] > 0 {
                     let tx = cx as i32 + bx as i32 - (bw / 2) as i32;
                     let ty = cy as i32 + by as i32 - (bh / 2) as i32;
@@ -6597,9 +6661,22 @@ print("FAIL")
                         let tx = inner_rect.left() + (inner_rect.width() - tw) / 2.0;
                         let ty = inner_rect.top() + (inner_rect.height() - th) / 2.0;
 
+                        let mut pixels_to_draw = &brush.pixels;
+                        if hover {
+                            if let Some(ref frames) = brush.frames {
+                                if !frames.is_empty() {
+                                    let t = ui.ctx().input(|i| i.time);
+                                    let fps = 5.0;
+                                    let frame_idx = ((t * fps) as usize) % frames.len();
+                                    pixels_to_draw = &frames[frame_idx];
+                                    ui.ctx().request_repaint();
+                                }
+                            }
+                        }
+
                         for py in 0..brush.height {
                             for px in 0..brush.width {
-                                let p = brush.pixels[(py * brush.width + px) as usize];
+                                let p = pixels_to_draw[(py * brush.width + px) as usize];
                                 if p[3] > 0 {
                                     let color = Color32::from_rgba_premultiplied(p[0], p[1], p[2], p[3]);
                                     let px_rect = egui::Rect::from_min_size(
@@ -7609,7 +7686,7 @@ print("FAIL")
                             for (mx, my) in self.mirror_positions(hx, hy, w, h) {
                                 let mut points: Vec<(u32, u32, Rgba)> = if let Some(brush_idx) = self.active_brush_index {
                                     if brush_idx < self.brushes.len() {
-                                        self.brush_stamp(brush_idx, mx, my, w, h)
+                                        self.brush_stamp(brush_idx, mx, my, w, h, None)
                                     } else {
                                         self.pen_square(mx, my, w, h).into_iter().map(|(x, y)| (x, y, color)).collect()
                                     }
@@ -7680,7 +7757,7 @@ print("FAIL")
                             for (mx, my) in self.mirror_positions(hx, hy, w, h) {
                                 let points: Vec<(u32, u32)> = if let Some(brush_idx) = self.active_brush_index {
                                     if brush_idx < self.brushes.len() {
-                                        self.brush_stamp(brush_idx, mx, my, w, h).into_iter().map(|(x, y, _)| (x, y)).collect()
+                                        self.brush_stamp(brush_idx, mx, my, w, h, None).into_iter().map(|(x, y, _)| (x, y)).collect()
                                     } else {
                                         self.pen_square(mx, my, w, h)
                                     }
@@ -7757,6 +7834,30 @@ print("FAIL")
 
         let press_started = response.drag_started_by(egui::PointerButton::Primary) || (response.ctx.input(|i| i.pointer.primary_pressed()) && response.hovered());
         if press_started && self.drag_start.is_none() {
+            if let Some(brush_idx) = self.active_brush_index {
+                if brush_idx < self.brushes.len() {
+                    let brush = &self.brushes[brush_idx];
+                    if let Some(ref frames) = brush.frames {
+                        if !frames.is_empty() {
+                            let now_ns = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_nanos())
+                                .unwrap_or(0);
+                            let idx = (now_ns % (frames.len() as u128)) as usize;
+                            self.active_brush_frame_idx = Some(idx);
+                        } else {
+                            self.active_brush_frame_idx = None;
+                        }
+                    } else {
+                        self.active_brush_frame_idx = None;
+                    }
+                } else {
+                    self.active_brush_frame_idx = None;
+                }
+            } else {
+                self.active_brush_frame_idx = None;
+            }
+
             if is_select_tool && self.select_state.has_float() {
                 let (cx_px, cy_px) = self.canvas.screen_to_canvas_f32(pos, canvas_rect, w, h);
                 if self.hit_test_selection(cx_px, cy_px).is_none() {
@@ -7878,162 +7979,178 @@ print("FAIL")
         let color = self.color_state.foreground;
         match &self.active_tool.clone() {
             ActiveTool::Pencil => {
-                let positions = if let Some((lx, ly)) = self.last_pencil_pos {
-                    bresenham_positions(lx as i32, ly as i32, px as i32, py as i32)
+                let is_animated_brush = self.active_brush_index
+                    .and_then(|idx| self.brushes.get(idx))
+                    .map(|b| b.frames.is_some())
+                    .unwrap_or(false);
+                if is_animated_brush && self.last_pencil_pos.is_some() {
+                    self.last_pencil_pos = Some((px, py));
                 } else {
-                    vec![(px, py)]
-                };
-                for pos in positions {
-                    let streamed = self.mirror_positions_with_streams(pos.0, pos.1, w, h);
-                    // Track center positions for L-shape removal (only if pen size is 1)
-                    if self.pen_size == 1 {
-                        for &((mx, my), stream) in &streamed {
-                            if !self.stroke_painted.contains(&(mx, my)) {
-                                match stream {
-                                    MirrorStream::Original => self.stroke_pixel_sequence.push((mx, my)),
-                                    MirrorStream::X => self.mirror_x_sequence.push((mx, my)),
-                                    MirrorStream::Y => self.mirror_y_sequence.push((mx, my)),
-                                    MirrorStream::XY => self.mirror_xy_sequence.push((mx, my)),
+                    let positions = if let Some((lx, ly)) = self.last_pencil_pos {
+                        bresenham_positions(lx as i32, ly as i32, px as i32, py as i32)
+                    } else {
+                        vec![(px, py)]
+                    };
+                    for pos in positions {
+                        let streamed = self.mirror_positions_with_streams(pos.0, pos.1, w, h);
+                        // Track center positions for L-shape removal (only if pen size is 1)
+                        if self.pen_size == 1 {
+                            for &((mx, my), stream) in &streamed {
+                                if !self.stroke_painted.contains(&(mx, my)) {
+                                    match stream {
+                                        MirrorStream::Original => self.stroke_pixel_sequence.push((mx, my)),
+                                        MirrorStream::X => self.mirror_x_sequence.push((mx, my)),
+                                        MirrorStream::Y => self.mirror_y_sequence.push((mx, my)),
+                                        MirrorStream::XY => self.mirror_xy_sequence.push((mx, my)),
+                                    }
                                 }
                             }
                         }
-                    }
-                    for &((mx, my), _) in &streamed {
-                        let mut points: Vec<(u32, u32, Rgba)> = if let Some(brush_idx) = self.active_brush_index {
-                            if brush_idx < self.brushes.len() {
-                                self.brush_stamp(brush_idx, mx, my, w, h)
+                        for &((mx, my), _) in &streamed {
+                            let mut points: Vec<(u32, u32, Rgba)> = if let Some(brush_idx) = self.active_brush_index {
+                                if brush_idx < self.brushes.len() {
+                                    self.brush_stamp(brush_idx, mx, my, w, h, self.active_brush_frame_idx)
+                                } else {
+                                    self.pen_square(mx, my, w, h).into_iter().map(|(x, y)| (x, y, color)).collect()
+                                }
                             } else {
                                 self.pen_square(mx, my, w, h).into_iter().map(|(x, y)| (x, y, color)).collect()
+                            };
+                            if self.active_brush_index.is_some() && self.use_swatch_color {
+                                for p in &mut points {
+                                    p.2 = color;
+                                }
                             }
-                        } else {
-                            self.pen_square(mx, my, w, h).into_iter().map(|(x, y)| (x, y, color)).collect()
-                        };
-                        if self.active_brush_index.is_some() && self.use_swatch_color {
-                            for p in &mut points {
-                                p.2 = color;
-                            }
-                        }
-                        for (sx, sy, mut c) in points {
-                            if self.stroke_painted.contains(&(sx, sy)) { continue; }
-                            let (target_fi, ox, oy) = if self.project.is_tiled() {
-                                let tile_w = self.project.tile_w;
-                                let tile_h = self.project.tile_h;
-                                let tiles_w = self.project.tiles_w;
-                                let tiles_h = self.project.tiles_h;
-                                let tx = sx / tile_w;
-                                let ty = sy / tile_h;
-                                if tx < tiles_w && ty < tiles_h {
-                                    let t_fi = (ty * tiles_w + tx) as usize;
-                                    if t_fi < self.project.animations[ai].frames.len() {
-                                        (t_fi, sx % tile_w, sy % tile_h)
+                            for (sx, sy, mut c) in points {
+                                if self.stroke_painted.contains(&(sx, sy)) { continue; }
+                                let (target_fi, ox, oy) = if self.project.is_tiled() {
+                                    let tile_w = self.project.tile_w;
+                                    let tile_h = self.project.tile_h;
+                                    let tiles_w = self.project.tiles_w;
+                                    let tiles_h = self.project.tiles_h;
+                                    let tx = sx / tile_w;
+                                    let ty = sy / tile_h;
+                                    if tx < tiles_w && ty < tiles_h {
+                                        let t_fi = (ty * tiles_w + tx) as usize;
+                                        if t_fi < self.project.animations[ai].frames.len() {
+                                            (t_fi, sx % tile_w, sy % tile_h)
+                                        } else {
+                                            (fi, sx, sy)
+                                        }
                                     } else {
                                         (fi, sx, sy)
                                     }
                                 } else {
                                     (fi, sx, sy)
-                                }
-                            } else {
-                                (fi, sx, sy)
-                            };
+                                };
 
-                            if self.shading_mode {
-                                let current_pixel_color = self.project.animations[ai].frames[target_fi].layers[li].get_pixel(ox, oy);
-                                let mut found_ramp_idx = None;
-                                if let Some((start, end)) = self.shading_ramp {
-                                    for p_idx in start..=end {
-                                        if p_idx < self.project.palette.len() {
-                                            if self.project.palette[p_idx] == current_pixel_color {
-                                                found_ramp_idx = Some(p_idx);
-                                                break;
+                                if self.shading_mode {
+                                    let current_pixel_color = self.project.animations[ai].frames[target_fi].layers[li].get_pixel(ox, oy);
+                                    let mut found_ramp_idx = None;
+                                    if let Some((start, end)) = self.shading_ramp {
+                                        for p_idx in start..=end {
+                                            if p_idx < self.project.palette.len() {
+                                                if self.project.palette[p_idx] == current_pixel_color {
+                                                    found_ramp_idx = Some(p_idx);
+                                                    break;
+                                                }
                                             }
                                         }
-                                    }
-                                    if let Some(p_idx) = found_ramp_idx {
-                                        let alt_held = response.ctx.input(|inp| inp.modifiers.alt);
-                                        let dir = if alt_held { -self.shading_dir } else { self.shading_dir };
-                                        let next_idx = (p_idx as i32 + dir).clamp(start as i32, end as i32) as usize;
-                                        c = self.project.palette[next_idx];
+                                        if let Some(p_idx) = found_ramp_idx {
+                                            let alt_held = response.ctx.input(|inp| inp.modifiers.alt);
+                                            let dir = if alt_held { -self.shading_dir } else { self.shading_dir };
+                                            let next_idx = (p_idx as i32 + dir).clamp(start as i32, end as i32) as usize;
+                                            c = self.project.palette[next_idx];
+                                        } else {
+                                            continue;
+                                        }
                                     } else {
                                         continue;
                                     }
-                                } else {
-                                    continue;
                                 }
-                            }
 
-                            let edits = apply_pencil(&self.project.animations[ai].frames[target_fi].layers[li], ox, oy, c);
-                            for &(_x, _y, old, new) in &edits {
-                                if self.select_state.is_pixel_selected(sx, sy) {
-                                    self.project.animations[ai].frames[target_fi].layers[li].set_pixel(ox, oy, new);
-                                    self.stroke_edits.push((sx, sy, old, new));
-                                    self.project.animations[ai].frames[target_fi].dirty = true;
-                                    if ai < self.thumbnails.len() && target_fi < self.thumbnails[ai].len() {
-                                        self.thumbnails[ai][target_fi].dirty = true;
+                                let edits = apply_pencil(&self.project.animations[ai].frames[target_fi].layers[li], ox, oy, c);
+                                for &(_x, _y, old, new) in &edits {
+                                    if self.select_state.is_pixel_selected(sx, sy) {
+                                        self.project.animations[ai].frames[target_fi].layers[li].set_pixel(ox, oy, new);
+                                        self.stroke_edits.push((sx, sy, old, new));
+                                        self.project.animations[ai].frames[target_fi].dirty = true;
+                                        if ai < self.thumbnails.len() && target_fi < self.thumbnails[ai].len() {
+                                            self.thumbnails[ai][target_fi].dirty = true;
+                                        }
                                     }
                                 }
+                                self.stroke_painted.insert((sx, sy));
                             }
-                            self.stroke_painted.insert((sx, sy));
                         }
-                    }
-                    if self.pen_size == 1 {
-                        self.check_and_remove_l_shape_all_streams(ai, fi, li);
+                        if self.pen_size == 1 {
+                            self.check_and_remove_l_shape_all_streams(ai, fi, li);
+                        }
                     }
                 }
                 self.last_pencil_pos = Some((px, py));
                 self.canvas_dirty = true;
             }
             ActiveTool::Eraser => {
-                let positions = if let Some((lx, ly)) = self.last_pencil_pos {
-                    bresenham_positions(lx as i32, ly as i32, px as i32, py as i32)
+                let is_animated_brush = self.active_brush_index
+                    .and_then(|idx| self.brushes.get(idx))
+                    .map(|b| b.frames.is_some())
+                    .unwrap_or(false);
+                if is_animated_brush && self.last_pencil_pos.is_some() {
+                    self.last_pencil_pos = Some((px, py));
                 } else {
-                    vec![(px, py)]
-                };
-                for pos in positions {
-                    let streamed = self.mirror_positions_with_streams(pos.0, pos.1, w, h);
-                    for &((mx, my), _) in &streamed {
-                        let points: Vec<(u32, u32)> = if let Some(brush_idx) = self.active_brush_index {
-                            if brush_idx < self.brushes.len() {
-                                self.brush_stamp(brush_idx, mx, my, w, h).into_iter().map(|(x, y, _)| (x, y)).collect()
+                    let positions = if let Some((lx, ly)) = self.last_pencil_pos {
+                        bresenham_positions(lx as i32, ly as i32, px as i32, py as i32)
+                    } else {
+                        vec![(px, py)]
+                    };
+                    for pos in positions {
+                        let streamed = self.mirror_positions_with_streams(pos.0, pos.1, w, h);
+                        for &((mx, my), _) in &streamed {
+                            let points: Vec<(u32, u32)> = if let Some(brush_idx) = self.active_brush_index {
+                                if brush_idx < self.brushes.len() {
+                                    self.brush_stamp(brush_idx, mx, my, w, h, self.active_brush_frame_idx).into_iter().map(|(x, y, _)| (x, y)).collect()
+                                } else {
+                                    self.pen_square(mx, my, w, h)
+                                }
                             } else {
                                 self.pen_square(mx, my, w, h)
-                            }
-                        } else {
-                            self.pen_square(mx, my, w, h)
-                        };
-                        for (sx, sy) in points {
-                            if self.stroke_painted.contains(&(sx, sy)) { continue; }
-                            let (target_fi, ox, oy) = if self.project.is_tiled() {
-                                let tile_w = self.project.tile_w;
-                                let tile_h = self.project.tile_h;
-                                let tiles_w = self.project.tiles_w;
-                                let tiles_h = self.project.tiles_h;
-                                let tx = sx / tile_w;
-                                let ty = sy / tile_h;
-                                if tx < tiles_w && ty < tiles_h {
-                                    let t_fi = (ty * tiles_w + tx) as usize;
-                                    if t_fi < self.project.animations[ai].frames.len() {
-                                        (t_fi, sx % tile_w, sy % tile_h)
+                            };
+                            for (sx, sy) in points {
+                                if self.stroke_painted.contains(&(sx, sy)) { continue; }
+                                let (target_fi, ox, oy) = if self.project.is_tiled() {
+                                    let tile_w = self.project.tile_w;
+                                    let tile_h = self.project.tile_h;
+                                    let tiles_w = self.project.tiles_w;
+                                    let tiles_h = self.project.tiles_h;
+                                    let tx = sx / tile_w;
+                                    let ty = sy / tile_h;
+                                    if tx < tiles_w && ty < tiles_h {
+                                        let t_fi = (ty * tiles_w + tx) as usize;
+                                        if t_fi < self.project.animations[ai].frames.len() {
+                                            (t_fi, sx % tile_w, sy % tile_h)
+                                        } else {
+                                            (fi, sx, sy)
+                                        }
                                     } else {
                                         (fi, sx, sy)
                                     }
                                 } else {
                                     (fi, sx, sy)
-                                }
-                            } else {
-                                (fi, sx, sy)
-                            };
-                            let edits = apply_eraser(&self.project.animations[ai].frames[target_fi].layers[li], ox, oy);
-                            for &(_x, _y, old, new) in &edits {
-                                if self.select_state.is_pixel_selected(sx, sy) {
-                                    self.project.animations[ai].frames[target_fi].layers[li].set_pixel(ox, oy, new);
-                                    self.stroke_edits.push((sx, sy, old, new));
-                                    self.project.animations[ai].frames[target_fi].dirty = true;
-                                    if ai < self.thumbnails.len() && target_fi < self.thumbnails[ai].len() {
-                                        self.thumbnails[ai][target_fi].dirty = true;
+                                };
+                                let edits = apply_eraser(&self.project.animations[ai].frames[target_fi].layers[li], ox, oy);
+                                for &(_x, _y, old, new) in &edits {
+                                    if self.select_state.is_pixel_selected(sx, sy) {
+                                        self.project.animations[ai].frames[target_fi].layers[li].set_pixel(ox, oy, new);
+                                        self.stroke_edits.push((sx, sy, old, new));
+                                        self.project.animations[ai].frames[target_fi].dirty = true;
+                                        if ai < self.thumbnails.len() && target_fi < self.thumbnails[ai].len() {
+                                            self.thumbnails[ai][target_fi].dirty = true;
+                                        }
                                     }
                                 }
+                                self.stroke_painted.insert((sx, sy));
                             }
-                            self.stroke_painted.insert((sx, sy));
                         }
                     }
                 }
