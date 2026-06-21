@@ -8,7 +8,7 @@ fn default_canvas_zoom_matches_approved_mockup_scale() {
 
 #[test]
 fn canvas_art_rect_is_centered_in_workspace_before_panning() {
-    let canvas = CanvasState { zoom: 8.0, offset: Vec2::ZERO, texture: None, dragging_pan: false, last_mouse_pos: None };
+    let canvas = CanvasState { zoom: 8.0, offset: Vec2::ZERO, texture: None, dragging_pan: false, last_mouse_pos: None, ..Default::default() };
     let workspace = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
 
     let art_rect = canvas.art_rect(workspace, 32, 32);
@@ -19,7 +19,7 @@ fn canvas_art_rect_is_centered_in_workspace_before_panning() {
 
 #[test]
 fn screen_to_canvas_uses_centered_art_origin() {
-    let canvas = CanvasState { zoom: 8.0, offset: Vec2::ZERO, texture: None, dragging_pan: false, last_mouse_pos: None };
+    let canvas = CanvasState { zoom: 8.0, offset: Vec2::ZERO, texture: None, dragging_pan: false, last_mouse_pos: None, ..Default::default() };
     let workspace = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
 
     assert_eq!(canvas.screen_to_canvas(Pos2::new(272.0, 172.0), workspace, 32, 32), Some((0, 0)));

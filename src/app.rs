@@ -2516,7 +2516,8 @@ impl App {
                 // ── Grouped tool slots ──────────────────────────────────────
                 // Slot 0: Pen group (Pencil/Eraser)
                 let pen_icon = tool_icon(&self.pen_group_current);
-                let pen_resp = tool_btn_raw(ui, &self.theme, self.is_group_selected(0), pen_icon);
+                let pen_resp = tool_btn_raw(ui, &self.theme, self.is_group_selected(0), pen_icon)
+                    .on_hover_text(tool_tooltip_text(&self.pen_group_current));
                 let pen_rect = pen_resp.rect;
                 if pen_resp.clicked() && !self.any_modal_open() {
                     if self.is_group_selected(0) {
@@ -2533,7 +2534,8 @@ impl App {
 
                 // Slot 1: Bucket group (Fill/Eyedropper)
                 let bucket_icon = tool_icon(&self.bucket_group_current);
-                let bucket_resp = tool_btn_raw(ui, &self.theme, self.is_group_selected(1), bucket_icon);
+                let bucket_resp = tool_btn_raw(ui, &self.theme, self.is_group_selected(1), bucket_icon)
+                    .on_hover_text(tool_tooltip_text(&self.bucket_group_current));
                 let bucket_rect = bucket_resp.rect;
                 if bucket_resp.clicked() && !self.any_modal_open() {
                     if self.is_group_selected(1) {
@@ -2550,7 +2552,8 @@ impl App {
 
                 // Slot 2: Shape group (Rectangle/Ellipse/Line)
                 let shape_icon = tool_icon(&self.shape_group_current);
-                let shape_resp = tool_btn_raw(ui, &self.theme, self.is_group_selected(2), shape_icon);
+                let shape_resp = tool_btn_raw(ui, &self.theme, self.is_group_selected(2), shape_icon)
+                    .on_hover_text(tool_tooltip_text(&self.shape_group_current));
                 let shape_rect = shape_resp.rect;
                 if shape_resp.clicked() && !self.any_modal_open() {
                     if self.is_group_selected(2) {
@@ -2567,7 +2570,8 @@ impl App {
 
                 // Slot 3: Select group (RectSelect/Move)
                 let select_icon = tool_icon(&self.select_group_current);
-                let select_resp = tool_btn_raw(ui, &self.theme, self.is_group_selected(3), select_icon);
+                let select_resp = tool_btn_raw(ui, &self.theme, self.is_group_selected(3), select_icon)
+                    .on_hover_text(tool_tooltip_text(&self.select_group_current));
                 let select_rect = select_resp.rect;
                 if select_resp.clicked() && !self.any_modal_open() {
                     if self.is_group_selected(3) {
@@ -2674,7 +2678,8 @@ impl App {
                         ui.horizontal(|ui| {
                             for t in &others {
                                 let icon = tool_icon(t);
-                                let r = tool_btn_raw(ui, &theme, false, icon);
+                                let r = tool_btn_raw(ui, &theme, false, icon)
+                                    .on_hover_text(tool_tooltip_text(t));
                                 if r.clicked() {
                                     clicked_tool = Some(t.clone());
                                 }
@@ -10845,6 +10850,7 @@ fn section_header_with_minus_and_add(
         let icon_resp = ui.interact(icon_rect, egui::Id::new(("hdr_icon", panel)), egui::Sense::click());
         let icon_tint = if icon_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
         ui.put(icon_rect, Image::new(icon).tint(icon_tint).fit_to_exact_size(icon_size));
+        let icon_resp = icon_resp.on_hover_text(if collapsed { "Expand panel" } else { "Collapse panel" });
         if icon_resp.clicked() {
             state.toggle_collapsed(panel);
         }
@@ -10853,6 +10859,14 @@ fn section_header_with_minus_and_add(
             let plus_resp = ui.interact(plus_rect, egui::Id::new(("hdr_plus", panel)), egui::Sense::click());
             let plus_color = if plus_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
             painter.text(plus_rect.center(), egui::Align2::CENTER_CENTER, "+", FontId::new(16.0, FontFamily::Proportional), plus_color);
+            let plus_tooltip = match panel {
+                Panel::Layers => "Add New Layer",
+                Panel::Animations => "Add New Animation Frame",
+                Panel::Brushes => "Add Custom Brush from Selection",
+                Panel::Tiles => "Add New Tile",
+                _ => "Add Item",
+            };
+            let plus_resp = plus_resp.on_hover_text(plus_tooltip);
             if plus_resp.clicked() {
                 add_clicked = true;
             }
@@ -10868,6 +10882,14 @@ fn section_header_with_minus_and_add(
                     theme.fg_desc
                 };
                 painter.text(minus_rect.center(), egui::Align2::CENTER_CENTER, "-", FontId::new(16.0, FontFamily::Proportional), minus_color);
+                let minus_tooltip = match panel {
+                    Panel::Layers => "Delete Selected Layer",
+                    Panel::Animations => "Delete Selected Animation Frame",
+                    Panel::Brushes => "Delete Selected Custom Brush",
+                    Panel::Tiles => "Delete Selected Tile",
+                    _ => "Delete Selected Item",
+                };
+                let minus_resp = minus_resp.on_hover_text(minus_tooltip);
                 if minus_enabled && minus_resp.clicked() {
                     minus_clicked = true;
                 }
@@ -11143,6 +11165,22 @@ fn tool_icon(tool: &ActiveTool) -> ImageSource<'static> {
         ActiveTool::MagicWand        => egui::include_image!("../assets/icons/wand.png"),
         ActiveTool::Move             => egui::include_image!("../assets/icons/move.svg"),
         ActiveTool::Zoom             => egui::include_image!("../assets/icons/zoom.svg"),
+    }
+}
+
+fn tool_tooltip_text(tool: &ActiveTool) -> &'static str {
+    match tool {
+        ActiveTool::Pencil           => "Pencil Tool (Paint pixels)",
+        ActiveTool::Eraser           => "Eraser Tool (Clear pixels)",
+        ActiveTool::Fill             => "Bucket Fill Tool (Fill connected region)",
+        ActiveTool::Eyedropper       => "Eyedropper Tool (Sample colors)",
+        ActiveTool::Rectangle { .. } => "Rectangle Tool (Draw rectangles)",
+        ActiveTool::Ellipse { .. }   => "Ellipse Tool (Draw ellipses)",
+        ActiveTool::Line             => "Line Tool (Draw straight lines)",
+        ActiveTool::RectSelect       => "Rectangle Selection Tool (Select, move & scale)",
+        ActiveTool::MagicWand        => "Magic Wand Selection Tool (Select color regions)",
+        ActiveTool::Move             => "Pan & Move Canvas Tool",
+        ActiveTool::Zoom             => "Zoom View Tool",
     }
 }
 
