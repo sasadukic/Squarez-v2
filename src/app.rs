@@ -7049,7 +7049,7 @@ print("FAIL")
                 Frame::new()
                     .fill(theme.panel)
                     .stroke(egui::Stroke::NONE)
-                    .corner_radius(egui::CornerRadius::ZERO)
+                    .corner_radius(egui::CornerRadius::same(6))
                     .shadow(egui::Shadow {
                         offset: [0, 14],
                         blur: 36,
@@ -10294,7 +10294,7 @@ print("FAIL")
                 Frame::new()
                     .fill(theme.panel)
                     .stroke(egui::Stroke::NONE)
-                    .corner_radius(egui::CornerRadius::ZERO)
+                    .corner_radius(egui::CornerRadius::same(6))
                     .shadow(egui::Shadow {
                         offset: [0, 14],
                         blur: 36,

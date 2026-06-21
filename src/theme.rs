@@ -87,8 +87,8 @@ impl Theme {
         visuals.widgets.hovered.corner_radius          = sq;
         visuals.widgets.active.corner_radius           = sq;
         visuals.widgets.open.corner_radius             = sq;
-        visuals.window_corner_radius                   = sq;
-        visuals.menu_corner_radius                     = sq;
+        visuals.window_corner_radius                   = egui::CornerRadius::same(6);
+        visuals.menu_corner_radius                     = egui::CornerRadius::same(6);
 
         // ── Widget foreground strokes ─────────────────────────────────────
         visuals.widgets.noninteractive.fg_stroke.color = self.fg_desc;
@@ -112,10 +112,16 @@ impl Theme {
         visuals.selection.stroke.color = self.fg;
 
         // ── Window chrome ─────────────────────────────────────────────────
-        visuals.window_stroke.color    = self.border;
-        // ── Shadows (suppress for flat pixel-editor aesthetic) ────────────
-        visuals.popup_shadow  = egui::epaint::Shadow::NONE;
-        visuals.window_shadow = egui::epaint::Shadow::NONE;
+        visuals.window_stroke          = egui::Stroke::NONE;
+        // ── Shadows ───────────────────────────────────────────────────────
+        let drop_shadow = egui::epaint::Shadow {
+            offset: [0, 14],
+            blur: 36,
+            spread: 0,
+            color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
+        };
+        visuals.popup_shadow  = drop_shadow.clone();
+        visuals.window_shadow = drop_shadow;
 
         // ── Text override ─────────────────────────────────────────────────
         visuals.override_text_color = Some(self.fg);

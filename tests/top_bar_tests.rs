@@ -11,7 +11,7 @@ fn top_bar_uses_mockup_geometry_tokens() {
     assert_eq!(MENU_FONT_SIZE, 11.0);
     assert_eq!(DROPDOWN_WIDTH, 184.0);
     assert_eq!(DROPDOWN_ROW_HEIGHT, 38.0);
-    assert_eq!(DROPDOWN_CORNER_RADIUS, 0);
+    assert_eq!(DROPDOWN_CORNER_RADIUS, 6);
     assert_eq!(DROPDOWN_TOP_GAP, 0.0);
     // Mockup: .menu-item.active { background:#343B48 } — active item must show surface fill
     assert!(SELECTED_MENU_HAS_FILL);
