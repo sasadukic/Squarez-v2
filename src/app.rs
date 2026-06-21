@@ -2814,7 +2814,7 @@ impl App {
                             if dragging == Some(panel) {
                                 // Placeholder for the section being dragged
                                 let theme = self.theme.clone();
-                                Frame::new().fill(theme.panel).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
+                                Frame::new().fill(theme.border.linear_multiply(0.4)).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
                                     let (rect, _) = ui.allocate_exact_size(
                                         Vec2::new(ui.available_width(), 26.0),
                                         egui::Sense::hover(),
@@ -2931,7 +2931,7 @@ impl App {
     fn draw_color_picker(&mut self, ui: &mut egui::Ui) {
         if !self.ui_state.is_visible(Panel::Color) {
             let theme = self.theme.clone();
-            Frame::new().fill(theme.panel).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
+            Frame::new().fill(theme.border.linear_multiply(0.4)).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
                 let (rect, _) = ui.allocate_exact_size(
                     Vec2::new(ui.available_width(), 26.0),
                     egui::Sense::hover(),
@@ -3377,7 +3377,7 @@ impl App {
         // Collapsed: show section-header-style icon row; click to expand.
         if self.ui_state.is_collapsed(Panel::Palette) {
             let theme = self.theme.clone();
-            Frame::new().fill(theme.panel).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
+            Frame::new().fill(theme.border.linear_multiply(0.4)).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
                 let (rect, _) = ui.allocate_exact_size(
                     Vec2::new(ui.available_width(), 26.0),
                     egui::Sense::hover(),
@@ -6281,7 +6281,7 @@ print("FAIL")
     fn draw_tiles_section(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme.clone();
         if self.ui_state.is_collapsed(Panel::Tiles) {
-            Frame::new().fill(theme.panel).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
+            Frame::new().fill(theme.border.linear_multiply(0.4)).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
                 let (rect, _) = ui.allocate_exact_size(
                     Vec2::new(ui.available_width(), 26.0),
                     egui::Sense::hover(),
@@ -6673,7 +6673,7 @@ print("FAIL")
     fn draw_brushes_section(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme.clone();
         if self.ui_state.is_collapsed(Panel::Brushes) {
-            Frame::new().fill(theme.panel).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
+            Frame::new().fill(theme.border.linear_multiply(0.4)).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
                 let (rect, _) = ui.allocate_exact_size(
                     Vec2::new(ui.available_width(), 26.0),
                     egui::Sense::hover(),
@@ -10750,7 +10750,11 @@ impl eframe::App for App {
                     self.set_active_tool(next);
                 }
                 if ctx.input(|i| i.key_pressed(egui::Key::Z)) {
-                    self.set_active_tool(ActiveTool::Zoom);
+                    if matches!(self.active_tool, ActiveTool::Zoom) {
+                        self.pending_zoom_fit = true;
+                    } else {
+                        self.set_active_tool(ActiveTool::Zoom);
+                    }
                 }
             }
             if ctx.input(|i| i.key_pressed(egui::Key::Space)) {
@@ -11121,7 +11125,7 @@ fn section_header_brushes(
         return (false, false, false);
     }
     let collapsed = state.is_collapsed(panel);
-    Frame::new().fill(theme.panel).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
+    Frame::new().fill(theme.border.linear_multiply(0.4)).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
         let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), egui::Sense::hover());
         let icon_size = Vec2::splat(16.0);
         let icon_rect = egui::Rect::from_center_size(Pos2::new(rect.left() + 8.0, rect.center().y), icon_size);
@@ -11152,7 +11156,7 @@ fn section_header_with_add(ui: &mut egui::Ui, theme: &Theme, state: &mut UiState
     let mut extra_2_clicked = false;
     let mut extra_3_clicked = false;
     let mut icon_double_clicked = false;
-    Frame::new().fill(theme.panel).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
+    Frame::new().fill(theme.border.linear_multiply(0.4)).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
         let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), egui::Sense::hover());
         let painter = ui.painter_at(rect);
         // Left: section icon — single click collapses/expands, double-click opens Ramp Lab
