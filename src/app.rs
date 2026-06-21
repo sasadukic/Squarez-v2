@@ -7373,7 +7373,7 @@ print("FAIL")
                 ui.spacing_mut().item_spacing = Vec2::ZERO;
 
                 // 1. Custom Title Bar/Header
-                Frame::new().fill(theme.panel).inner_margin(egui::Margin::symmetric(10, 3)).show(ui, |ui| {
+                Frame::new().fill(Color32::TRANSPARENT).inner_margin(egui::Margin::symmetric(10, 3)).show(ui, |ui| {
                     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), egui::Sense::hover());
 
                     // Left: visibility eye icon
