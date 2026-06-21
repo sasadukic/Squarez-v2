@@ -2792,14 +2792,16 @@ impl App {
                                 egui::Sense::click_and_drag(),
                             );
                             let handle_active = handle_resp.hovered() || dragging == Some(panel);
-                            if handle_active {
-                                let y = handle_rect.center().y;
-                                let color = if dragging == Some(panel) { Color32::WHITE } else { self.theme.fg_muted };
-                                ui.painter().line_segment(
-                                    [egui::Pos2::new(handle_rect.left(), y), egui::Pos2::new(handle_rect.right(), y)],
-                                    egui::Stroke::new(1.0, color),
-                                );
-                            }
+                            let color = if handle_active {
+                                if dragging == Some(panel) { Color32::WHITE } else { self.theme.fg_muted }
+                            } else {
+                                self.theme.fg_muted.linear_multiply(0.2)
+                            };
+                            let y = handle_rect.center().y;
+                            ui.painter().line_segment(
+                                [egui::Pos2::new(handle_rect.left(), y), egui::Pos2::new(handle_rect.right(), y)],
+                                egui::Stroke::new(1.0, color),
+                            );
                             if handle_resp.double_clicked() {
                                 self.ui_state.toggle_collapsed(panel);
                             }
