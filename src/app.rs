@@ -3964,9 +3964,14 @@ impl App {
                     let w = sel_rect.width();
                     let h = sel_rect.height();
                     let perim = 2.0 * (w + h);
-                    let t = ui.ctx().input(|i| i.time) as f32;
-                    ui.ctx().request_repaint();
-                    let off = (t * 20.0).rem_euclid(perim);
+                    let hovered = ui.rect_contains_pointer(sel_rect);
+                    let off = if hovered {
+                        let t = ui.ctx().input(|i| i.time) as f32;
+                        ui.ctx().request_repaint();
+                        (t * 20.0).rem_euclid(perim)
+                    } else {
+                        0.0
+                    };
                     let (start, waypoints): (Pos2, [Pos2; 4]) = if off < w {
                         (Pos2::new(sel_rect.left() + off, sel_rect.top()),
                          [sel_rect.right_top(), sel_rect.right_bottom(), sel_rect.left_bottom(), sel_rect.left_top()])
@@ -4250,11 +4255,11 @@ impl App {
                                     let current_u8 = self.project.animations[ai].frames[fi].layers[idx].opacity;
                                     let mut pct: u32 = ((current_u8 as f32 / 255.0) * 100.0).round() as u32;
                                     // Match row: bg = selection color (theme.surface), text = icon color (theme.fg_desc).
-                                    let bg = if is_active { theme.surface } else { theme.panel };
+                                    let bg = theme.surface;
                                     let text_col = theme.fg_desc;
                                     let v = ui.visuals_mut();
-                                    v.widgets.inactive.bg_fill   = bg;
-                                    v.widgets.inactive.weak_bg_fill = bg;
+                                    v.widgets.inactive.bg_fill   = Color32::TRANSPARENT;
+                                    v.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
                                     v.widgets.hovered.bg_fill    = bg;
                                     v.widgets.hovered.weak_bg_fill = bg;
                                     v.widgets.active.bg_fill     = bg;
@@ -4379,9 +4384,14 @@ impl App {
                     let w = sel_rect.width();
                     let h = sel_rect.height();
                     let perim = 2.0 * (w + h);
-                    let t = ui.ctx().input(|i| i.time) as f32;
-                    ui.ctx().request_repaint();
-                    let off = (t * 20.0).rem_euclid(perim);
+                    let hovered = ui.rect_contains_pointer(sel_rect);
+                    let off = if hovered {
+                        let t = ui.ctx().input(|i| i.time) as f32;
+                        ui.ctx().request_repaint();
+                        (t * 20.0).rem_euclid(perim)
+                    } else {
+                        0.0
+                    };
                     let (start, waypoints): (Pos2, [Pos2; 4]) = if off < w {
                         (Pos2::new(sel_rect.left() + off, sel_rect.top()),
                          [sel_rect.right_top(), sel_rect.right_bottom(), sel_rect.left_bottom(), sel_rect.left_top()])
@@ -4505,11 +4515,11 @@ impl App {
                                             ui.add_space(4.0);
                                         }
                                         let mut fps = self.project.animations[i].fps as f32;
-                                        let bg = if selected { theme.surface } else { theme.panel };
+                                        let bg = theme.surface;
                                         let text_col = theme.fg_desc;
                                         let v = ui.visuals_mut();
-                                        v.widgets.inactive.bg_fill = bg;
-                                        v.widgets.inactive.weak_bg_fill = bg;
+                                        v.widgets.inactive.bg_fill = Color32::TRANSPARENT;
+                                        v.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
                                         v.widgets.hovered.bg_fill = bg;
                                         v.widgets.hovered.weak_bg_fill = bg;
                                         v.widgets.active.bg_fill = bg;
