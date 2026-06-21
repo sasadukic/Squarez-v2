@@ -6421,7 +6421,7 @@ print("FAIL")
         let mut frames = None;
         let mut brush_w = rw;
         let mut brush_h = rh;
-        let mut final_pixels = pixels;
+        let mut final_pixels = pixels.clone();
 
         if self.project.is_tiled() {
             let tile_w = self.project.tile_w;
