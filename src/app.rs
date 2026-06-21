@@ -806,10 +806,10 @@ impl App {
             project_created: false,
             show_shortcuts_window: false,
             replace_project_pending: false,
-            new_width: 64,
-            new_height: 64,
-            new_width_str: "64".to_string(),
-            new_height_str: "64".to_string(),
+            new_width: 32,
+            new_height: 32,
+            new_width_str: "32".to_string(),
+            new_height_str: "32".to_string(),
             new_name: "Untitled".to_string(),
             new_name_focused: false,
             new_width_focused: false,
@@ -1655,6 +1655,7 @@ impl App {
         egui::Area::new("top_bar".into())
             .fixed_pos(Pos2::ZERO)
             .show(ctx, |ui| {
+                ui.set_enabled(!self.show_new_dialog);
                 let theme = self.theme.clone();
 
                 ui.painter().rect_filled(bar_rect, 0.0, theme.panel);
@@ -2493,6 +2494,7 @@ impl App {
             .fixed_pos(Pos2::new(0.0, TOP_BAR_HEIGHT))
             .default_width(38.0)
             .show(ctx, |ui| {
+                ui.set_enabled(!self.show_new_dialog);
                 ui.set_max_width(38.0);
                 ui.set_width(38.0);
                 ui.spacing_mut().item_spacing = Vec2::ZERO;
@@ -2674,6 +2676,7 @@ impl App {
             .order(egui::Order::Foreground)
             .fixed_pos(pos)
             .show(ctx, |ui| {
+                ui.set_enabled(!self.show_new_dialog);
                 Frame::new()
                     .fill(theme.panel)
                     .shadow(egui::Shadow {
@@ -2758,6 +2761,7 @@ impl App {
             .frame(Frame::new().fill(self.theme.panel))
             .show_separator_line(false)
             .show(ctx, |ui| {
+                ui.set_enabled(!self.show_new_dialog);
                 ui.set_width(sidebar_w);
                 ui.set_max_width(sidebar_w);
                 ui.spacing_mut().item_spacing = Vec2::ZERO;
@@ -4706,6 +4710,7 @@ impl App {
             .frame(Frame::new().fill(self.theme.bg).inner_margin(Margin { left: 10, right: 10, top: 10, bottom: 0 }))
             .show_separator_line(false)
             .show(ctx, |ui| {
+                ui.set_enabled(!self.show_new_dialog);
                 // Floating scrollbar: invisible at rest, fades in on hover, sits in bottom gap
                 ui.style_mut().spacing.scroll = egui::style::ScrollStyle {
                     bar_width: 9.0,
