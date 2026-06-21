@@ -10883,7 +10883,7 @@ fn section_header_with_minus_and_add(
                     .tint(single_color)
                     .fit_to_exact_size(Vec2::splat(14.0)),
             );
-            single_resp.on_hover_text("Import Single Image as Brush");
+            let single_resp = single_resp.on_hover_text("Import Single Image as Brush");
             if single_resp.clicked() {
                 import_single_clicked = true;
             }
@@ -10898,7 +10898,7 @@ fn section_header_with_minus_and_add(
                     .tint(anim_color)
                     .fit_to_exact_size(Vec2::splat(14.0)),
             );
-            anim_resp.on_hover_text("Import Multiple Images as Animated Brush");
+            let anim_resp = anim_resp.on_hover_text("Import Multiple Images as Animated Brush");
             if anim_resp.clicked() {
                 import_animated_clicked = true;
             }
