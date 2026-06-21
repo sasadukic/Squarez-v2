@@ -9809,6 +9809,13 @@ print("FAIL")
                                         ("Delete / Backspace", "Delete active floating selection"),
                                         ("Escape", "Cancel active shape / commit selection float"),
                                     ]),
+                                    ("TOOL SELECTION", vec![
+                                        ("D", "Pencil (Draw) tool"),
+                                        ("E", "Eraser tool"),
+                                        ("G", "Fill / Bucket tool"),
+                                        ("M", "Toggle Select / Eyedropper tool"),
+                                        ("S", "Cycle Shapes (Rect / Ellipse / Line)"),
+                                    ]),
                                     ("CANVAS NAVIGATION", vec![
                                         ("Space + Left Drag", "Pan the viewport canvas"),
                                         ("Middle-click Drag", "Pan the viewport canvas"),
@@ -9828,7 +9835,7 @@ print("FAIL")
                                         ("Arrow keys", "Nudge active floating selection by 1 pixel"),
                                         ("Shift + Arrow keys", "Nudge active floating selection by 10 pixels"),
                                         ("Ctrl + Click brush", "Toggle 'Use Swatch Color' mode on custom brush"),
-                                        ("A / D", "Navigate to previous / next frame"),
+                                        ("A / F", "Navigate to previous / next frame"),
                                         ("Space", "Toggle animation playback play/pause"),
                                     ]),
                                 ];
@@ -10708,9 +10715,38 @@ impl eframe::App for App {
                     self.project.active_frame = (self.project.active_frame + total - 1) % total;
                     self.canvas_dirty = true;
                 }
-                if ctx.input(|i| i.key_pressed(egui::Key::D)) && !ctx.input(|i| i.modifiers.command || i.modifiers.ctrl) {
+                if ctx.input(|i| i.key_pressed(egui::Key::F)) && !ctx.input(|i| i.modifiers.command || i.modifiers.ctrl) {
                     self.project.active_frame = (self.project.active_frame + 1) % total;
                     self.canvas_dirty = true;
+                }
+            }
+            // Tool Shortcuts
+            if !ctx.input(|i| i.modifiers.command || i.modifiers.ctrl || i.modifiers.alt) {
+                if ctx.input(|i| i.key_pressed(egui::Key::D)) {
+                    self.set_active_tool(ActiveTool::Pencil);
+                }
+                if ctx.input(|i| i.key_pressed(egui::Key::E)) {
+                    self.set_active_tool(ActiveTool::Eraser);
+                }
+                if ctx.input(|i| i.key_pressed(egui::Key::G)) {
+                    self.set_active_tool(ActiveTool::Fill);
+                }
+                if ctx.input(|i| i.key_pressed(egui::Key::M)) {
+                    // Toggle select / eyedropper
+                    if matches!(self.active_tool, ActiveTool::RectSelect) {
+                        self.set_active_tool(ActiveTool::Eyedropper);
+                    } else {
+                        self.set_active_tool(ActiveTool::RectSelect);
+                    }
+                }
+                if ctx.input(|i| i.key_pressed(egui::Key::S)) {
+                    // Cycle shapes
+                    let next = match self.active_tool {
+                        ActiveTool::Rectangle { .. } => ActiveTool::Ellipse { filled: false },
+                        ActiveTool::Ellipse { .. } => ActiveTool::Line,
+                        _ => ActiveTool::Rectangle { filled: false },
+                    };
+                    self.set_active_tool(next);
                 }
             }
             if ctx.input(|i| i.key_pressed(egui::Key::Space)) {
