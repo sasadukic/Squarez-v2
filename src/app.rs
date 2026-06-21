@@ -2587,7 +2587,8 @@ impl App {
                 }
 
                 // Slot 4: Zoom (ungrouped)
-                let zoom_resp = tool_btn(ui, &mut self.active_tool, &self.theme, ActiveTool::Zoom, egui::include_image!("../assets/icons/zoom.svg"));
+                let zoom_resp = tool_btn(ui, &mut self.active_tool, &self.theme, ActiveTool::Zoom, egui::include_image!("../assets/icons/zoom.svg"))
+                    .on_hover_text("Zoom View Tool (Double-click button to fit canvas)");
                 if zoom_resp.clicked() && !self.any_modal_open() {
                     let now = ctx.input(|i| i.time);
                     if now - self.last_zoom_tool_btn_click < 0.4 {
@@ -4169,20 +4170,22 @@ impl App {
                                 // 4px gaps between icons give the same 20px pitch as the header.
                                 ui.add_space(10.0);
                                 let locked = self.project.animations[ai].frames[fi].layers[idx].locked;
-                                if icon_flat_button(ui, &theme, if locked {
+                                let lock_resp = icon_flat_button(ui, &theme, if locked {
                                     egui::include_image!("../assets/icons/lock.svg")
                                 } else {
                                     egui::include_image!("../assets/icons/lock_open.svg")
-                                }).clicked() {
+                                }).on_hover_text(if locked { "Unlock Layer" } else { "Lock Layer" });
+                                if lock_resp.clicked() {
                                     self.project.animations[ai].frames[fi].layers[idx].locked = !locked;
                                 }
                                 ui.add_space(4.0);
                                 let visible = self.project.animations[ai].frames[fi].layers[idx].visible;
-                                if icon_flat_button(ui, &theme, if visible {
+                                let vis_resp = icon_flat_button(ui, &theme, if visible {
                                     egui::include_image!("../assets/icons/visibility.svg")
                                 } else {
                                     egui::include_image!("../assets/icons/visibility_off.svg")
-                                }).clicked() {
+                                }).on_hover_text(if visible { "Hide Layer" } else { "Show Layer" });
+                                if vis_resp.clicked() {
                                     self.project.animations[ai].frames[fi].layers[idx].visible = !visible;
                                     self.canvas_dirty = true;
                                 }
@@ -4195,7 +4198,9 @@ impl App {
                                     } else {
                                         egui::include_image!("../assets/icons/folder_open.svg")
                                     };
-                                    if icon_flat_button(ui, &theme, folder_img).clicked() {
+                                    let folder_resp = icon_flat_button(ui, &theme, folder_img)
+                                        .on_hover_text(if collapsed { "Expand Layer Group" } else { "Collapse Layer Group" });
+                                    if folder_resp.clicked() {
                                         self.project.animations[ai].frames[fi].layers[idx].collapsed = !collapsed;
                                     }
                                 }
@@ -4392,11 +4397,12 @@ impl App {
                                         ui.add_space(10.0);
                                         if self.project.is_tiled() {
                                             let visible = self.project.animations[i].tile_visible;
-                                            if icon_flat_button(ui, &theme, if visible {
+                                            let anim_vis_resp = icon_flat_button(ui, &theme, if visible {
                                                 egui::include_image!("../assets/icons/visibility.svg")
                                             } else {
                                                 egui::include_image!("../assets/icons/visibility_off.svg")
-                                            }).clicked() {
+                                            }).on_hover_text(if visible { "Hide Animation in Tile" } else { "Show Animation in Tile" });
+                                            if anim_vis_resp.clicked() {
                                                 self.project.animations[i].tile_visible = !visible;
                                                 let visible = self.project.animations[i].tile_visible;
                                                 if self.project.is_tiled() {
@@ -10954,6 +10960,13 @@ fn section_header_with_add(ui: &mut egui::Ui, theme: &Theme, state: &mut UiState
         let icon_resp = ui.interact(icon_rect, egui::Id::new(("hdr_icon", panel)), egui::Sense::click());
         let icon_tint = if icon_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
         ui.put(icon_rect, Image::new(icon).tint(icon_tint).fit_to_exact_size(icon_size));
+        let icon_resp = icon_resp.on_hover_text(if panel == Panel::Color {
+            "Collapse panel (Double-click to open Ramp Lab)"
+        } else if collapsed {
+            "Expand panel"
+        } else {
+            "Collapse panel"
+        });
         if icon_resp.double_clicked() {
             icon_double_clicked = true;
         } else if icon_resp.clicked() {
@@ -10971,6 +10984,14 @@ fn section_header_with_add(ui: &mut egui::Ui, theme: &Theme, state: &mut UiState
                     let plus_color = if plus_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
                     painter.text(plus_rect.center(), egui::Align2::CENTER_CENTER, "+", FontId::new(16.0, FontFamily::Proportional), plus_color);
                 }
+                let plus_tooltip = match panel {
+                    Panel::Layers => "Add New Layer",
+                    Panel::Animations => "Add New Animation Frame",
+                    Panel::Brushes => "Add Custom Brush from Selection",
+                    Panel::Tiles => "Add New Tile",
+                    _ => "Add Item",
+                };
+                let plus_resp = plus_resp.on_hover_text(plus_tooltip);
                 if plus_resp.clicked() {
                     add_clicked = true;
                 }
@@ -10981,6 +11002,7 @@ fn section_header_with_add(ui: &mut egui::Ui, theme: &Theme, state: &mut UiState
                 let extra_resp_3 = ui.interact(extra_rect_3, egui::Id::new(("hdr_extra3", panel)), egui::Sense::click());
                 let tint_3 = if extra_btn_3_active { Color32::WHITE } else if extra_resp_3.hovered() { Color32::WHITE } else { theme.fg_desc };
                 ui.put(extra_rect_3, Image::new(extra_icon_3).tint(tint_3).fit_to_exact_size(Vec2::splat(14.0)));
+                let extra_resp_3 = extra_resp_3.on_hover_text("Toggle Tile Grid Visibility");
                 if extra_resp_3.clicked() { extra_3_clicked = true; }
             }
             // Optional second extra button, placed left of extra_btn
@@ -10989,6 +11011,7 @@ fn section_header_with_add(ui: &mut egui::Ui, theme: &Theme, state: &mut UiState
                 let extra_resp_2 = ui.interact(extra_rect_2, egui::Id::new(("hdr_extra2", panel)), egui::Sense::click());
                 let tint_2 = if extra_btn_2_active { Color32::WHITE } else if extra_resp_2.hovered() { Color32::WHITE } else { theme.fg_desc };
                 ui.put(extra_rect_2, Image::new(extra_icon_2).tint(tint_2).fit_to_exact_size(Vec2::splat(14.0)));
+                let extra_resp_2 = extra_resp_2.on_hover_text("Toggle Playback Range Markers");
                 if extra_resp_2.clicked() { extra_2_clicked = true; }
             }
             // Optional extra button (folder/group icon), placed left of "+"
@@ -10997,6 +11020,12 @@ fn section_header_with_add(ui: &mut egui::Ui, theme: &Theme, state: &mut UiState
                 let extra_resp = ui.interact(extra_rect, egui::Id::new(("hdr_extra", panel)), egui::Sense::click());
                 let tint = if extra_btn_active { Color32::WHITE } else if extra_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
                 ui.put(extra_rect, Image::new(extra_icon).tint(tint).fit_to_exact_size(Vec2::splat(14.0)));
+                let extra_tooltip = match panel {
+                    Panel::Layers => "Create Layer Group",
+                    Panel::Animations => "Toggle Onion Skinning",
+                    _ => "",
+                };
+                let extra_resp = extra_resp.on_hover_text(extra_tooltip);
                 if extra_resp.clicked() { extra_clicked = true; }
             }
         }
