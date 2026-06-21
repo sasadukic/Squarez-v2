@@ -10514,14 +10514,42 @@ impl eframe::App for App {
             }
         }
 
-        // Handle drag and drop of .sqr files
+        // Handle drag and drop of .sqr and image files
         let dropped_files = ctx.input(|i| i.raw.dropped_files.clone());
         for file in dropped_files {
             if let Some(path) = file.path {
                 if let Some(ext) = path.extension() {
-                    if ext.eq_ignore_ascii_case("sqr") {
+                    let ext_str = ext.to_string_lossy().to_lowercase();
+                    if ext_str == "sqr" {
                         if let Ok(p) = load_sqr(&path) {
                             self.open_in_new_tab(p, Some(path));
+                        }
+                    } else if ext_str == "png" || ext_str == "jpg" || ext_str == "jpeg" || ext_str == "gif" || ext_str == "bmp" {
+                        if let Ok(img) = image::open(&path) {
+                            let rgba = img.to_rgba8();
+                            let img_w = rgba.width();
+                            let img_h = rgba.height();
+                            let mut pixels = Vec::with_capacity((img_w * img_h) as usize);
+                            for chunk in rgba.into_raw().chunks_exact(4) {
+                                pixels.push([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                            }
+
+                            // Commit any active float select first
+                            self.commit_float_to_layer();
+
+                            // Center the image on the canvas
+                            let canvas_w = self.project.canvas_width;
+                            let canvas_h = self.project.canvas_height;
+                            let cx = (canvas_w.saturating_sub(img_w) / 2) as f32;
+                            let cy = (canvas_h.saturating_sub(img_h) / 2) as f32;
+
+                            self.select_state.clear();
+                            self.select_state.begin_float(
+                                crate::tools::FloatBuffer { w: img_w, h: img_h, pixels },
+                                (cx as u32, cy as u32, img_w, img_h),
+                            );
+                            self.active_tool = crate::tools::ActiveTool::RectSelect;
+                            self.canvas_dirty = true;
                         }
                     }
                 }
