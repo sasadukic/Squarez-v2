@@ -5643,44 +5643,55 @@ impl App {
                 }
                 let canvas_rect = ui.available_rect_before_wrap();
 
-                // Draw diagonal gradient background (lighter top-left, darker bottom-right)
+                // Draw radial gradient background (lighter middle, darker outer edges)
                 let bg = self.theme.bg;
-                let color_tl = Color32::from_rgb(
-                    bg.r().saturating_add(18),
-                    bg.g().saturating_add(18),
-                    bg.b().saturating_add(18),
+                let color_center = Color32::from_rgb(
+                    bg.r().saturating_add(22),
+                    bg.g().saturating_add(22),
+                    bg.b().saturating_add(22),
                 );
-                let color_br = Color32::from_rgb(
-                    bg.r().saturating_sub(10),
-                    bg.g().saturating_sub(10),
-                    bg.b().saturating_sub(10),
+                let color_outer = Color32::from_rgb(
+                    bg.r().saturating_sub(12),
+                    bg.g().saturating_sub(12),
+                    bg.b().saturating_sub(12),
                 );
-                let color_tr = bg;
-                let color_bl = bg;
 
+                let center = canvas_rect.center();
                 let mut mesh = egui::Mesh::default();
+                
+                // 0: Center
                 mesh.vertices.push(egui::epaint::Vertex {
-                    pos: canvas_rect.left_top(),
+                    pos: center,
                     uv: egui::Pos2::ZERO,
-                    color: color_tl,
+                    color: color_center,
                 });
-                mesh.vertices.push(egui::epaint::Vertex {
-                    pos: canvas_rect.right_top(),
-                    uv: egui::Pos2::ZERO,
-                    color: color_tr,
-                });
-                mesh.vertices.push(egui::epaint::Vertex {
-                    pos: canvas_rect.right_bottom(),
-                    uv: egui::Pos2::ZERO,
-                    color: color_br,
-                });
-                mesh.vertices.push(egui::epaint::Vertex {
-                    pos: canvas_rect.left_bottom(),
-                    uv: egui::Pos2::ZERO,
-                    color: color_bl,
-                });
-                mesh.add_triangle(0, 1, 2);
-                mesh.add_triangle(0, 2, 3);
+                
+                // Outer boundary vertices (clockwise starting from top-left)
+                let outer_points = [
+                    canvas_rect.left_top(),
+                    egui::Pos2::new(center.x, canvas_rect.top()),
+                    canvas_rect.right_top(),
+                    egui::Pos2::new(canvas_rect.right(), center.y),
+                    canvas_rect.right_bottom(),
+                    egui::Pos2::new(center.x, canvas_rect.bottom()),
+                    canvas_rect.left_bottom(),
+                    egui::Pos2::new(canvas_rect.left(), center.y),
+                ];
+                
+                for &pos in &outer_points {
+                    mesh.vertices.push(egui::epaint::Vertex {
+                        pos,
+                        uv: egui::Pos2::ZERO,
+                        color: color_outer,
+                    });
+                }
+                
+                // Draw 8 triangles connecting center (0) to adjacent outer vertices
+                for i in 1..=8 {
+                    let next = if i == 8 { 1 } else { i + 1 };
+                    mesh.add_triangle(0, i as u32, next as u32);
+                }
+                
                 ui.painter().add(mesh);
 
                 if self.startup_frames < 15 {
