@@ -5643,57 +5643,6 @@ impl App {
                 }
                 let canvas_rect = ui.available_rect_before_wrap();
 
-                // Draw radial gradient background (lighter middle, darker outer edges)
-                let bg = self.theme.bg;
-                let color_center = Color32::from_rgb(
-                    bg.r().saturating_add(22),
-                    bg.g().saturating_add(22),
-                    bg.b().saturating_add(22),
-                );
-                let color_outer = Color32::from_rgb(
-                    bg.r().saturating_sub(12),
-                    bg.g().saturating_sub(12),
-                    bg.b().saturating_sub(12),
-                );
-
-                let center = canvas_rect.center();
-                let mut mesh = egui::Mesh::default();
-                
-                // 0: Center
-                mesh.vertices.push(egui::epaint::Vertex {
-                    pos: center,
-                    uv: egui::Pos2::ZERO,
-                    color: color_center,
-                });
-                
-                // Outer boundary vertices (clockwise starting from top-left)
-                let outer_points = [
-                    canvas_rect.left_top(),
-                    egui::Pos2::new(center.x, canvas_rect.top()),
-                    canvas_rect.right_top(),
-                    egui::Pos2::new(canvas_rect.right(), center.y),
-                    canvas_rect.right_bottom(),
-                    egui::Pos2::new(center.x, canvas_rect.bottom()),
-                    canvas_rect.left_bottom(),
-                    egui::Pos2::new(canvas_rect.left(), center.y),
-                ];
-                
-                for &pos in &outer_points {
-                    mesh.vertices.push(egui::epaint::Vertex {
-                        pos,
-                        uv: egui::Pos2::ZERO,
-                        color: color_outer,
-                    });
-                }
-                
-                // Draw 8 triangles connecting center (0) to adjacent outer vertices
-                for i in 1..=8 {
-                    let next = if i == 8 { 1 } else { i + 1 };
-                    mesh.add_triangle(0, i as u32, next as u32);
-                }
-                
-                ui.painter().add(mesh);
-
                 if self.startup_frames < 15 {
                     self.pending_zoom_fit = true;
                     self.startup_frames += 1;
