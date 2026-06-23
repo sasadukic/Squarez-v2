@@ -4702,7 +4702,7 @@ impl App {
         }
         let panel_resp = TopBottomPanel::bottom("timeline")
             .exact_height(104.0)
-            .frame(Frame::new().fill(self.theme.bg).inner_margin(Margin { left: 10, right: 10, top: 10, bottom: 0 }))
+            .frame(Frame::new().fill(Color32::TRANSPARENT).inner_margin(Margin { left: 10, right: 10, top: 10, bottom: 0 }))
             .show_separator_line(false)
             .show(ctx, |ui| {
                 ui.set_enabled(!self.show_new_dialog);
