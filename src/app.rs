@@ -3393,38 +3393,21 @@ impl App {
     }
 
     fn draw_palette(&mut self, ui: &mut egui::Ui) {
-        // Collapsed: show section-header-style icon row; click to expand.
-        if self.ui_state.is_collapsed(Panel::Palette) {
-            let theme = self.theme.clone();
-            Frame::new().fill(theme.border.linear_multiply(0.4)).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
-                let (rect, _) = ui.allocate_exact_size(
-                    Vec2::new(ui.available_width(), 26.0),
-                    egui::Sense::hover(),
-                );
-                let icon_size = Vec2::splat(16.0);
-                let icon_rect = egui::Rect::from_center_size(
-                    Pos2::new(rect.left() + 8.0, rect.center().y),
-                    icon_size,
-                );
-                let icon_resp = ui.interact(
-                    icon_rect,
-                    ui.id().with("palette_icon"),
-                    egui::Sense::click(),
-                );
-                let icon_tint = if icon_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
-                ui.put(
-                    icon_rect,
-                    Image::new(egui::include_image!("../assets/icons/colors.svg"))
-                        .tint(icon_tint)
-                        .fit_to_exact_size(icon_size),
-                );
-                let icon_resp = icon_resp.on_hover_text("Expand Palette");
-                if icon_resp.clicked() {
-                    self.ui_state.toggle_collapsed(Panel::Palette);
-                }
-            });
-            return;
-        }
+        let (show, _, _, _, _, _) = section_header_with_add(
+            ui,
+            &self.theme,
+            &mut self.ui_state,
+            Panel::Palette,
+            egui::include_image!("../assets/icons/colors.svg"),
+            None,
+            false,
+            None,
+            false,
+            None,
+            false,
+            false,
+        );
+        if !show { return; }
 
         let theme = self.theme.clone();
         const GRID_SIZE: f32 = 176.0;
