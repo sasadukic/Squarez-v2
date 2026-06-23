@@ -2869,13 +2869,13 @@ impl App {
                             }
 
                             if Some(panel) == last_visible_panel && self.ui_state.is_collapsed(panel) {
-                                let gradient_h = 24.0;
+                                let gradient_h = 64.0;
                                 let (rect, _) = ui.allocate_exact_size(
                                     egui::vec2(ui.available_width(), gradient_h),
                                     egui::Sense::hover(),
                                 );
                                 let base_color = self.theme.border;
-                                let steps = 24;
+                                let steps = 64;
                                 for i in 0..steps {
                                     let t = i as f32 / (steps - 1) as f32;
                                     let factor = 0.4 * (1.0 - t);
