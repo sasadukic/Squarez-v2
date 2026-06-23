@@ -2789,16 +2789,6 @@ impl App {
                         self.sidebar_left_x = sidebar_x;
                         let dragging = self.sidebar_drag;
 
-                        let last_visible_panel = sidebar_order.iter().rev().find(|&&panel| {
-                            if panel == Panel::Tiles && !self.project.is_tiled() {
-                                return false;
-                            }
-                            if !self.ui_state.is_visible(panel) || (panel == Panel::Preview && self.preview_popped_out) {
-                                return false;
-                            }
-                            true
-                        }).copied();
-
                         let mut first = true;
                         for &panel in sidebar_order.iter() {
                             // Tiles panel is only meaningful when the project has more than one tile.
@@ -2865,22 +2855,6 @@ impl App {
                                     Panel::Timeline   => {},
                                     Panel::Tiles      => self.draw_tiles_section(ui),
                                     Panel::Brushes    => self.draw_brushes_section(ui),
-                                }
-                            }
-
-                            if Some(panel) == last_visible_panel && self.ui_state.is_collapsed(panel) {
-                                let remaining_h = ui.available_height();
-                                if remaining_h > 0.0 {
-                                    let (rect, _) = ui.allocate_exact_size(
-                                        egui::vec2(ui.available_width(), remaining_h),
-                                        egui::Sense::hover(),
-                                    );
-                                    let c = self.theme.border.linear_multiply(0.4);
-                                    ui.painter().rect_filled(
-                                        rect,
-                                        egui::CornerRadius::ZERO,
-                                        c,
-                                    );
                                 }
                             }
 
