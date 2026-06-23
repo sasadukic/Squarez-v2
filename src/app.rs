@@ -5625,6 +5625,47 @@ impl App {
                     self.rebuild_canvas_texture(ctx);
                 }
                 let canvas_rect = ui.available_rect_before_wrap();
+
+                // Draw diagonal gradient background (lighter top-left, darker bottom-right)
+                let bg = self.theme.bg;
+                let color_tl = Color32::from_rgb(
+                    bg.r().saturating_add(18),
+                    bg.g().saturating_add(18),
+                    bg.b().saturating_add(18),
+                );
+                let color_br = Color32::from_rgb(
+                    bg.r().saturating_sub(10),
+                    bg.g().saturating_sub(10),
+                    bg.b().saturating_sub(10),
+                );
+                let color_tr = bg;
+                let color_bl = bg;
+
+                let mut mesh = egui::Mesh::default();
+                mesh.vertices.push(egui::epaint::Vertex {
+                    pos: canvas_rect.left_top(),
+                    uv: egui::Pos2::ZERO,
+                    color: color_tl,
+                });
+                mesh.vertices.push(egui::epaint::Vertex {
+                    pos: canvas_rect.right_top(),
+                    uv: egui::Pos2::ZERO,
+                    color: color_tr,
+                });
+                mesh.vertices.push(egui::epaint::Vertex {
+                    pos: canvas_rect.right_bottom(),
+                    uv: egui::Pos2::ZERO,
+                    color: color_br,
+                });
+                mesh.vertices.push(egui::epaint::Vertex {
+                    pos: canvas_rect.left_bottom(),
+                    uv: egui::Pos2::ZERO,
+                    color: color_bl,
+                });
+                mesh.add_triangle(0, 1, 2);
+                mesh.add_triangle(0, 2, 3);
+                ui.painter().add(mesh);
+
                 if self.startup_frames < 15 {
                     self.pending_zoom_fit = true;
                     self.startup_frames += 1;
