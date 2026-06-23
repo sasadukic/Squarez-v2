@@ -4910,9 +4910,11 @@ impl App {
                             ui.painter().extend(shapes);
                         }
                         if resp.clicked() { self.add_frame(); }
-                    });
+                    }
                 });
             });
+        });
+    });
 
         // Mouse scroll wheel over timeline → navigate frames
         let timeline_rect = panel_resp.response.rect;
