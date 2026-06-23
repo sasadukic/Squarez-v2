@@ -2869,21 +2869,17 @@ impl App {
                             }
 
                             if Some(panel) == last_visible_panel && self.ui_state.is_collapsed(panel) {
-                                let gradient_h = 16.0;
+                                let gradient_h = 24.0;
                                 let (rect, _) = ui.allocate_exact_size(
                                     egui::vec2(ui.available_width(), gradient_h),
                                     egui::Sense::hover(),
                                 );
-                                let from_color = self.theme.border.linear_multiply(0.4);
-                                let to_color = self.theme.panel;
-                                let steps = 16;
+                                let base_color = self.theme.border;
+                                let steps = 24;
                                 for i in 0..steps {
                                     let t = i as f32 / (steps - 1) as f32;
-                                    let r = (from_color.r() as f32 + (to_color.r() as f32 - from_color.r() as f32) * t) as u8;
-                                    let g = (from_color.g() as f32 + (to_color.g() as f32 - from_color.g() as f32) * t) as u8;
-                                    let b = (from_color.b() as f32 + (to_color.b() as f32 - from_color.b() as f32) * t) as u8;
-                                    let a = (from_color.a() as f32 + (to_color.a() as f32 - from_color.a() as f32) * t) as u8;
-                                    let c = egui::Color32::from_rgba_unmultiplied(r, g, b, a);
+                                    let factor = 0.4 * (1.0 - t);
+                                    let c = base_color.linear_multiply(factor);
                                     let y = rect.top() + (i as f32 * (gradient_h / steps as f32));
                                     ui.painter().rect_filled(
                                         egui::Rect::from_min_max(
