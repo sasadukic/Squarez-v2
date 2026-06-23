@@ -270,40 +270,11 @@ pub struct CustomBrush {
 }
 
 fn get_embedded_animated_brush() -> CustomBrush {
-    let raw_frames: &[&[u8]] = &[
-        include_bytes!("/Users/sasadukic/Desktop/untitled folder/animated brush/1.png"),
-        include_bytes!("/Users/sasadukic/Desktop/untitled folder/animated brush/2.png"),
-        include_bytes!("/Users/sasadukic/Desktop/untitled folder/animated brush/3.png"),
-        include_bytes!("/Users/sasadukic/Desktop/untitled folder/animated brush/4.png"),
-        include_bytes!("/Users/sasadukic/Desktop/untitled folder/animated brush/5.png"),
-        include_bytes!("/Users/sasadukic/Desktop/untitled folder/animated brush/6.png"),
-    ];
-
-    let mut frames = Vec::new();
-    let mut w = 0;
-    let mut h = 0;
-
-    for bytes in raw_frames {
-        if let Ok(img) = image::load_from_memory(bytes) {
-            let rgba = img.to_rgba8();
-            if w == 0 {
-                w = rgba.width();
-                h = rgba.height();
-            }
-            let mut pixels = Vec::with_capacity((w * h) as usize);
-            for chunk in rgba.into_raw().chunks_exact(4) {
-                pixels.push([chunk[0], chunk[1], chunk[2], chunk[3]]);
-            }
-            frames.push(pixels);
-        }
-    }
-
-    let first = frames.first().cloned().unwrap_or_default();
     CustomBrush {
-        width: w,
-        height: h,
-        pixels: first,
-        frames: Some(frames),
+        width: 1,
+        height: 1,
+        pixels: vec![[255, 255, 255, 255]],
+        frames: Some(vec![vec![[255, 255, 255, 255]]]),
     }
 }
 
