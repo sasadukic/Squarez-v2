@@ -2789,6 +2789,16 @@ impl App {
                         self.sidebar_left_x = sidebar_x;
                         let dragging = self.sidebar_drag;
 
+                        let last_visible_panel = sidebar_order.iter().rev().find(|&&panel| {
+                            if panel == Panel::Tiles && !self.project.is_tiled() {
+                                return false;
+                            }
+                            if !self.ui_state.is_visible(panel) || (panel == Panel::Preview && self.preview_popped_out) {
+                                return false;
+                            }
+                            true
+                        }).copied();
+
                         let mut first = true;
                         for &panel in sidebar_order.iter() {
                             // Tiles panel is only meaningful when the project has more than one tile.
@@ -2855,6 +2865,34 @@ impl App {
                                     Panel::Timeline   => {},
                                     Panel::Tiles      => self.draw_tiles_section(ui),
                                     Panel::Brushes    => self.draw_brushes_section(ui),
+                                }
+                            }
+
+                            if Some(panel) == last_visible_panel && self.ui_state.is_collapsed(panel) {
+                                let gradient_h = 16.0;
+                                let (rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(ui.available_width(), gradient_h),
+                                    egui::Sense::hover(),
+                                );
+                                let from_color = self.theme.border.linear_multiply(0.4);
+                                let to_color = self.theme.panel;
+                                let steps = 16;
+                                for i in 0..steps {
+                                    let t = i as f32 / (steps - 1) as f32;
+                                    let r = (from_color.r() as f32 + (to_color.r() as f32 - from_color.r() as f32) * t) as u8;
+                                    let g = (from_color.g() as f32 + (to_color.g() as f32 - from_color.g() as f32) * t) as u8;
+                                    let b = (from_color.b() as f32 + (to_color.b() as f32 - from_color.b() as f32) * t) as u8;
+                                    let a = (from_color.a() as f32 + (to_color.a() as f32 - from_color.a() as f32) * t) as u8;
+                                    let c = egui::Color32::from_rgba_unmultiplied(r, g, b, a);
+                                    let y = rect.top() + (i as f32 * (gradient_h / steps as f32));
+                                    ui.painter().rect_filled(
+                                        egui::Rect::from_min_max(
+                                            egui::Pos2::new(rect.left(), y),
+                                            egui::Pos2::new(rect.right(), y + (gradient_h / steps as f32))
+                                        ),
+                                        egui::CornerRadius::ZERO,
+                                        c,
+                                    );
                                 }
                             }
 
