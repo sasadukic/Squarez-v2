@@ -4798,6 +4798,17 @@ impl App {
                                     None
                                 }
                             };
+                            
+                            // Draw checkerboard background under thumbnail
+                            if let Some(ref checker_tex) = self.canvas.checker_texture {
+                                ui.painter().image(
+                                    checker_tex.id(),
+                                    rect,
+                                    egui::Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                                    Color32::WHITE,
+                                );
+                            }
+
                             let is_dragging_self = self.frame_drag == Some(idx);
                             if let Some(tid) = thumb_id {
                                 let tint = if is_dragging_self {
