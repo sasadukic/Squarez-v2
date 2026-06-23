@@ -2869,23 +2869,15 @@ impl App {
                             }
 
                             if Some(panel) == last_visible_panel && self.ui_state.is_collapsed(panel) {
-                                let gradient_h = 64.0;
-                                let (rect, _) = ui.allocate_exact_size(
-                                    egui::vec2(ui.available_width(), gradient_h),
-                                    egui::Sense::hover(),
-                                );
-                                let base_color = self.theme.border;
-                                let steps = 64;
-                                for i in 0..steps {
-                                    let t = i as f32 / (steps - 1) as f32;
-                                    let factor = 0.4 * (1.0 - t);
-                                    let c = base_color.linear_multiply(factor);
-                                    let y = rect.top() + (i as f32 * (gradient_h / steps as f32));
+                                let remaining_h = ui.available_height();
+                                if remaining_h > 0.0 {
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(ui.available_width(), remaining_h),
+                                        egui::Sense::hover(),
+                                    );
+                                    let c = self.theme.border.linear_multiply(0.4);
                                     ui.painter().rect_filled(
-                                        egui::Rect::from_min_max(
-                                            egui::Pos2::new(rect.left(), y),
-                                            egui::Pos2::new(rect.right(), y + (gradient_h / steps as f32))
-                                        ),
+                                        rect,
                                         egui::CornerRadius::ZERO,
                                         c,
                                     );
