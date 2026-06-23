@@ -4700,12 +4700,28 @@ impl App {
         if !self.ui_state.is_visible(Panel::Timeline) {
             return;
         }
-        let panel_resp = TopBottomPanel::bottom("timeline")
-            .exact_height(104.0)
-            .frame(Frame::new().fill(Color32::TRANSPARENT).inner_margin(Margin { left: 10, right: 10, top: 10, bottom: 0 }))
-            .show_separator_line(false)
+        let all_narrow = self.ui_state.collapse_palette
+            && self.ui_state.is_collapsed(Panel::Color)
+            && self.ui_state.is_collapsed(Panel::Layers)
+            && self.ui_state.is_collapsed(Panel::Animations)
+            && self.ui_state.is_collapsed(Panel::Preview)
+            && (!self.project.is_tiled() || self.ui_state.is_collapsed(Panel::Tiles))
+            && self.ui_state.is_collapsed(Panel::Brushes);
+        let sidebar_w = if all_narrow { 38.0 } else { 176.0 };
+
+        let screen_rect = ctx.screen_rect();
+        let timeline_h = 104.0;
+        let pos = egui::Pos2::new(0.0, screen_rect.max.y - timeline_h);
+
+        let panel_resp = egui::Area::new(egui::Id::new("timeline"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(pos)
             .show(ctx, |ui| {
-                ui.set_enabled(!self.show_new_dialog);
+                ui.set_width(screen_rect.width() - sidebar_w);
+                ui.set_height(timeline_h);
+                ui.set_max_width(screen_rect.width() - sidebar_w);
+                Frame::new().fill(Color32::TRANSPARENT).inner_margin(Margin { left: 10, right: 10, top: 10, bottom: 0 }).show(ui, |ui| {
+                    ui.set_enabled(!self.show_new_dialog);
                 // Floating scrollbar: invisible at rest, fades in on hover, sits in bottom gap
                 ui.style_mut().spacing.scroll = egui::style::ScrollStyle {
                     bar_width: 9.0,
@@ -4894,7 +4910,6 @@ impl App {
                             ui.painter().extend(shapes);
                         }
                         if resp.clicked() { self.add_frame(); }
-                        }
                     });
                 });
             });
@@ -5674,7 +5689,7 @@ impl App {
                 if self.pending_zoom_fit {
                     let fit_rect = egui::Rect::from_min_max(
                         Pos2::new(canvas_rect.min.x, canvas_rect.min.y + TOP_BAR_HEIGHT),
-                        canvas_rect.max,
+                        Pos2::new(canvas_rect.max.x, canvas_rect.max.y - 104.0),
                     );
                     self.canvas.zoom_to_fit(fit_rect, disp_w, disp_h);
                     self.pending_zoom_fit = false;
