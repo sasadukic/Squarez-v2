@@ -81,6 +81,12 @@ pub struct App {
     stroke_pixel_sequence: Vec<(u32, u32)>,
     canvas_dirty: bool,
     show_new_dialog: bool,
+    show_resize_tilemap_dialog: bool,
+    resize_tilemap_w: u32,
+    resize_tilemap_h: u32,
+    resize_tilemap_w_str: String,
+    resize_tilemap_h_str: String,
+    resize_tilemap_anchor: crate::project::Anchor,
     project_created: bool,
     show_shortcuts_window: bool,
     replace_project_pending: bool, // replace project in-place instead of new tab
@@ -774,6 +780,12 @@ impl App {
             stroke_pixel_sequence: Vec::new(),
             canvas_dirty: true,
             show_new_dialog: true,
+            show_resize_tilemap_dialog: false,
+            resize_tilemap_w: 1,
+            resize_tilemap_h: 1,
+            resize_tilemap_w_str: "1".to_string(),
+            resize_tilemap_h_str: "1".to_string(),
+            resize_tilemap_anchor: crate::project::Anchor::Center,
             project_created: false,
             show_shortcuts_window: false,
             replace_project_pending: false,
@@ -1091,6 +1103,7 @@ impl App {
     /// Used to enforce one-modal-at-a-time: no second dialog can open while one is already open.
     fn any_modal_open(&self) -> bool {
         self.show_new_dialog
+            || self.show_resize_tilemap_dialog
             || self.close_tab_pending.is_some()
             || self.ramp_lab.open
             || self.tab_resize_menu.is_some()
@@ -1419,11 +1432,14 @@ impl App {
                     let frame_pixels = crate::layers::composite_frame_tile(&anim.frames[fi], cw, tile_w, tile_h);
                     // Copy tile region from frame composite into output
                     let (dst_tx, dst_ty) = if self.tile_display_active {
-                        let clip_idx = (fi - anim.tile_start) as u32;
+                        let clip_start = anim.tile_start.min(anim.frames.len().saturating_sub(1));
+                        let clip_end = anim.tile_end.clamp(clip_start, anim.frames.len().saturating_sub(1));
+                        let clip_idx = fi.saturating_sub(clip_start) as u32;
                         let drow = self.tile_display_rows;
                         // Distribute tiles evenly across rows
-                        let base = (anim.tile_end - anim.tile_start + 1) as u32 / drow;
-                        let extra = (anim.tile_end - anim.tile_start + 1) as u32 % drow;
+                        let n_tiles = clip_end - clip_start + 1;
+                        let base = n_tiles as u32 / drow;
+                        let extra = n_tiles as u32 % drow;
                         let row_tiles = |r: u32| if r < extra { base + 1 } else { base };
                         let mut r = 0u32;
                         let mut remaining = clip_idx;
@@ -4457,7 +4473,9 @@ impl App {
                                                 if self.project.is_tiled() {
                                                     if !visible {
                                                         // Switch to compact clip-only display
-                                                        let n = (self.project.animations[i].tile_end - self.project.animations[i].tile_start + 1) as u32;
+                                                        let clip_start = self.project.animations[i].tile_start.min(self.project.animations[i].frames.len().saturating_sub(1));
+                                                        let clip_end = self.project.animations[i].tile_end.clamp(clip_start, self.project.animations[i].frames.len().saturating_sub(1));
+                                                        let n = (clip_end - clip_start + 1) as u32;
                                                         let (cols, rows) = if n <= 8 {
                                                             (n, 1)
                                                         } else {
@@ -4521,7 +4539,6 @@ impl App {
                     });
                 }
             });
-        self.draw_anim_tile_menu(ui.ctx());
     }
 
 
@@ -4550,8 +4567,8 @@ impl App {
                     })
                     .show(ui, |ui| {
                         let anim = &mut self.project.animations[anim_idx];
-                        let mut start = anim.tile_start.max(min_tile.saturating_sub(1));
-                        let mut end = anim.tile_end.max(start).min(max_tile.saturating_sub(1));
+                        let mut start = anim.tile_start;
+                        let mut end = anim.tile_end;
                         const BTN: f32 = 36.0;
                         const PAD: f32 = 4.0;
                         let theme = self.theme.clone();
@@ -4559,24 +4576,35 @@ impl App {
                             ui.style_mut().spacing.item_spacing = Vec2::ZERO;
                             ui.visuals_mut().override_text_color = Some(theme.fg_desc);
                             // Start tile DragValue
-                            ui.add_sized(
+                            let resp1 = ui.add_sized(
                                 Vec2::new(64.0, BTN),
                                 egui::DragValue::new(&mut start)
-                                    .range(min_tile.saturating_sub(1) as f64..=max_tile.saturating_sub(1) as f64)
+                                    .range(0..=(max_tile.saturating_sub(1)))
                                     .prefix("Start "),
                             );
                             ui.add_space(PAD);
                             // End tile DragValue
-                            ui.add_sized(
+                            let resp2 = ui.add_sized(
                                 Vec2::new(64.0, BTN),
                                 egui::DragValue::new(&mut end)
-                                    .range(start as f64..=max_tile.saturating_sub(1) as f64)
+                                    .range(0..=(max_tile.saturating_sub(1)))
                                     .prefix("End "),
                             );
                             ui.visuals_mut().override_text_color = None;
+
+                            if resp1.changed() {
+                                if start > end {
+                                    end = start;
+                                }
+                            }
+                            if resp2.changed() {
+                                if end < start {
+                                    start = end;
+                                }
+                            }
                         });
-                        anim.tile_start = start;
-                        anim.tile_end = end;
+                        anim.tile_start = start.min(max_tile.saturating_sub(1));
+                        anim.tile_end = end.clamp(anim.tile_start, max_tile.saturating_sub(1));
                     });
             });
 
@@ -9770,6 +9798,333 @@ print("FAIL")
         }
     }
 
+    fn draw_resize_tilemap_dialog(&mut self, ctx: &egui::Context) {
+        if !self.show_resize_tilemap_dialog {
+            return;
+        }
+
+        let theme = self.theme.clone();
+
+        egui::Area::new("resize_tilemap_popup".into())
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                Frame::new()
+                    .fill(theme.panel)
+                    .stroke(egui::Stroke::NONE)
+                    .corner_radius(egui::CornerRadius::same(6))
+                    .shadow(egui::Shadow {
+                        offset: [0, 14],
+                        blur: 36,
+                        spread: 0,
+                        color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
+                    })
+                    .inner_margin(Margin { left: 12, right: 12, top: 12, bottom: 12 })
+                    .show(ui, |ui| {
+                        ui.set_width(220.0);
+
+                        // Header
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(220.0, 24.0),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                let header_text = RichText::new("RESIZE TILEMAP")
+                                    .color(theme.fg)
+                                    .font(FontId::new(FONT_SIZE_SM, FontFamily::Name("bold".into())));
+                                ui.label(header_text);
+
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let close_text = RichText::new("×")
+                                        .color(theme.fg_desc)
+                                        .font(FontId::new(16.0, FontFamily::Proportional));
+                                    let close_btn = ui.add(egui::Label::new(close_text).sense(egui::Sense::click()))
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                    if close_btn.clicked() {
+                                        self.show_resize_tilemap_dialog = false;
+                                    }
+                                });
+                            }
+                        );
+
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.add_space(8.0);
+
+                        // Width / Height input fields (in tiles)
+                        let row_h = 24.0;
+                        let label_w = 80.0;
+                        let input_w = 100.0;
+
+                        // Width row
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(220.0, row_h),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.set_width(220.0);
+                                let lbl = RichText::new("Width (tiles)")
+                                    .color(theme.fg_desc)
+                                    .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional));
+                                ui.add_sized(Vec2::new(label_w, row_h), egui::Label::new(lbl));
+
+                                ui.add_space(8.0);
+
+                                Frame::new()
+                                    .fill(theme.bg)
+                                    .corner_radius(egui::CornerRadius::same(3))
+                                    .inner_margin(Margin::symmetric(6, 2))
+                                    .show(ui, |ui| {
+                                        let (r, _) = ui.allocate_exact_size(Vec2::new(input_w, row_h - 4.0), egui::Sense::hover());
+                                        let resp = ui.put(r, egui::TextEdit::singleline(&mut self.resize_tilemap_w_str)
+                                            .frame(false)
+                                            .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
+                                            .text_color(theme.fg)
+                                            .id_source("resize_tilemap_w"));
+                                        if resp.changed() {
+                                            if let Ok(val) = self.resize_tilemap_w_str.trim().parse::<u32>() {
+                                                self.resize_tilemap_w = val.clamp(1, 100);
+                                            }
+                                        } else if !resp.has_focus() {
+                                            self.resize_tilemap_w_str = self.resize_tilemap_w.to_string();
+                                        }
+                                    });
+                            }
+                        );
+
+                        ui.add_space(6.0);
+
+                        // Height row
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(220.0, row_h),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.set_width(220.0);
+                                let lbl = RichText::new("Height (tiles)")
+                                    .color(theme.fg_desc)
+                                    .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional));
+                                ui.add_sized(Vec2::new(label_w, row_h), egui::Label::new(lbl));
+
+                                ui.add_space(8.0);
+
+                                Frame::new()
+                                    .fill(theme.bg)
+                                    .corner_radius(egui::CornerRadius::same(3))
+                                    .inner_margin(Margin::symmetric(6, 2))
+                                    .show(ui, |ui| {
+                                        let (r, _) = ui.allocate_exact_size(Vec2::new(input_w, row_h - 4.0), egui::Sense::hover());
+                                        let resp = ui.put(r, egui::TextEdit::singleline(&mut self.resize_tilemap_h_str)
+                                            .frame(false)
+                                            .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
+                                            .text_color(theme.fg)
+                                            .id_source("resize_tilemap_h"));
+                                        if resp.changed() {
+                                            if let Ok(val) = self.resize_tilemap_h_str.trim().parse::<u32>() {
+                                                self.resize_tilemap_h = val.clamp(1, 100);
+                                            }
+                                        } else if !resp.has_focus() {
+                                            self.resize_tilemap_h_str = self.resize_tilemap_h.to_string();
+                                        }
+                                    });
+                            }
+                        );
+
+                        ui.add_space(10.0);
+
+                        // Anchor selection title
+                        let anchor_title = RichText::new("Anchor Point")
+                            .color(theme.fg_desc)
+                            .font(FontId::new(FONT_SIZE_SM - 1.0, FontFamily::Name("bold".into())));
+                        ui.label(anchor_title);
+                        ui.add_space(6.0);
+
+                        // 3x3 Anchor visual selector grid
+                        let btn_sz = 32.0;
+                        let gap = 4.0;
+                        let grid_w = btn_sz * 3.0 + gap * 2.0;
+                        
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(grid_w, grid_w),
+                            egui::Layout::top_down(egui::Align::Center),
+                            |ui| {
+                                let anchors = [
+                                    [crate::project::Anchor::TopLeft, crate::project::Anchor::Top, crate::project::Anchor::TopRight],
+                                    [crate::project::Anchor::Left, crate::project::Anchor::Center, crate::project::Anchor::Right],
+                                    [crate::project::Anchor::BottomLeft, crate::project::Anchor::Bottom, crate::project::Anchor::BottomRight],
+                                ];
+
+                                for row in &anchors {
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing = Vec2::new(gap, 0.0);
+                                        for &anchor in row {
+                                            let is_selected = self.resize_tilemap_anchor == anchor;
+                                            
+                                            // Determine button style
+                                            let bg_color = if is_selected {
+                                                theme.accent
+                                            } else {
+                                                theme.bg
+                                            };
+                                            
+                                            let (rect, resp) = ui.allocate_exact_size(Vec2::splat(btn_sz), egui::Sense::click());
+                                            let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+                                            
+                                            let paint_bg = if resp.hovered() && !is_selected {
+                                                theme.surface
+                                            } else {
+                                                bg_color
+                                            };
+                                            
+                                            ui.painter().rect_filled(rect, 4.0, paint_bg);
+                                            
+                                            if resp.clicked() {
+                                                self.resize_tilemap_anchor = anchor;
+                                            }
+                                            
+                                            // Draw icon/content inside the button
+                                            let tint = if is_selected {
+                                                theme.fg
+                                            } else {
+                                                theme.fg_desc
+                                            };
+                                            
+                                            match anchor {
+                                                crate::project::Anchor::TopLeft => {
+                                                    let img = egui::Image::new(egui::include_image!("../assets/icons/anchor_corner.png"))
+                                                        .tint(tint)
+                                                        .fit_to_exact_size(Vec2::splat(16.0));
+                                                    img.paint_at(ui, rect.shrink(8.0));
+                                                }
+                                                crate::project::Anchor::TopRight => {
+                                                    let img = egui::Image::new(egui::include_image!("../assets/icons/anchor_corner.png"))
+                                                        .rotate(std::f32::consts::FRAC_PI_2, egui::Vec2::splat(0.5))
+                                                        .tint(tint)
+                                                        .fit_to_exact_size(Vec2::splat(16.0));
+                                                    img.paint_at(ui, rect.shrink(8.0));
+                                                }
+                                                crate::project::Anchor::BottomRight => {
+                                                    let img = egui::Image::new(egui::include_image!("../assets/icons/anchor_corner.png"))
+                                                        .rotate(std::f32::consts::PI, egui::Vec2::splat(0.5))
+                                                        .tint(tint)
+                                                        .fit_to_exact_size(Vec2::splat(16.0));
+                                                    img.paint_at(ui, rect.shrink(8.0));
+                                                }
+                                                crate::project::Anchor::BottomLeft => {
+                                                    let img = egui::Image::new(egui::include_image!("../assets/icons/anchor_corner.png"))
+                                                        .rotate(3.0 * std::f32::consts::FRAC_PI_2, egui::Vec2::splat(0.5))
+                                                        .tint(tint)
+                                                        .fit_to_exact_size(Vec2::splat(16.0));
+                                                    img.paint_at(ui, rect.shrink(8.0));
+                                                }
+                                                crate::project::Anchor::Right => {
+                                                    let img = egui::Image::new(egui::include_image!("../assets/icons/anchor_side.png"))
+                                                        .tint(tint)
+                                                        .fit_to_exact_size(Vec2::splat(16.0));
+                                                    img.paint_at(ui, rect.shrink(8.0));
+                                                }
+                                                crate::project::Anchor::Bottom => {
+                                                    let img = egui::Image::new(egui::include_image!("../assets/icons/anchor_side.png"))
+                                                        .rotate(std::f32::consts::FRAC_PI_2, egui::Vec2::splat(0.5))
+                                                        .tint(tint)
+                                                        .fit_to_exact_size(Vec2::splat(16.0));
+                                                    img.paint_at(ui, rect.shrink(8.0));
+                                                }
+                                                crate::project::Anchor::Left => {
+                                                    let img = egui::Image::new(egui::include_image!("../assets/icons/anchor_side.png"))
+                                                        .rotate(std::f32::consts::PI, egui::Vec2::splat(0.5))
+                                                        .tint(tint)
+                                                        .fit_to_exact_size(Vec2::splat(16.0));
+                                                    img.paint_at(ui, rect.shrink(8.0));
+                                                }
+                                                crate::project::Anchor::Top => {
+                                                    let img = egui::Image::new(egui::include_image!("../assets/icons/anchor_side.png"))
+                                                        .rotate(3.0 * std::f32::consts::FRAC_PI_2, egui::Vec2::splat(0.5))
+                                                        .tint(tint)
+                                                        .fit_to_exact_size(Vec2::splat(16.0));
+                                                    img.paint_at(ui, rect.shrink(8.0));
+                                                }
+                                                crate::project::Anchor::Center => {
+                                                    let center_pt = rect.center();
+                                                    ui.painter().circle_filled(center_pt, 3.0, tint);
+                                                }
+                                            }
+                                        }
+                                    });
+                                    ui.add_space(gap);
+                                }
+                            }
+                        );
+
+                        ui.add_space(12.0);
+
+                        // Action Buttons: Resize / Cancel
+                        let btn_w = 96.0;
+                        let btn_h = 24.0;
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(200.0, btn_h),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.set_width(200.0);
+                                
+                                // Resize Button
+                                let (resize_rect, resize_resp) = ui.allocate_exact_size(
+                                    Vec2::new(btn_w, btn_h), egui::Sense::click(),
+                                );
+                                let resize_bg = if resize_resp.hovered() { theme.accent } else { theme.surface };
+                                ui.painter().rect_filled(resize_rect, 4.0, resize_bg);
+                                
+                                ui.painter().text(
+                                    resize_rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    "Resize",
+                                    FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
+                                    theme.fg,
+                                );
+                                
+                                if resize_resp.clicked() {
+                                    self.undo_stack = UndoStack::new();
+                                    
+                                    self.project.resize_tilemap(
+                                        self.resize_tilemap_w,
+                                        self.resize_tilemap_h,
+                                        self.resize_tilemap_anchor,
+                                    );
+                                    
+                                    self.thumbnails = Self::thumbnails_for(&self.project);
+                                    self.canvas_dirty = true;
+                                    self.active_modified = true;
+                                    self.show_resize_tilemap_dialog = false;
+                                }
+
+                                ui.add_space(8.0);
+
+                                // Cancel Button
+                                let (cancel_rect, cancel_resp) = ui.allocate_exact_size(
+                                    Vec2::new(btn_w, btn_h), egui::Sense::click(),
+                                );
+                                let cancel_bg = if cancel_resp.hovered() { theme.surface } else { Color32::TRANSPARENT };
+                                if cancel_bg != Color32::TRANSPARENT {
+                                    ui.painter().rect_filled(cancel_rect, 4.0, cancel_bg);
+                                }
+                                let cancel_col = if cancel_resp.hovered() { theme.fg } else { theme.fg_desc };
+                                ui.painter().text(
+                                    cancel_rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    "Cancel",
+                                    FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
+                                    cancel_col,
+                                );
+                                if cancel_resp.clicked() {
+                                    self.show_resize_tilemap_dialog = false;
+                                }
+                            }
+                        );
+                    });
+            });
+
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.show_resize_tilemap_dialog = false;
+        }
+    }
+
     /// Static logo in the top-left brand area. Clickable to toggle shortcuts reference.
     fn draw_logo(&mut self, ui: &mut egui::Ui, theme: &Theme) {
         ui.allocate_ui_with_layout(
@@ -9870,6 +10225,7 @@ print("FAIL")
                                         ("⌘S", "Save project"),
                                         ("⇧⌘S", "Save project as..."),
                                         ("⌘E", "Toggle PNG export popup"),
+                                        ("⌘T", "Resize Tilemap (Tiled projects)"),
                                     ]),
                                     ("EDIT & HISTORY", vec![
                                         ("⌘Z", "Undo last paint action"),
@@ -10916,6 +11272,7 @@ impl eframe::App for App {
         let file_save = command && !shift && ctx.input(|i| i.key_pressed(egui::Key::S));
         let file_save_as = command &&  shift && ctx.input(|i| i.key_pressed(egui::Key::S));
         let file_export = command && !shift && ctx.input(|i| i.key_pressed(egui::Key::E));
+        let tilemap_resize = command && !shift && self.project.is_tiled() && ctx.input(|i| i.key_pressed(egui::Key::T));
         let edit_paste = ctx.input(|i| {
             i.events.iter().any(|event| {
                 if let egui::Event::Key { key: egui::Key::V, pressed: false, modifiers, .. } = event {
@@ -11014,6 +11371,14 @@ impl eframe::App for App {
         }
 
         if file_new  { self.open_new_dialog(false); }
+        if tilemap_resize && !self.any_modal_open() {
+            self.resize_tilemap_w = self.project.tiles_w;
+            self.resize_tilemap_h = self.project.tiles_h;
+            self.resize_tilemap_w_str = self.project.tiles_w.to_string();
+            self.resize_tilemap_h_str = self.project.tiles_h.to_string();
+            self.resize_tilemap_anchor = crate::project::Anchor::Center;
+            self.show_resize_tilemap_dialog = true;
+        }
         if file_open && !self.any_modal_open() {
             if let Some(path) = rfd_open() {
                 if let Ok(p) = load_sqr(&path) {
@@ -11109,6 +11474,7 @@ impl eframe::App for App {
         self.draw_brush_import_menu(ctx);
         self.draw_canvas_context_menu(ctx);
         self.draw_new_project_dialog(ctx);
+        self.draw_resize_tilemap_dialog(ctx);
         self.draw_shortcuts_dialog(ctx);
         self.draw_ramp_lab(ctx);
         self.draw_floating_preview(ctx);

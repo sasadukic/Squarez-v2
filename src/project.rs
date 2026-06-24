@@ -3,6 +3,19 @@ use serde::{Deserialize, Serialize};
 
 pub type Rgba = [u8; 4];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Anchor {
+    TopLeft,
+    Top,
+    TopRight,
+    Left,
+    Center,
+    Right,
+    BottomLeft,
+    Bottom,
+    BottomRight,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
     pub name: String,
@@ -66,6 +79,84 @@ impl Project {
 
     pub fn is_tiled(&self) -> bool {
         self.tiles_w > 1 || self.tiles_h > 1
+    }
+
+    pub fn resize_tilemap(&mut self, new_tiles_w: u32, new_tiles_h: u32, anchor: Anchor) {
+        if !self.is_tiled() { return; }
+        
+        let old_tiles_w = self.tiles_w;
+        let old_tiles_h = self.tiles_h;
+        let tile_w = self.tile_w;
+        let tile_h = self.tile_h;
+        
+        let new_canvas_width = new_tiles_w * tile_w;
+        let new_canvas_height = new_tiles_h * tile_h;
+        
+        let offset_x = match anchor {
+            Anchor::TopLeft | Anchor::Left | Anchor::BottomLeft => 0,
+            Anchor::Top | Anchor::Center | Anchor::Bottom => (new_tiles_w as i32 - old_tiles_w as i32) / 2,
+            Anchor::TopRight | Anchor::Right | Anchor::BottomRight => new_tiles_w as i32 - old_tiles_w as i32,
+        };
+        
+        let offset_y = match anchor {
+            Anchor::TopLeft | Anchor::Top | Anchor::TopRight => 0,
+            Anchor::Left | Anchor::Center | Anchor::Right => (new_tiles_h as i32 - old_tiles_h as i32) / 2,
+            Anchor::BottomLeft | Anchor::Bottom | Anchor::BottomRight => new_tiles_h as i32 - old_tiles_h as i32,
+        };
+        
+        for anim in &mut self.animations {
+            let mut new_frames = Vec::new();
+            let old_frames = std::mem::take(&mut anim.frames);
+            
+            for new_ty in 0..new_tiles_h {
+                for new_tx in 0..new_tiles_w {
+                    let old_tx = new_tx as i32 - offset_x;
+                    let old_ty = new_ty as i32 - offset_y;
+                    
+                    if old_tx >= 0 && old_tx < old_tiles_w as i32 && old_ty >= 0 && old_ty < old_tiles_h as i32 {
+                        let old_fi = (old_ty * old_tiles_w as i32 + old_tx) as usize;
+                        if old_fi < old_frames.len() {
+                            let mut frame = old_frames[old_fi].clone();
+                            frame.resize_canvas(new_canvas_width, new_canvas_height);
+                            new_frames.push(frame);
+                            continue;
+                        }
+                    }
+                    
+                    let mut frame = if let Some(template) = old_frames.first() {
+                        let layers: Vec<Layer> = template.layers.iter().map(|l| {
+                            let mut new_layer = Layer::new_with_id(l.name.clone(), new_canvas_width, new_canvas_height, l.id);
+                            new_layer.visible = l.visible;
+                            new_layer.locked = l.locked;
+                            new_layer.opacity = l.opacity;
+                            new_layer.blend_mode = l.blend_mode.clone();
+                            new_layer.is_group = l.is_group;
+                            new_layer.group_id = l.group_id;
+                            new_layer.collapsed = l.collapsed;
+                            new_layer
+                        }).collect();
+                        Frame {
+                            duration_ms: template.duration_ms,
+                            layers,
+                            dirty: true,
+                        }
+                    } else {
+                        Frame::new(new_canvas_width, new_canvas_height, 1)
+                    };
+                    new_frames.push(frame);
+                }
+            }
+            anim.frames = new_frames;
+            
+            let frame_count = anim.frames.len();
+            anim.tile_start = anim.tile_start.min(frame_count.saturating_sub(1));
+            anim.tile_end = anim.tile_end.clamp(anim.tile_start, frame_count.saturating_sub(1));
+        }
+        
+        self.tiles_w = new_tiles_w;
+        self.tiles_h = new_tiles_h;
+        self.canvas_width = new_canvas_width;
+        self.canvas_height = new_canvas_height;
     }
 
     pub fn next_layer_id(&mut self) -> u64 {
