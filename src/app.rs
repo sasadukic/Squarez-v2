@@ -962,6 +962,32 @@ impl App {
         )
     }
 
+    fn overlay_floating_selection(&self, pixels: &mut [u8], cw: u32, ch: u32) {
+        if self.select_state.has_float() {
+            if let Some((ax, ay, aw, ah)) = self.select_state.transformed_aabb() {
+                let w_i = cw as i32;
+                let h_i = ch as i32;
+                let x0 = (ax.floor() as i32).max(0);
+                let y0 = (ay.floor() as i32).max(0);
+                let x1 = ((ax + aw).ceil() as i32).min(w_i);
+                let y1 = ((ay + ah).ceil() as i32).min(h_i);
+                for cy in y0..y1 {
+                    for cx in x0..x1 {
+                        if let Some(sample) = sample_transformed(&self.select_state, cx, cy) {
+                            let i = (cy as u32 * cw + cx as u32) as usize * 4;
+                            let sa = sample[3] as f32 / 255.0;
+                            let inv = 1.0 - sa;
+                            pixels[i]     = (sample[0] as f32 * sa + pixels[i]     as f32 * inv) as u8;
+                            pixels[i + 1] = (sample[1] as f32 * sa + pixels[i + 1] as f32 * inv) as u8;
+                            pixels[i + 2] = (sample[2] as f32 * sa + pixels[i + 2] as f32 * inv) as u8;
+                            pixels[i + 3] = ((sample[3] as f32 + pixels[i + 3] as f32 * inv).min(255.0)) as u8;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fn mark_all_thumbnails_dirty(&mut self) {
         let ai = self.project.active_animation;
         if ai < self.thumbnails.len() {
@@ -1477,7 +1503,7 @@ impl App {
             let ai = self.project.active_animation;
             let fi = self.project.active_frame;
             if ai < self.thumbnails.len() && fi < self.thumbnails[ai].len() {
-                let (thumb_pixels, thumb_w, thumb_h) = if self.project.is_tiled() {
+                let (mut thumb_pixels, thumb_w, thumb_h) = if self.project.is_tiled() {
                     let tile_w = self.project.tile_w;
                     let tile_h = self.project.tile_h;
                     (crate::layers::composite_frame_tile(
@@ -1490,6 +1516,7 @@ impl App {
                         cw, ch,
                     ), cw, ch)
                 };
+                self.overlay_floating_selection(&mut thumb_pixels, thumb_w, thumb_h);
                 let img = egui::ColorImage::from_rgba_unmultiplied([thumb_w as usize, thumb_h as usize], &thumb_pixels);
                 let handle = ctx.load_texture(
                     format!("thumb_{}_{}", ai, fi),
@@ -7287,7 +7314,7 @@ print("FAIL")
     }
 
     fn draw_preview_content(&mut self, ui: &mut egui::Ui) {
-        let (pixels, pw_size, ph_size) = if self.project.is_tiled() {
+        let (mut pixels, pw_size, ph_size) = if self.project.is_tiled() {
             let tile_w = self.project.tile_w;
             let tile_h = self.project.tile_h;
             let cw = self.project.canvas_width;
@@ -7300,6 +7327,7 @@ print("FAIL")
         } else {
             (self.composite_active_frame(), self.project.canvas_width, self.project.canvas_height)
         };
+        self.overlay_floating_selection(&mut pixels, pw_size, ph_size);
         let tex = ui.ctx().load_texture(
             "preview_content",
             egui::ColorImage::from_rgba_unmultiplied(
