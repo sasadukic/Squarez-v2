@@ -3442,7 +3442,16 @@ impl App {
                 let current_fg = self.color_state.foreground;
                 let is_active = self.active_palette_idx == Some(i) || (self.active_palette_idx.is_none() && swatch == current_fg);
                 if is_active && self.shading_ramp.is_none() {
-                    let stroke = egui::Stroke::new(1.0, Color32::WHITE);
+                    let r = swatch[0] as f32 / 255.0;
+                    let g = swatch[1] as f32 / 255.0;
+                    let b = swatch[2] as f32 / 255.0;
+                    let luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                    let stroke_color = if luminance > 0.6 {
+                        theme.bg
+                    } else {
+                        Color32::WHITE
+                    };
+                    let stroke = egui::Stroke::new(1.0, stroke_color);
                     let dash = 3.0_f32;
                     let gap  = 3.0_f32;
                     let w_side = sw;
