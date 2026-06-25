@@ -5926,6 +5926,8 @@ impl App {
                         let dash = 4.0_f32;
                         let gap = 4.0_f32;
                         
+                        let black_line = egui::Shape::line(path.clone(), egui::Stroke::new(1.0, egui::Color32::BLACK));
+                        painter.add(black_line);
                         let shapes = egui::Shape::dashed_line(&path, egui::Stroke::new(1.0, egui::Color32::WHITE), dash, gap);
                         painter.extend(shapes);
                     }
@@ -5979,6 +5981,8 @@ impl App {
 
 
                         // Dotted outline
+                        let black_line = egui::Shape::line(path.clone(), egui::Stroke::new(1.0, egui::Color32::BLACK));
+                        painter.add(black_line);
                         let shapes = egui::Shape::dashed_line(&path, egui::Stroke::new(1.0, egui::Color32::WHITE), dash, gap);
                         painter.extend(shapes);
                     }
