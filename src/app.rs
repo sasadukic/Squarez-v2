@@ -11514,9 +11514,9 @@ impl eframe::App for App {
         self.draw_top_bar(ctx);
         self.draw_right_sidebar(ctx); // full height — right edge
         self.draw_timeline(ctx);      // gets x=0..W-176, frames start at left edge
+        self.draw_workspace(ctx);
         self.draw_left_toolbar(ctx);  // occupies left strip above timeline only
         self.draw_tool_submenu(ctx);  // floating tool group submenu (right of toolbar)
-        self.draw_workspace(ctx);
         self.draw_layer_context_menu(ctx);
         self.draw_brush_context_menu(ctx);
         self.draw_brush_import_menu(ctx);
