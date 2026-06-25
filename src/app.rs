@@ -8358,7 +8358,24 @@ print("FAIL")
             if self.project.animations[ai].frames[fi].layers[li].background_color.is_some() { return; }
         }
 
-        let press_started = response.drag_started_by(egui::PointerButton::Primary) || (response.ctx.input(|i| i.pointer.primary_pressed()) && response.hovered());
+        let timeline_visible = self.ui_state.is_visible(Panel::Timeline);
+        let timeline_y = if timeline_visible {
+            canvas_rect.max.y - 104.0
+        } else {
+            canvas_rect.max.y
+        };
+
+        let is_over_ui = pos.x < 38.0 // Left toolbar
+            || pos.y < TOP_BAR_HEIGHT // Top bar
+            || pos.x > self.sidebar_left_x // Right sidebar
+            || pos.y > timeline_y // Timeline
+            || (self.open_tool_submenu.is_some() && pos.x < 38.0 + 80.0 && pos.y < TOP_BAR_HEIGHT + 200.0) // Tool submenu
+            || self.palette_browser.open
+            || self.tile_browser.open
+            || self.any_modal_open();
+
+        let press_started = (response.drag_started_by(egui::PointerButton::Primary) || (response.ctx.input(|i| i.pointer.primary_pressed()) && response.hovered()))
+            && !is_over_ui;
         if press_started && self.drag_start.is_none() {
             if self.active_brush_index != self.last_active_brush_idx {
                 self.last_brush_frame_idx = None;
