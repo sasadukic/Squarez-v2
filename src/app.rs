@@ -3421,6 +3421,8 @@ impl App {
             let is_dragging = ui.input(|i| i.pointer.is_decidedly_dragging());
             let released = ui.input(|i| i.pointer.any_released());
 
+            let mut active_outline = None;
+
             // --- Palette swatches ---
             for i in 0..palette_len {
                 let col = i % cols;
@@ -3442,41 +3444,7 @@ impl App {
                 let current_fg = self.color_state.foreground;
                 let is_active = self.active_palette_idx == Some(i) || (self.active_palette_idx.is_none() && swatch == current_fg);
                 if is_active && self.shading_ramp.is_none() {
-                    let r = swatch[0] as f32 / 255.0;
-                    let g = swatch[1] as f32 / 255.0;
-                    let b = swatch[2] as f32 / 255.0;
-                    let luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-                    let stroke_color = if luminance > 0.6 {
-                        theme.bg
-                    } else {
-                        Color32::WHITE
-                    };
-                    let stroke = egui::Stroke::new(1.0, stroke_color);
-                    let dash = 3.0_f32;
-                    let gap  = 3.0_f32;
-                    let w_side = sw;
-                    let h_side = sh;
-                    let perim = 2.0 * (w_side + h_side);
-                    let t = ui.ctx().input(|inp| inp.time) as f32;
-                    ui.ctx().request_repaint();
-                    let off = (t * 15.0).rem_euclid(perim);
-                    
-                    let (start, waypoints): (Pos2, [Pos2; 4]) = if off < w_side {
-                        (Pos2::new(rect.left() + off, rect.top()),
-                         [rect.right_top(), rect.right_bottom(), rect.left_bottom(), rect.left_top()])
-                    } else if off < w_side + h_side {
-                        (Pos2::new(rect.right(), rect.top() + (off - w_side)),
-                         [rect.right_bottom(), rect.left_bottom(), rect.left_top(), rect.right_top()])
-                    } else if off < 2.0 * w_side + h_side {
-                        (Pos2::new(rect.right() - (off - w_side - h_side), rect.bottom()),
-                         [rect.left_bottom(), rect.left_top(), rect.right_top(), rect.right_bottom()])
-                    } else {
-                        (Pos2::new(rect.left(), rect.bottom() - (off - 2.0 * w_side - h_side)),
-                         [rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom()])
-                    };
-                    let path = [start, waypoints[0], waypoints[1], waypoints[2], waypoints[3], start];
-                    let shapes = egui::Shape::dashed_line(&path, stroke, dash, gap);
-                    painter.extend(shapes);
+                    active_outline = Some((rect, swatch));
                 }
 
                 let resp = ui.interact(rect, ui.id().with(("swatch", i)), egui::Sense::click_and_drag());
@@ -3723,6 +3691,45 @@ impl App {
                     self.palette_browser.save_dialog_name = name;
                     self.palette_browser.save_dialog_colors = Some(colors);
                 }
+            }
+
+            // Draw active outline on top of all swatches/cells (highest z-depth)
+            if let Some((rect, swatch)) = active_outline {
+                let r = swatch[0] as f32 / 255.0;
+                let g = swatch[1] as f32 / 255.0;
+                let b = swatch[2] as f32 / 255.0;
+                let luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                let stroke_color = if luminance > 0.6 {
+                    theme.bg
+                } else {
+                    Color32::WHITE
+                };
+                let stroke = egui::Stroke::new(1.0, stroke_color);
+                let dash = 3.0_f32;
+                let gap  = 3.0_f32;
+                let w_side = sw;
+                let h_side = sh;
+                let perim = 2.0 * (w_side + h_side);
+                let t = ui.ctx().input(|inp| inp.time) as f32;
+                ui.ctx().request_repaint();
+                let off = (t * 15.0).rem_euclid(perim);
+                
+                let (start, waypoints): (Pos2, [Pos2; 4]) = if off < w_side {
+                    (Pos2::new(rect.left() + off, rect.top()),
+                     [rect.right_top(), rect.right_bottom(), rect.left_bottom(), rect.left_top()])
+                } else if off < w_side + h_side {
+                    (Pos2::new(rect.right(), rect.top() + (off - w_side)),
+                     [rect.right_bottom(), rect.left_bottom(), rect.left_top(), rect.right_top()])
+                } else if off < 2.0 * w_side + h_side {
+                    (Pos2::new(rect.right() - (off - w_side - h_side), rect.bottom()),
+                     [rect.left_bottom(), rect.left_top(), rect.right_top(), rect.right_bottom()])
+                } else {
+                    (Pos2::new(rect.left(), rect.bottom() - (off - 2.0 * w_side - h_side)),
+                     [rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom()])
+                };
+                let path = [start, waypoints[0], waypoints[1], waypoints[2], waypoints[3], start];
+                let shapes = egui::Shape::dashed_line(&path, stroke, dash, gap);
+                painter.extend(shapes);
             }
 
             // --- Shading ramp group highlights (grouped by row) ---
