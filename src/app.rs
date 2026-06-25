@@ -1429,6 +1429,7 @@ impl App {
                 self.iso_mode = crate::tools::IsoMode::Off;
             }
         }
+        self.clear_transient_state();
     }
 
     fn rebuild_canvas_texture(&mut self, ctx: &egui::Context) {
@@ -2564,7 +2565,7 @@ impl App {
                             self.open_tool_submenu = Some(0);
                         }
                     } else {
-                        self.active_tool = self.pen_group_current.clone();
+                        self.set_active_tool(self.pen_group_current.clone());
                         self.open_tool_submenu = None;
                     }
                 }
@@ -2582,7 +2583,7 @@ impl App {
                             self.open_tool_submenu = Some(1);
                         }
                     } else {
-                        self.active_tool = self.bucket_group_current.clone();
+                        self.set_active_tool(self.bucket_group_current.clone());
                         self.open_tool_submenu = None;
                     }
                 }
@@ -2600,7 +2601,7 @@ impl App {
                             self.open_tool_submenu = Some(2);
                         }
                     } else {
-                        self.active_tool = self.shape_group_current.clone();
+                        self.set_active_tool(self.shape_group_current.clone());
                         self.open_tool_submenu = None;
                     }
                 }
@@ -2618,7 +2619,7 @@ impl App {
                             self.open_tool_submenu = Some(3);
                         }
                     } else {
-                        self.active_tool = self.select_group_current.clone();
+                        self.set_active_tool(self.select_group_current.clone());
                         self.open_tool_submenu = None;
                     }
                 }
@@ -2627,6 +2628,7 @@ impl App {
                 let zoom_resp = tool_btn(ui, &mut self.active_tool, &self.theme, ActiveTool::Zoom, egui::include_image!("../assets/icons/zoom.svg"))
                     .on_hover_text("Zoom View Tool (Double-click button to fit canvas)");
                 if zoom_resp.clicked() && !self.any_modal_open() {
+                    self.clear_transient_state();
                     let now = ctx.input(|i| i.time);
                     if now - self.last_zoom_tool_btn_click < 0.4 {
                         self.pending_zoom_fit = true;
