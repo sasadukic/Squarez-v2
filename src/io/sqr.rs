@@ -20,24 +20,27 @@ pub fn save_sqr(project: &Project, path: &Path) -> Result<(), Box<dyn std::error
 pub fn load_sqr(path: &Path) -> Result<Project, Box<dyn std::error::Error>> {
     let mut file = std::fs::File::open(path)?;
     let mut magic = [0u8; 4];
-    file.read_exact(&mut magic)?;
-    if &magic != MAGIC {
-        return Err("Invalid .sqr file: bad magic bytes".into());
-    }
-    let mut version = [0u8; 1];
-    file.read_exact(&mut version)?;
-    if version[0] != VERSION {
-        return Err(format!("Unsupported .sqr version: {}", version[0]).into());
-    }
-    let mut compressed = Vec::new();
-    file.read_to_end(&mut compressed)?;
-    let decoded = lz4_flex::decompress_size_prepended(&compressed)?;
-    match bincode::deserialize::<Project>(&decoded) {
-        Ok(project) => Ok(project),
-        Err(current_error) => match bincode::deserialize::<LegacyProjectV1>(&decoded) {
-            Ok(legacy) => Ok(legacy.into_project()),
-            Err(_) => Err(Box::new(current_error)),
-        },
+    if file.read_exact(&mut magic).is_ok() && &magic == MAGIC {
+        let mut version = [0u8; 1];
+        file.read_exact(&mut version)?;
+        if version[0] != VERSION {
+            return Err(format!("Unsupported .sqr version: {}", version[0]).into());
+        }
+        let mut compressed = Vec::new();
+        file.read_to_end(&mut compressed)?;
+        let decoded = lz4_flex::decompress_size_prepended(&compressed)?;
+        match bincode::deserialize::<Project>(&decoded) {
+            Ok(project) => Ok(project),
+            Err(current_error) => match bincode::deserialize::<LegacyProjectV1>(&decoded) {
+                Ok(legacy) => Ok(legacy.into_project()),
+                Err(_) => Err(Box::new(current_error)),
+            },
+        }
+    } else {
+        match crate::io::v2::load_v2(path) {
+            Ok(project) => Ok(project),
+            Err(e) => Err(Box::new(e)),
+        }
     }
 }
 
