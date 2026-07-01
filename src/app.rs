@@ -7045,16 +7045,7 @@ print("FAIL")
                             for px in 0..brush.width {
                                 let p = pixels_to_draw[(py * brush.width + px) as usize];
                                 if p[3] > 0 {
-                                    let mut color = Color32::from_rgba_premultiplied(p[0], p[1], p[2], p[3]);
-                                    if active && self.use_swatch_color {
-                                        let foreground = self.color_state.foreground;
-                                        color = Color32::from_rgba_unmultiplied(
-                                            foreground[0],
-                                            foreground[1],
-                                            foreground[2],
-                                            p[3],
-                                        );
-                                    }
+                                    let color = Color32::from_rgba_premultiplied(p[0], p[1], p[2], p[3]);
                                     let px_rect = egui::Rect::from_min_size(
                                         Pos2::new(tx + px as f32 * scale, ty + py as f32 * scale),
                                         Vec2::splat(scale),
