@@ -9215,8 +9215,9 @@ print("FAIL")
         let h = self.project.canvas_height;
         let (cx_px, cy_px) = self.canvas.screen_to_canvas_f32(pos, canvas_rect, w, h);
 
-        // Start an interaction on drag_started inside a handle or the rect.
-        if response.drag_started_by(egui::PointerButton::Primary) {
+        // Start an interaction on press or drag_started inside a handle or the rect.
+        let press_started = response.ctx.input(|i| i.pointer.primary_pressed()) && response.hovered();
+        if self.select_state.interaction == SelectInteraction::None && (press_started || response.drag_started_by(egui::PointerButton::Primary)) {
             if let Some(handle) = self.hit_test_selection(cx_px, cy_px) {
                 let interaction = match handle {
                     Handle::Inside => SelectInteraction::Moving,
