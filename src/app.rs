@@ -81,6 +81,9 @@ pub struct App {
     stroke_pixel_sequence: Vec<(u32, u32)>,
     canvas_dirty: bool,
     show_new_dialog: bool,
+    was_in_startup: bool,
+    uncollapse_index: Option<usize>,
+    uncollapse_time: f64,
     show_resize_tilemap_dialog: bool,
     resize_tilemap_w: u32,
     resize_tilemap_h: u32,
@@ -768,7 +771,17 @@ impl App {
             playback: PlaybackState::default(),
             thumbnails,
             current_path: None,
-            ui_state: layout.as_ref().map(|l| l.ui_state.clone()).unwrap_or_default(),
+            ui_state: {
+                let mut state = layout.as_ref().map(|l| l.ui_state.clone()).unwrap_or_default();
+                state.collapse_color = true;
+                state.collapse_palette = true;
+                state.collapse_preview = true;
+                state.collapse_layers = true;
+                state.collapse_animations = true;
+                state.collapse_tiles = true;
+                state.collapse_brushes = true;
+                state
+            },
             other_tabs: Vec::new(),
             active_tab_idx: 0,
             active_modified: false,
@@ -780,6 +793,9 @@ impl App {
             stroke_pixel_sequence: Vec::new(),
             canvas_dirty: true,
             show_new_dialog: true,
+            was_in_startup: true,
+            uncollapse_index: None,
+            uncollapse_time: 0.0,
             show_resize_tilemap_dialog: false,
             resize_tilemap_w: 1,
             resize_tilemap_h: 1,
@@ -1219,6 +1235,59 @@ impl App {
         self.project_created = true;
     }
 
+    fn start_uncollapse_sequence(&mut self, ctx: &egui::Context) {
+        self.uncollapse_index = Some(0);
+        self.uncollapse_time = ctx.input(|i| i.time) + 0.15;
+        self.pending_zoom_fit = true;
+        self.ui_state.collapse_palette = true;
+        self.ui_state.collapse_color = true;
+        self.ui_state.collapse_brushes = true;
+        self.ui_state.collapse_layers = true;
+        self.ui_state.collapse_animations = true;
+        self.ui_state.collapse_preview = true;
+        self.ui_state.collapse_tiles = true;
+    }
+
+    fn uncollapse_panel(&mut self, panel: Panel) {
+        match panel {
+            Panel::Palette => self.ui_state.collapse_palette = false,
+            Panel::Color => self.ui_state.collapse_color = false,
+            Panel::Brushes => self.ui_state.collapse_brushes = false,
+            Panel::Layers => self.ui_state.collapse_layers = false,
+            Panel::Animations => self.ui_state.collapse_animations = false,
+            Panel::Preview => self.ui_state.collapse_preview = false,
+            Panel::Tiles => self.ui_state.collapse_tiles = false,
+            Panel::Timeline => self.ui_state.show_timeline = true,
+        }
+    }
+
+    fn tick_uncollapse_sequence(&mut self, ctx: &egui::Context) {
+        if let Some(idx) = self.uncollapse_index {
+            let now = ctx.input(|i| i.time);
+            if now >= self.uncollapse_time {
+                if idx < self.sidebar_order.len() {
+                    let panel = self.sidebar_order[idx];
+                    let visible = match panel {
+                        Panel::Tiles => self.project.is_tiled(),
+                        Panel::Preview => !self.preview_popped_out,
+                        _ => self.ui_state.is_visible(panel),
+                    };
+                    if visible {
+                        self.uncollapse_panel(panel);
+                        self.uncollapse_index = Some(idx + 1);
+                        self.uncollapse_time = now + 0.12;
+                    } else {
+                        self.uncollapse_index = Some(idx + 1);
+                        self.uncollapse_time = now;
+                    }
+                } else {
+                    self.uncollapse_index = None;
+                }
+            }
+            ctx.request_repaint();
+        }
+    }
+
     /// Switch to the tab at logical index `i`.
     fn switch_to_tab(&mut self, i: usize) {
         if i == self.active_tab_idx { return; }
@@ -1264,6 +1333,8 @@ impl App {
                 self.ui_state.collapse_layers = true;
                 self.ui_state.collapse_animations = true;
                 self.ui_state.collapse_tiles = true;
+                self.ui_state.collapse_brushes = true;
+                self.was_in_startup = true;
 
                 self.open_new_dialog(true);
             } else {
@@ -11146,6 +11217,24 @@ impl eframe::App for App {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Force collapse on startup/new dialog
+        if self.show_new_dialog {
+            self.ui_state.collapse_color = true;
+            self.ui_state.collapse_palette = true;
+            self.ui_state.collapse_preview = true;
+            self.ui_state.collapse_layers = true;
+            self.ui_state.collapse_animations = true;
+            self.ui_state.collapse_tiles = true;
+            self.ui_state.collapse_brushes = true;
+            self.was_in_startup = true;
+        } else if self.was_in_startup {
+            self.was_in_startup = false;
+            self.start_uncollapse_sequence(ctx);
+        }
+
+        // Tick uncollapse sequence
+        self.tick_uncollapse_sequence(ctx);
+
         // Autosave check (every 5 minutes = 300 seconds)
         let now = ctx.input(|i| i.time);
         if let Some(last_save) = self.last_autosave_time {
