@@ -4193,11 +4193,24 @@ impl App {
                                 } else {
                                     egui::FontId::new(FONT_SIZE_SM, egui::FontFamily::Proportional)
                                 };
+                                let edit_id = ui.id().with(("layer_rename", idx));
                                 let edit = egui::TextEdit::singleline(buf)
                                     .font(rename_font)
                                     .desired_width(ui.available_width() - 56.0)
-                                    .frame(false);
+                                    .frame(false)
+                                    .id(edit_id);
                                 let resp = ui.add(edit);
+                                if resp.gained_focus() {
+                                    // Select all text so typing immediately replaces it
+                                    if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), edit_id) {
+                                        let len = buf.chars().count();
+                                        state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
+                                            egui::text::CCursor::new(0),
+                                            egui::text::CCursor::new(len),
+                                        )));
+                                        state.store(ui.ctx(), edit_id);
+                                    }
+                                }
                                 resp.request_focus();
                                 let commit = ui.input(|i| i.key_pressed(egui::Key::Enter));
                                 let cancel = ui.input(|i| i.key_pressed(egui::Key::Escape));
@@ -4530,11 +4543,24 @@ impl App {
 
                                 if is_renaming {
                                     let buf = &mut self.renaming_animation.as_mut().unwrap().1;
+                                    let edit_id = ui.id().with(("anim_rename", i));
                                     let edit = egui::TextEdit::singleline(buf)
                                         .font(egui::FontId::new(FONT_SIZE_SM, egui::FontFamily::Proportional))
                                         .desired_width(ui.available_width() - 40.0)
-                                        .frame(false);
+                                        .frame(false)
+                                        .id(edit_id);
                                     let resp = ui.add(edit);
+                                    if resp.gained_focus() {
+                                        // Select all text so typing immediately replaces it
+                                        if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), edit_id) {
+                                            let len = buf.chars().count();
+                                            state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
+                                                egui::text::CCursor::new(0),
+                                                egui::text::CCursor::new(len),
+                                            )));
+                                            state.store(ui.ctx(), edit_id);
+                                        }
+                                    }
                                     resp.request_focus();
                                     let commit = ui.input(|inp| inp.key_pressed(egui::Key::Enter));
                                     let cancel = ui.input(|inp| inp.key_pressed(egui::Key::Escape));
