@@ -2324,6 +2324,7 @@ impl App {
                                     let n = self.project.animations.len() + 1;
                                     let anim = self.new_animation_from_layers(format!("anim_{}", n));
                                     self.project.animations.push(anim);
+                                    self.thumbnails = Self::thumbnails_for(&self.project);
                                     self.project.active_animation = self.project.animations.len() - 1;
                                     self.project.active_frame = 0;
                                     // active_layer is already valid: new anim has same layer count
@@ -2333,6 +2334,7 @@ impl App {
                                 if dropdown_row(ui, &theme, "Delete animation", None, true).clicked() {
                                     if self.project.animations.len() > 1 {
                                         self.project.animations.remove(self.project.active_animation);
+                                        self.thumbnails = Self::thumbnails_for(&self.project);
                                         self.project.active_animation = self.project.active_animation.saturating_sub(1);
                                         self.project.active_frame = 0;
                                         self.canvas_dirty = true;
@@ -4377,6 +4379,7 @@ impl App {
             let n = self.project.animations.len() + 1;
             let anim = self.new_animation_from_layers(format!("anim_{}", n));
             self.project.animations.push(anim);
+            self.thumbnails = Self::thumbnails_for(&self.project);
         }
 
         let anim_count = self.project.animations.len();
