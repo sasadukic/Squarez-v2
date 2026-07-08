@@ -2759,7 +2759,20 @@ impl App {
         let _ = current; // silence unused if we don't need it elsewhere
     }
 
-        fn draw_right_sidebar(&mut self, ctx: &egui::Context) {
+    fn draw_right_sidebar(&mut self, ctx: &egui::Context) {
+        if self.sidebar_drag.is_none() {
+            let mut expanded = Vec::new();
+            let mut collapsed = Vec::new();
+            for p in self.sidebar_order.clone() {
+                if self.ui_state.is_collapsed(p) {
+                    collapsed.push(p);
+                } else {
+                    expanded.push(p);
+                }
+            }
+            expanded.extend(collapsed);
+            self.sidebar_order = expanded;
+        }
         let sidebar_order = self.sidebar_order.clone();
 
         let any_visible = sidebar_order.iter().any(|&p| {
