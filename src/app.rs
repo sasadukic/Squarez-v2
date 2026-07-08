@@ -1134,6 +1134,7 @@ impl App {
             || self.ramp_lab.open
             || self.tab_resize_menu.is_some()
             || self.export_menu_open.is_some()
+            || self.palette_browser.save_dialog_colors.is_some()
     }
 
     fn any_menu_open(&self) -> bool {
@@ -3712,12 +3713,13 @@ impl App {
                 let resp = resp.on_hover_text("Save Palette to Library");
                 if resp.clicked() {
                     let colors = self.project.palette.clone();
-                    let name = if self.project.name.is_empty() {
-                        "Custom".to_string()
+                    let name = if self.project.name.is_empty() || self.project.name == "Untitled" || self.project.name == "Custom" {
+                        "Palette name".to_string()
                     } else {
                         self.project.name.clone()
                     };
                     self.palette_browser.save_dialog_name = name;
+                    self.palette_browser.save_dialog_author.clear();
                     self.palette_browser.save_dialog_colors = Some(colors);
                 }
             }

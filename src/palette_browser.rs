@@ -28,6 +28,7 @@ pub struct PaletteBrowser {
     last_click_idx:  Option<usize>,
     // Save palette name prompt
     pub save_dialog_name:   String,
+    pub save_dialog_author: String,
     pub save_dialog_colors: Option<Vec<Rgba>>,
     // Right-click theme menu state: (palette_idx, screen_pos)
     theme_menu_palette: Option<(usize, Pos2)>,
@@ -51,6 +52,7 @@ impl Default for PaletteBrowser {
             last_click_time: -1.0,
             last_click_idx:  None,
             save_dialog_name:   String::new(),
+            save_dialog_author: String::new(),
             save_dialog_colors: None,
             theme_menu_palette: None,
             theme_from_palette: None,
@@ -59,8 +61,7 @@ impl Default for PaletteBrowser {
 }
 
 impl PaletteBrowser {
-    /// Add the current project palette as a new user palette at the top.
-    pub fn add_user_palette(&mut self, name: String, colors: Vec<Rgba>) {
+    pub fn add_user_palette(&mut self, name: String, author: String, colors: Vec<Rgba>) {
         let hex_colors: Vec<String> = colors.iter().map(|c| {
             format!("{:02x}{:02x}{:02x}", c[0], c[1], c[2])
         }).collect();
@@ -68,7 +69,7 @@ impl PaletteBrowser {
         self.palettes.insert(0, LospecPalette {
             slug,
             name,
-            author: "User".to_string(),
+            author: if author.is_empty() { "User".to_string() } else { author },
             colors: hex_colors,
         });
         self.selected = Some(0);
@@ -121,7 +122,7 @@ pub fn draw_palette_browser(
                 Frame::new()
                     .fill(theme.panel)
                     .stroke(egui::Stroke::NONE)
-                    .corner_radius(egui::CornerRadius::ZERO)
+                    .corner_radius(egui::CornerRadius::same(6))
                     .shadow(egui::Shadow {
                         offset: [0, 14],
                         blur: 36,
@@ -131,6 +132,7 @@ pub fn draw_palette_browser(
                     .inner_margin(Margin::ZERO),
             )
             .show(ctx, |ui| {
+                ui.set_enabled(browser.save_dialog_colors.is_none());
                 ui.set_width(win_w);
 
                 ui.add_space(8.0);
@@ -377,7 +379,7 @@ pub fn draw_palette_browser(
 
     // ── Save name dialog ─────────────────────────────────────────────────────
     if browser.save_dialog_colors.is_some() {
-        let dialog_w = 280.0;
+        let dialog_w = 140.0;
         let mut should_save = false;
         let mut should_cancel = false;
         egui::Window::new("##save_palette_name")
@@ -392,7 +394,7 @@ pub fn draw_palette_browser(
                 Frame::new()
                     .fill(theme.panel)
                     .stroke(egui::Stroke::NONE)
-                    .corner_radius(egui::CornerRadius::ZERO)
+                    .corner_radius(egui::CornerRadius::same(6))
                     .shadow(egui::Shadow {
                         offset: [0, 14],
                         blur: 36,
@@ -404,81 +406,121 @@ pub fn draw_palette_browser(
             .show(ctx, |ui| {
                 ui.set_width(dialog_w);
 
-                ui.label(
-                    egui::RichText::new("Save Palette")
-                        .size(13.0)
-                        .color(theme.fg)
-                        .font(FontId::new(13.0, FontFamily::Proportional)),
-                );
                 ui.add_space(8.0);
+                let title_text_h = 18.0;
+                ui.allocate_ui_with_layout(
+                    Vec2::new(dialog_w, title_text_h),
+                    egui::Layout::top_down(egui::Align::Center),
+                    |ui| {
+                        let (rect, _) = ui.allocate_exact_size(Vec2::new(dialog_w, title_text_h), egui::Sense::hover());
+                        ui.painter().text(
+                            rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "Save Palette",
+                            FontId::new(FONT_SIZE_SM, FontFamily::Name("bold".into())),
+                            theme.fg,
+                        );
+                        let line_y = rect.bottom() + 4.0;
+                        let p1 = egui::Pos2::new(rect.left(), line_y);
+                        let p2 = egui::Pos2::new(rect.right(), line_y);
+                        ui.painter().line_segment([p1, p2], egui::Stroke::new(1.0, theme.border));
+                    }
+                );
+                ui.add_space(12.0);
 
-                let edit = egui::TextEdit::singleline(&mut browser.save_dialog_name)
+                let edit1 = egui::TextEdit::singleline(&mut browser.save_dialog_name)
                     .desired_width(dialog_w - 24.0)
                     .font(FontId::new(12.0, FontFamily::Proportional))
-                    .margin(Margin::symmetric(6, 4));
-                let resp = ui.add(edit);
+                    .margin(Margin::symmetric(6, 4))
+                    .horizontal_align(egui::Align::Center);
+                let resp1 = ui.add(edit1);
+                ui.add_space(6.0);
+
+                let edit2 = egui::TextEdit::singleline(&mut browser.save_dialog_author)
+                    .desired_width(dialog_w - 24.0)
+                    .font(FontId::new(12.0, FontFamily::Proportional))
+                    .margin(Margin::symmetric(6, 4))
+                    .horizontal_align(egui::Align::Center)
+                    .hint_text("Created by");
+                let resp2 = ui.add(edit2);
                 ui.add_space(10.0);
 
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing = Vec2::new(4.0, 0.0);
-                    let btn_h = 19.0;
+                let btn_spacing = 4.0;
+                let ok_label = "OK";
+                let ok_w = ok_label.chars().count() as f32 * 6.0 + 16.0;
+                let cancel_label = "Cancel";
+                let cancel_w = cancel_label.chars().count() as f32 * 6.0 + 16.0;
+                let total_btn_w = ok_w + btn_spacing + cancel_w;
+                let btn_h = 19.0;
 
-                    let ok_label = "OK";
-                    let ok_w = ok_label.chars().count() as f32 * 6.0 + 16.0;
-                    let (ok_rect, ok_resp) = ui.allocate_exact_size(
-                        Vec2::new(ok_w, btn_h), egui::Sense::click(),
-                    );
-                    let ok_bg = if ok_resp.hovered() { theme.surface } else { Color32::TRANSPARENT };
-                    if ok_bg != Color32::TRANSPARENT {
-                        ui.painter().rect_filled(ok_rect, 0.0, ok_bg);
-                    }
-                    let ok_col = if ok_resp.hovered() { theme.fg } else { theme.fg_desc };
-                    ui.painter().text(
-                        ok_rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        ok_label,
-                        FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
-                        ok_col,
-                    );
-                    if ok_resp.clicked() || (resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
-                        should_save = true;
-                    }
+                ui.allocate_ui_with_layout(
+                    Vec2::new(dialog_w - 24.0, btn_h),
+                    egui::Layout::top_down(egui::Align::Center),
+                    |ui| {
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(total_btn_w, btn_h),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.spacing_mut().item_spacing = Vec2::new(btn_spacing, 0.0);
 
-                    let cancel_label = "Cancel";
-                    let cancel_w = cancel_label.chars().count() as f32 * 6.0 + 16.0;
-                    let (cancel_rect, cancel_resp) = ui.allocate_exact_size(
-                        Vec2::new(cancel_w, btn_h), egui::Sense::click(),
-                    );
-                    let cancel_bg = if cancel_resp.hovered() { theme.surface } else { Color32::TRANSPARENT };
-                    if cancel_bg != Color32::TRANSPARENT {
-                        ui.painter().rect_filled(cancel_rect, 0.0, cancel_bg);
+                                let (ok_rect, ok_resp) = ui.allocate_exact_size(
+                                    Vec2::new(ok_w, btn_h), egui::Sense::click(),
+                                );
+                                let ok_bg = if ok_resp.hovered() { theme.surface } else { Color32::TRANSPARENT };
+                                if ok_bg != Color32::TRANSPARENT {
+                                    ui.painter().rect_filled(ok_rect, 0.0, ok_bg);
+                                }
+                                let ok_col = if ok_resp.hovered() { theme.fg } else { theme.fg_desc };
+                                ui.painter().text(
+                                    ok_rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    ok_label,
+                                    FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
+                                    ok_col,
+                                );
+                                if ok_resp.clicked() || (resp1.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) || (resp2.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
+                                    should_save = true;
+                                }
+
+                                let (cancel_rect, cancel_resp) = ui.allocate_exact_size(
+                                    Vec2::new(cancel_w, btn_h), egui::Sense::click(),
+                                );
+                                let cancel_bg = if cancel_resp.hovered() { theme.surface } else { Color32::TRANSPARENT };
+                                if cancel_bg != Color32::TRANSPARENT {
+                                    ui.painter().rect_filled(cancel_rect, 0.0, cancel_bg);
+                                }
+                                let cancel_col = if cancel_resp.hovered() { theme.fg } else { theme.fg_desc };
+                                ui.painter().text(
+                                    cancel_rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    cancel_label,
+                                    FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
+                                    cancel_col,
+                                );
+                                if cancel_resp.clicked() {
+                                    should_cancel = true;
+                                }
+                            }
+                        );
                     }
-                    let cancel_col = if cancel_resp.hovered() { theme.fg } else { theme.fg_desc };
-                    ui.painter().text(
-                        cancel_rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        cancel_label,
-                        FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
-                        cancel_col,
-                    );
-                    if cancel_resp.clicked() {
-                        should_cancel = true;
-                    }
-                });
+                );
             });
 
         if should_save {
             let name = browser.save_dialog_name.trim().to_string();
+            let author = browser.save_dialog_author.trim().to_string();
             if !name.is_empty() {
                 if let Some(colors) = browser.save_dialog_colors.take() {
-                    browser.add_user_palette(name, colors);
+                    browser.add_user_palette(name, author, colors);
                 }
             }
             browser.save_dialog_colors = None;
             browser.save_dialog_name.clear();
+            browser.save_dialog_author.clear();
         } else if should_cancel {
             browser.save_dialog_colors = None;
             browser.save_dialog_name.clear();
+            browser.save_dialog_author.clear();
         }
     }
 }
