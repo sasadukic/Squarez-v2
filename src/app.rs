@@ -3719,7 +3719,7 @@ impl App {
                         self.project.name.clone()
                     };
                     self.palette_browser.save_dialog_name = name;
-                    self.palette_browser.save_dialog_author.clear();
+                    self.palette_browser.save_dialog_author = "Created by".to_string();
                     self.palette_browser.save_dialog_colors = Some(colors);
                 }
             }

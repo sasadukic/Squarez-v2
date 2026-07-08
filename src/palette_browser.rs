@@ -437,11 +437,14 @@ pub fn draw_palette_browser(
                 let input_h = 22.0;
                 let input_stroke = egui::Stroke::new(1.0, theme.accent);
 
+                let is_default_name = browser.save_dialog_name == "Palette name";
+                let name_color = if is_default_name { theme.accent } else { theme.fg };
+
                 let (r1, _) = ui.allocate_exact_size(Vec2::new(input_w, input_h), egui::Sense::hover());
                 let edit1 = egui::TextEdit::singleline(&mut browser.save_dialog_name)
                     .frame(false)
                     .font(FontId::new(11.0, FontFamily::Proportional))
-                    .text_color(theme.fg)
+                    .text_color(name_color)
                     .horizontal_align(egui::Align::Center)
                     .vertical_align(egui::Align::Center)
                     .id_source("save_name");
@@ -465,14 +468,16 @@ pub fn draw_palette_browser(
 
                 ui.add_space(6.0);
 
+                let is_default_author = browser.save_dialog_author == "Created by";
+                let author_color = if is_default_author { theme.accent } else { theme.fg };
+
                 let (r2, _) = ui.allocate_exact_size(Vec2::new(input_w, input_h), egui::Sense::hover());
                 let edit2 = egui::TextEdit::singleline(&mut browser.save_dialog_author)
                     .frame(false)
                     .font(FontId::new(11.0, FontFamily::Proportional))
-                    .text_color(theme.fg)
+                    .text_color(author_color)
                     .horizontal_align(egui::Align::Center)
                     .vertical_align(egui::Align::Center)
-                    .hint_text("Created by")
                     .id_source("save_author");
                 let resp2 = ui.put(r2, edit2);
                 ui.painter().rect_stroke(r2, 2.0, input_stroke, egui::StrokeKind::Inside);
@@ -554,10 +559,18 @@ pub fn draw_palette_browser(
 
         if should_save {
             let name = browser.save_dialog_name.trim().to_string();
-            let author = browser.save_dialog_author.trim().to_string();
-            if !name.is_empty() {
+            let mut author = browser.save_dialog_author.trim().to_string();
+            if author == "Created by" {
+                author = String::new();
+            }
+            let final_name = if name == "Palette name" {
+                "Palette".to_string()
+            } else {
+                name
+            };
+            if !final_name.is_empty() {
                 if let Some(colors) = browser.save_dialog_colors.take() {
-                    browser.add_user_palette(name, author, colors);
+                    browser.add_user_palette(final_name, author, colors);
                 }
             }
             browser.save_dialog_colors = None;
