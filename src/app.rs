@@ -1119,10 +1119,17 @@ impl App {
         self.mirror_xy_sequence.clear();
         self.shape_preview.clear();
         self.select_state = crate::tools::SelectState::default();
+        self.close_all_context_menus();
+        self.tab_resize_menu = None;
+    }
+
+    fn close_all_context_menus(&mut self) {
         self.frame_menu = None;
         self.layer_ctx_menu = None;
+        self.brush_ctx_menu = None;
+        self.brush_import_menu = None;
         self.anim_tile_menu = None;
-        self.tab_resize_menu = None;
+        self.canvas_ctx_menu = None;
     }
 
     /// Returns true when any floating modal is currently on screen.
@@ -4054,6 +4061,7 @@ impl App {
                         const MENU_H: f32 = BTN + PAD * 2.0;
                         let menu_pos = Pos2::new(self.sidebar_left_x, row_rect.center().y - MENU_H / 2.0);
                         let now = ui.ctx().input(|i| i.time);
+                        self.close_all_context_menus();
                         self.layer_ctx_menu = Some((idx, menu_pos, now));
                     }
 
@@ -4480,6 +4488,7 @@ impl App {
                                 if bg_resp.secondary_clicked() && self.project.is_tiled() && !self.menu_was_open_at_frame_start {
                                     let now = ui.ctx().input(|inp| inp.time);
                                     let menu_pos = Pos2::new(self.sidebar_left_x, bg_resp.rect.center().y - 22.0);
+                                    self.close_all_context_menus();
                                     self.anim_tile_menu = Some((i, menu_pos, now));
                                 }
 
@@ -4915,6 +4924,7 @@ impl App {
                                 let x = response.rect.center().x - menu_outer_w / 2.0;
                                 let y = response.rect.top() - menu_outer_h - 4.0;
                                 let now = ui.ctx().input(|i| i.time);
+                                self.close_all_context_menus();
                                 self.frame_menu = Some((idx, Pos2::new(x, y), now));
                                 self.canvas_dirty = true;
                             }
@@ -6979,6 +6989,7 @@ print("FAIL")
                         }) {
                             let now = ui.ctx().input(|inp| inp.time);
                             let menu_pos = Pos2::new(self.sidebar_left_x, rect.center().y);
+                            self.close_all_context_menus();
                             self.brush_import_menu = Some((menu_pos, now));
                         }
                     }
@@ -7104,6 +7115,7 @@ print("FAIL")
                             let now = ui.ctx().input(|inp| inp.time);
                             // Anchor the popup to the left of the sidebar
                             let menu_pos = Pos2::new(self.sidebar_left_x, rect.center().y);
+                            self.close_all_context_menus();
                             self.brush_ctx_menu = Some((i, menu_pos, now));
                         }
                     }
@@ -7736,6 +7748,7 @@ print("FAIL")
                     || self.show_shortcuts_window;
                 if !non_canvas_menu {
                     let pos = response.ctx.input(|i| i.pointer.hover_pos().unwrap_or(canvas_rect.center()));
+                    self.close_all_context_menus();
                     self.canvas_ctx_menu = Some(ContextMenuState::new(pos, response.ctx.input(|i| i.time)));
                     return;
                 }
