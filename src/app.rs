@@ -11203,6 +11203,13 @@ impl eframe::App for App {
         }
 
         if !ctx.wants_keyboard_input() {
+            if ctx.input(|i| i.key_pressed(egui::Key::Enter)) && (self.select_state.has_float() || self.select_state.has_selection()) {
+                if self.select_state.has_float() {
+                    self.commit_float_to_layer();
+                }
+                self.select_state.clear();
+                self.canvas_dirty = true;
+            }
             let total = self.project.active_anim().frames.len();
             if total > 0 {
                 if ctx.input(|i| i.key_pressed(egui::Key::A)) && !ctx.input(|i| i.modifiers.command || i.modifiers.ctrl) {
