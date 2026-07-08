@@ -401,7 +401,7 @@ pub fn draw_palette_browser(
                         spread: 0,
                         color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
                     })
-                    .inner_margin(Margin::symmetric(12, 10)),
+                    .inner_margin(Margin { left: 12, right: 12, top: 0, bottom: 10 }),
             )
             .show(ctx, |ui| {
                 ui.set_width(dialog_w);
@@ -428,29 +428,38 @@ pub fn draw_palette_browser(
                 );
                 ui.add_space(12.0);
 
+                let input_w = dialog_w - 24.0;
+                let input_h = 22.0;
+                let input_stroke = egui::Stroke::new(1.0, theme.accent);
+
+                let (r1, _) = ui.allocate_exact_size(Vec2::new(input_w, input_h), egui::Sense::hover());
                 let edit1 = egui::TextEdit::singleline(&mut browser.save_dialog_name)
-                    .desired_width(dialog_w - 24.0)
-                    .font(FontId::new(12.0, FontFamily::Proportional))
-                    .margin(Margin::symmetric(6, 4))
-                    .horizontal_align(egui::Align::Center);
-                let resp1 = ui.add(edit1);
+                    .frame(false)
+                    .font(FontId::new(11.0, FontFamily::Proportional))
+                    .text_color(theme.fg)
+                    .horizontal_align(egui::Align::Center)
+                    .vertical_align(egui::Align::Center)
+                    .id_source("save_name");
+                let resp1 = ui.put(r1, edit1);
+                ui.painter().rect_stroke(r1, 2.0, input_stroke, egui::StrokeKind::Inside);
                 ui.add_space(6.0);
 
+                let (r2, _) = ui.allocate_exact_size(Vec2::new(input_w, input_h), egui::Sense::hover());
                 let edit2 = egui::TextEdit::singleline(&mut browser.save_dialog_author)
-                    .desired_width(dialog_w - 24.0)
-                    .font(FontId::new(12.0, FontFamily::Proportional))
-                    .margin(Margin::symmetric(6, 4))
+                    .frame(false)
+                    .font(FontId::new(11.0, FontFamily::Proportional))
+                    .text_color(theme.fg)
                     .horizontal_align(egui::Align::Center)
-                    .hint_text("Created by");
-                let resp2 = ui.add(edit2);
+                    .vertical_align(egui::Align::Center)
+                    .hint_text("Created by")
+                    .id_source("save_author");
+                let resp2 = ui.put(r2, edit2);
+                ui.painter().rect_stroke(r2, 2.0, input_stroke, egui::StrokeKind::Inside);
                 ui.add_space(10.0);
 
+                let btn_w = 52.0;
                 let btn_spacing = 4.0;
-                let ok_label = "OK";
-                let ok_w = ok_label.chars().count() as f32 * 6.0 + 16.0;
-                let cancel_label = "Cancel";
-                let cancel_w = cancel_label.chars().count() as f32 * 6.0 + 16.0;
-                let total_btn_w = ok_w + btn_spacing + cancel_w;
+                let total_btn_w = btn_w * 2.0 + btn_spacing;
                 let btn_h = 19.0;
 
                 ui.allocate_ui_with_layout(
@@ -464,7 +473,7 @@ pub fn draw_palette_browser(
                                 ui.spacing_mut().item_spacing = Vec2::new(btn_spacing, 0.0);
 
                                 let (ok_rect, ok_resp) = ui.allocate_exact_size(
-                                    Vec2::new(ok_w, btn_h), egui::Sense::click(),
+                                    Vec2::new(btn_w, btn_h), egui::Sense::click(),
                                 );
                                 let ok_bg = if ok_resp.hovered() { theme.surface } else { Color32::TRANSPARENT };
                                 if ok_bg != Color32::TRANSPARENT {
@@ -474,7 +483,7 @@ pub fn draw_palette_browser(
                                 ui.painter().text(
                                     ok_rect.center(),
                                     egui::Align2::CENTER_CENTER,
-                                    ok_label,
+                                    "OK",
                                     FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
                                     ok_col,
                                 );
@@ -483,7 +492,7 @@ pub fn draw_palette_browser(
                                 }
 
                                 let (cancel_rect, cancel_resp) = ui.allocate_exact_size(
-                                    Vec2::new(cancel_w, btn_h), egui::Sense::click(),
+                                    Vec2::new(btn_w, btn_h), egui::Sense::click(),
                                 );
                                 let cancel_bg = if cancel_resp.hovered() { theme.surface } else { Color32::TRANSPARENT };
                                 if cancel_bg != Color32::TRANSPARENT {
@@ -493,7 +502,7 @@ pub fn draw_palette_browser(
                                 ui.painter().text(
                                     cancel_rect.center(),
                                     egui::Align2::CENTER_CENTER,
-                                    cancel_label,
+                                    "Cancel",
                                     FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
                                     cancel_col,
                                 );
