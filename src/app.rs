@@ -12713,7 +12713,7 @@ fn rl_export(ui: &mut egui::Ui, theme: &Theme, rl: &RampLab, project: &mut crate
         .fill(theme.panel)
         .inner_margin(egui::Margin { left: 10, right: 10, top: 0, bottom: 6 })
         .show(ui, |ui| {
-            let show_info = !(rl.ramps.len() == 1 && rl.num_steps < 4);
+            let show_info = !(rl.ramps.len() == 1 && rl.num_steps < 5);
             let btn_h = 19.0;
             let export_label = "Export PNG";
             let export_w = export_label.chars().count() as f32 * 6.0 + 16.0;
