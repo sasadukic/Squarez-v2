@@ -6481,36 +6481,7 @@ print("FAIL")
 
     fn draw_tiles_section(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme.clone();
-        if self.ui_state.is_collapsed(Panel::Tiles) {
-            Frame::new().fill(theme.border.linear_multiply(0.4)).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
-                let (rect, _) = ui.allocate_exact_size(
-                    Vec2::new(ui.available_width(), 26.0),
-                    egui::Sense::hover(),
-                );
-                let icon_size = Vec2::splat(16.0);
-                let icon_rect = egui::Rect::from_center_size(
-                    Pos2::new(rect.left() + 8.0, rect.center().y),
-                    icon_size,
-                );
-                let icon_resp = ui.interact(
-                    icon_rect,
-                    ui.id().with("tiles_icon"),
-                    egui::Sense::click(),
-                );
-                let icon_tint = if icon_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
-                ui.put(
-                    icon_rect,
-                    Image::new(egui::include_image!("../assets/icons/tiles.png"))
-                        .tint(icon_tint)
-                        .fit_to_exact_size(icon_size),
-                );
-                let icon_resp = icon_resp.on_hover_text("Expand Tiles");
-                if icon_resp.clicked() {
-                    self.ui_state.toggle_collapsed(Panel::Tiles);
-                }
-            });
-            return;
-        }
+
 
         let (show, add_clicked, _, _, _) = section_header(
             ui,
@@ -6873,36 +6844,7 @@ print("FAIL")
 
     fn draw_brushes_section(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme.clone();
-        if self.ui_state.is_collapsed(Panel::Brushes) {
-            Frame::new().fill(theme.border.linear_multiply(0.4)).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
-                let (rect, _) = ui.allocate_exact_size(
-                    Vec2::new(ui.available_width(), 26.0),
-                    egui::Sense::hover(),
-                );
-                let icon_size = Vec2::splat(16.0);
-                let icon_rect = egui::Rect::from_center_size(
-                    Pos2::new(rect.left() + 8.0, rect.center().y),
-                    icon_size,
-                );
-                let icon_resp = ui.interact(
-                    icon_rect,
-                    ui.id().with("brushes_icon"),
-                    egui::Sense::click(),
-                );
-                let icon_tint = if icon_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
-                ui.put(
-                    icon_rect,
-                    Image::new(egui::include_image!("../assets/icons/brush.svg"))
-                        .tint(icon_tint)
-                        .fit_to_exact_size(icon_size),
-                );
-                let icon_resp = icon_resp.on_hover_text("Expand Brushes");
-                if icon_resp.clicked() {
-                    self.ui_state.toggle_collapsed(Panel::Brushes);
-                }
-            });
-            return;
-        }
+
 
         let (show, import_single_clicked, import_animated_clicked) = section_header_brushes(
             ui,
@@ -7419,13 +7361,18 @@ print("FAIL")
 
         let collapsed = self.ui_state.is_collapsed(Panel::Preview);
         let theme = self.theme.clone();
+        let anim_id = egui::Id::new(("hdr_anim", Panel::Preview));
+        let t = ui.ctx().animate_bool(anim_id, collapsed);
+        let fill_color = theme.border.linear_multiply(0.4 * (1.0 - t));
+
         // Header — same visual as section_header but without the "+" button.
-        Frame::new().fill(theme.border.linear_multiply(0.4)).inner_margin(egui::Margin::symmetric(10, 3)).show(ui, |ui| {
+        Frame::new().fill(fill_color).inner_margin(egui::Margin::symmetric(10, 3)).show(ui, |ui| {
             let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), egui::Sense::hover());
             let icon_size = Vec2::splat(16.0);
-            let icon_rect = egui::Rect::from_center_size(
-                egui::Pos2::new(rect.left() + 8.0, rect.center().y), icon_size,
-            );
+            let left_x = rect.left() + 8.0;
+            let right_x = rect.right() - 8.0;
+            let icon_x = lerp(left_x, right_x, t);
+            let icon_rect = egui::Rect::from_center_size(Pos2::new(icon_x, rect.center().y), icon_size);
             let icon_resp = ui.interact(icon_rect, egui::Id::new("hdr_icon_preview"), egui::Sense::click());
             let tint = if icon_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
             ui.put(icon_rect, egui::Image::new(egui::include_image!("../assets/icons/visibility.svg"))
@@ -7437,14 +7384,15 @@ print("FAIL")
             }
 
             // Draw pin icon on the right side if the sidebar is not collapsed and section is not collapsed
-            if rect.width() > 50.0 && !collapsed {
+            let fade_t = 1.0 - t;
+            if rect.width() > 50.0 && fade_t > 0.0 {
                 let pin_size = Vec2::splat(14.0);
                 let pin_rect = egui::Rect::from_center_size(
                     egui::Pos2::new(rect.right() - 8.0, rect.center().y),
                     pin_size,
                 );
                 let pin_resp = ui.interact(pin_rect, egui::Id::new("hdr_pin_preview"), egui::Sense::click());
-                let pin_tint = if pin_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                let pin_tint = (if pin_resp.hovered() { Color32::WHITE } else { theme.fg_desc }).linear_multiply(fade_t);
                 ui.put(
                     pin_rect,
                     egui::Image::new(egui::include_image!("../assets/icons/pin.svg"))
@@ -11699,10 +11647,17 @@ fn section_header_brushes(
         return (false, false, false);
     }
     let collapsed = state.is_collapsed(panel);
-    Frame::new().fill(theme.border.linear_multiply(0.4)).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
+    let anim_id = egui::Id::new(("hdr_anim", panel));
+    let t = ui.ctx().animate_bool(anim_id, collapsed);
+    let fill_color = theme.border.linear_multiply(0.4 * (1.0 - t));
+
+    Frame::new().fill(fill_color).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
         let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), egui::Sense::hover());
         let icon_size = Vec2::splat(16.0);
-        let icon_rect = egui::Rect::from_center_size(Pos2::new(rect.left() + 8.0, rect.center().y), icon_size);
+        let left_x = rect.left() + 8.0;
+        let right_x = rect.right() - 8.0;
+        let icon_x = lerp(left_x, right_x, t);
+        let icon_rect = egui::Rect::from_center_size(Pos2::new(icon_x, rect.center().y), icon_size);
         let icon_resp = ui.interact(icon_rect, egui::Id::new(("hdr_icon", panel)), egui::Sense::click());
         let icon_tint = if icon_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
         ui.put(icon_rect, Image::new(icon).tint(icon_tint).fit_to_exact_size(icon_size));
@@ -11730,12 +11685,20 @@ fn section_header_with_add(ui: &mut egui::Ui, theme: &Theme, state: &mut UiState
     let mut extra_2_clicked = false;
     let mut extra_3_clicked = false;
     let mut icon_double_clicked = false;
-    Frame::new().fill(theme.border.linear_multiply(0.4)).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
+
+    let anim_id = egui::Id::new(("hdr_anim", panel));
+    let t = ui.ctx().animate_bool(anim_id, collapsed);
+    let fill_color = theme.border.linear_multiply(0.4 * (1.0 - t));
+
+    Frame::new().fill(fill_color).inner_margin(Margin::symmetric(10, 3)).show(ui, |ui| {
         let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), egui::Sense::hover());
         let painter = ui.painter_at(rect);
         // Left: section icon — single click collapses/expands, double-click opens Ramp Lab
         let icon_size = Vec2::splat(16.0);
-        let icon_rect = egui::Rect::from_center_size(Pos2::new(rect.left() + 8.0, rect.center().y), icon_size);
+        let left_x = rect.left() + 8.0;
+        let right_x = rect.right() - 8.0;
+        let icon_x = lerp(left_x, right_x, t);
+        let icon_rect = egui::Rect::from_center_size(Pos2::new(icon_x, rect.center().y), icon_size);
         let icon_resp = ui.interact(icon_rect, egui::Id::new(("hdr_icon", panel)), egui::Sense::click());
         let icon_tint = if icon_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
         ui.put(icon_rect, Image::new(icon).tint(icon_tint).fit_to_exact_size(icon_size));
@@ -11751,16 +11714,18 @@ fn section_header_with_add(ui: &mut egui::Ui, theme: &Theme, state: &mut UiState
         } else if icon_resp.clicked() {
             state.toggle_collapsed(panel);
         }
-        if !collapsed {
+
+        let fade_t = 1.0 - t;
+        if fade_t > 0.0 {
             // Right: "+" add button (optional)
             if show_add {
                 let plus_rect = egui::Rect::from_center_size(Pos2::new(rect.right() - 8.0, rect.center().y), Vec2::splat(16.0));
                 let plus_resp = ui.interact(plus_rect, egui::Id::new(("hdr_plus", panel)), egui::Sense::click());
                 if panel == Panel::Tiles {
-                    let icon_tint = if plus_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                    let icon_tint = (if plus_resp.hovered() { Color32::WHITE } else { theme.fg_desc }).linear_multiply(fade_t);
                     ui.put(plus_rect, Image::new(egui::include_image!("../assets/icons/tiles_add.png")).tint(icon_tint).fit_to_exact_size(Vec2::splat(14.0)));
                 } else {
-                    let plus_color = if plus_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                    let plus_color = (if plus_resp.hovered() { Color32::WHITE } else { theme.fg_desc }).linear_multiply(fade_t);
                     painter.text(plus_rect.center(), egui::Align2::CENTER_CENTER, "+", FontId::new(16.0, FontFamily::Proportional), plus_color);
                 }
                 let plus_tooltip = match panel {
@@ -11779,7 +11744,7 @@ fn section_header_with_add(ui: &mut egui::Ui, theme: &Theme, state: &mut UiState
             if let Some(extra_icon_3) = extra_btn_3 {
                 let extra_rect_3 = egui::Rect::from_center_size(Pos2::new(rect.right() - 68.0, rect.center().y), Vec2::splat(14.0));
                 let extra_resp_3 = ui.interact(extra_rect_3, egui::Id::new(("hdr_extra3", panel)), egui::Sense::click());
-                let tint_3 = if extra_btn_3_active { Color32::WHITE } else if extra_resp_3.hovered() { Color32::WHITE } else { theme.fg_desc };
+                let tint_3 = (if extra_btn_3_active { Color32::WHITE } else if extra_resp_3.hovered() { Color32::WHITE } else { theme.fg_desc }).linear_multiply(fade_t);
                 ui.put(extra_rect_3, Image::new(extra_icon_3).tint(tint_3).fit_to_exact_size(Vec2::splat(14.0)));
                 let extra_resp_3 = extra_resp_3.on_hover_text("Toggle Tile Grid Visibility");
                 if extra_resp_3.clicked() { extra_3_clicked = true; }
@@ -11788,7 +11753,7 @@ fn section_header_with_add(ui: &mut egui::Ui, theme: &Theme, state: &mut UiState
             if let Some(extra_icon_2) = extra_btn_2 {
                 let extra_rect_2 = egui::Rect::from_center_size(Pos2::new(rect.right() - 48.0, rect.center().y), Vec2::splat(14.0));
                 let extra_resp_2 = ui.interact(extra_rect_2, egui::Id::new(("hdr_extra2", panel)), egui::Sense::click());
-                let tint_2 = if extra_btn_2_active { Color32::WHITE } else if extra_resp_2.hovered() { Color32::WHITE } else { theme.fg_desc };
+                let tint_2 = (if extra_btn_2_active { Color32::WHITE } else if extra_resp_2.hovered() { Color32::WHITE } else { theme.fg_desc }).linear_multiply(fade_t);
                 ui.put(extra_rect_2, Image::new(extra_icon_2).tint(tint_2).fit_to_exact_size(Vec2::splat(14.0)));
                 let extra_resp_2 = extra_resp_2.on_hover_text("Toggle Playback Range Markers");
                 if extra_resp_2.clicked() { extra_2_clicked = true; }
@@ -11797,7 +11762,7 @@ fn section_header_with_add(ui: &mut egui::Ui, theme: &Theme, state: &mut UiState
             if let Some(extra_icon) = extra_btn {
                 let extra_rect = egui::Rect::from_center_size(Pos2::new(rect.right() - 28.0, rect.center().y), Vec2::splat(14.0));
                 let extra_resp = ui.interact(extra_rect, egui::Id::new(("hdr_extra", panel)), egui::Sense::click());
-                let tint = if extra_btn_active { Color32::WHITE } else if extra_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                let tint = (if extra_btn_active { Color32::WHITE } else if extra_resp.hovered() { Color32::WHITE } else { theme.fg_desc }).linear_multiply(fade_t);
                 ui.put(extra_rect, Image::new(extra_icon).tint(tint).fit_to_exact_size(Vec2::splat(14.0)));
                 let extra_tooltip = match panel {
                     Panel::Layers => "Create Layer Group",
