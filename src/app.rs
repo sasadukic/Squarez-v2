@@ -4613,6 +4613,8 @@ impl App {
             .show(ctx, |ui| {
                 Frame::new()
                     .fill(self.theme.panel)
+                    .stroke(egui::Stroke::NONE)
+                    .corner_radius(egui::CornerRadius::same(6))
                     .inner_margin(Margin::same(4))
                     .shadow(egui::Shadow {
                         offset: [0, 14],
@@ -5029,6 +5031,8 @@ impl App {
             .show(ctx, |ui| {
                 egui::Frame::new()
                     .fill(theme.panel)
+                    .stroke(egui::Stroke::NONE)
+                    .corner_radius(egui::CornerRadius::same(6))
                     .inner_margin(egui::Margin::same(4))
                     .shadow(egui::Shadow {
                         offset: [0, 14],
@@ -5609,6 +5613,8 @@ impl App {
             .show(ctx, |ui| {
                 Frame::new()
                     .fill(self.theme.panel)
+                    .stroke(egui::Stroke::NONE)
+                    .corner_radius(egui::CornerRadius::same(6))
                     .inner_margin(Margin::same(4))
                     .shadow(egui::Shadow {
                         offset: [0, 14],

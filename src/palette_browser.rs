@@ -281,13 +281,13 @@ pub fn draw_palette_browser(
                 let inner = Margin::symmetric(4, 2);
                 Frame::new()
                     .fill(theme.panel)
-                    .stroke(egui::Stroke::new(1.0, theme.surface))
-                    .corner_radius(0)
+                    .stroke(egui::Stroke::NONE)
+                    .corner_radius(egui::CornerRadius::same(6))
                     .shadow(egui::Shadow {
-                        offset: [0, 6],
-                        blur: 18,
+                        offset: [0, 14],
+                        blur: 36,
                         spread: 0,
-                        color: Color32::from_black_alpha(80),
+                        color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
                     })
                     .inner_margin(inner)
                     .show(ui, |ui| {
