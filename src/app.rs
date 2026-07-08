@@ -4616,6 +4616,8 @@ impl App {
         let min_tile = 1usize;
         let max_tile = total_frames;
 
+        let mut delete_anim = false;
+
         let inner = egui::Area::new(egui::Id::new("anim_tile_menu"))
             .fixed_pos(pos)
             .pivot(egui::Align2::RIGHT_TOP)
@@ -4669,9 +4671,26 @@ impl App {
                                     start = end;
                                 }
                             }
+
+                            ui.add_space(PAD);
+
+                            // Delete button (Delete Animation)
+                            let can_delete = self.project.animations.len() > 1;
+                            let (r, resp) = ui.allocate_exact_size(Vec2::splat(BTN), if can_delete { egui::Sense::click() } else { egui::Sense::hover() });
+                            if can_delete && resp.hovered() { ui.painter().rect_filled(r, 0.0, theme.accent); }
+                            let icon_rect = egui::Rect::from_center_size(r.center(), Vec2::splat(20.0));
+                            let delete_tint = if !can_delete { theme.fg_muted } else if resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                            ui.put(icon_rect, Image::new(egui::include_image!("../assets/icons/delete.svg")).tint(delete_tint).fit_to_exact_size(Vec2::splat(20.0)));
+                            let resp = resp.on_hover_text("Delete Animation");
+                            if resp.clicked() {
+                                delete_anim = true;
+                            }
                         });
-                        anim.tile_start = start.min(max_tile.saturating_sub(1));
-                        anim.tile_end = end.clamp(anim.tile_start, max_tile.saturating_sub(1));
+                        if !delete_anim {
+                            let anim = &mut self.project.animations[anim_idx];
+                            anim.tile_start = start.min(max_tile.saturating_sub(1));
+                            anim.tile_end = end.clamp(anim.tile_start, max_tile.saturating_sub(1));
+                        }
                     });
             });
 
@@ -4689,7 +4708,16 @@ impl App {
         ctx.request_repaint();
 
         let clicked_outside = age > 0.15 && ctx.input(|i| i.pointer.any_click()) && !is_hovered;
-        if should_close_timer || clicked_outside {
+        if delete_anim {
+            if self.project.animations.len() > 1 {
+                self.project.animations.remove(anim_idx);
+                self.thumbnails = Self::thumbnails_for(&self.project);
+                self.project.active_animation = self.project.active_animation.min(self.project.animations.len() - 1);
+                self.project.active_frame = 0;
+                self.canvas_dirty = true;
+            }
+            self.anim_tile_menu = None;
+        } else if should_close_timer || clicked_outside {
             self.anim_tile_menu = None;
         }
     }
