@@ -4646,18 +4646,18 @@ impl App {
                             ui.visuals_mut().override_text_color = Some(theme.fg_desc);
                             // Start tile DragValue
                             let resp1 = ui.add_sized(
-                                Vec2::new(64.0, BTN),
+                                Vec2::new(32.0, BTN),
                                 egui::DragValue::new(&mut start)
                                     .range(0..=(max_tile.saturating_sub(1)))
-                                    .prefix("["),
+                                    .prefix("<"),
                             );
                             ui.add_space(PAD);
                             // End tile DragValue
                             let resp2 = ui.add_sized(
-                                Vec2::new(64.0, BTN),
+                                Vec2::new(32.0, BTN),
                                 egui::DragValue::new(&mut end)
                                     .range(0..=(max_tile.saturating_sub(1)))
-                                    .prefix("]"),
+                                    .suffix(">"),
                             );
                             ui.visuals_mut().override_text_color = None;
 
