@@ -29,6 +29,8 @@ pub struct PaletteBrowser {
     // Save palette name prompt
     pub save_dialog_name:   String,
     pub save_dialog_author: String,
+    pub save_name_focused:   bool,
+    pub save_author_focused: bool,
     pub save_dialog_colors: Option<Vec<Rgba>>,
     // Right-click theme menu state: (palette_idx, screen_pos)
     theme_menu_palette: Option<(usize, Pos2)>,
@@ -53,6 +55,8 @@ impl Default for PaletteBrowser {
             last_click_idx:  None,
             save_dialog_name:   String::new(),
             save_dialog_author: String::new(),
+            save_name_focused:   false,
+            save_author_focused: false,
             save_dialog_colors: None,
             theme_menu_palette: None,
             theme_from_palette: None,
@@ -404,15 +408,16 @@ pub fn draw_palette_browser(
                     .inner_margin(Margin { left: 12, right: 12, top: 0, bottom: 10 }),
             )
             .show(ctx, |ui| {
-                ui.set_width(dialog_w);
+                ui.set_width(dialog_w - 24.0);
 
                 ui.add_space(8.0);
                 let title_text_h = 18.0;
+                let header_w = dialog_w - 24.0;
                 ui.allocate_ui_with_layout(
-                    Vec2::new(dialog_w, title_text_h),
+                    Vec2::new(header_w, title_text_h),
                     egui::Layout::top_down(egui::Align::Center),
                     |ui| {
-                        let (rect, _) = ui.allocate_exact_size(Vec2::new(dialog_w, title_text_h), egui::Sense::hover());
+                        let (rect, _) = ui.allocate_exact_size(Vec2::new(header_w, title_text_h), egui::Sense::hover());
                         ui.painter().text(
                             rect.center(),
                             egui::Align2::CENTER_CENTER,
@@ -442,6 +447,22 @@ pub fn draw_palette_browser(
                     .id_source("save_name");
                 let resp1 = ui.put(r1, edit1);
                 ui.painter().rect_stroke(r1, 2.0, input_stroke, egui::StrokeKind::Inside);
+
+                if resp1.has_focus() {
+                    if !browser.save_name_focused {
+                        browser.save_name_focused = true;
+                        let text_len = browser.save_dialog_name.len();
+                        if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp1.id) {
+                            let min = egui::text::CCursor::new(0);
+                            let max = egui::text::CCursor::new(text_len);
+                            state.cursor.set_char_range(Some(egui::text::CCursorRange::two(min, max)));
+                            state.store(ui.ctx(), resp1.id);
+                        }
+                    }
+                } else {
+                    browser.save_name_focused = false;
+                }
+
                 ui.add_space(6.0);
 
                 let (r2, _) = ui.allocate_exact_size(Vec2::new(input_w, input_h), egui::Sense::hover());
@@ -455,6 +476,22 @@ pub fn draw_palette_browser(
                     .id_source("save_author");
                 let resp2 = ui.put(r2, edit2);
                 ui.painter().rect_stroke(r2, 2.0, input_stroke, egui::StrokeKind::Inside);
+
+                if resp2.has_focus() {
+                    if !browser.save_author_focused {
+                        browser.save_author_focused = true;
+                        let text_len = browser.save_dialog_author.len();
+                        if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp2.id) {
+                            let min = egui::text::CCursor::new(0);
+                            let max = egui::text::CCursor::new(text_len);
+                            state.cursor.set_char_range(Some(egui::text::CCursorRange::two(min, max)));
+                            state.store(ui.ctx(), resp2.id);
+                        }
+                    }
+                } else {
+                    browser.save_author_focused = false;
+                }
+
                 ui.add_space(10.0);
 
                 let btn_w = 52.0;
