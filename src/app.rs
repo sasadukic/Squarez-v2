@@ -4815,6 +4815,9 @@ impl App {
         if !self.ui_state.is_visible(Panel::Timeline) {
             return;
         }
+        if !self.project_created || self.ui_state.collapse_animations {
+            return;
+        }
         let all_narrow = self.ui_state.collapse_palette
             && self.ui_state.is_collapsed(Panel::Color)
             && self.ui_state.is_collapsed(Panel::Layers)
