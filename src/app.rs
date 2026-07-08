@@ -12713,58 +12713,111 @@ fn rl_export(ui: &mut egui::Ui, theme: &Theme, rl: &RampLab, project: &mut crate
         .fill(theme.panel)
         .inner_margin(egui::Margin { left: 10, right: 10, top: 0, bottom: 6 })
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing = Vec2::new(4.0, 0.0);
+            let show_info = !(rl.ramps.len() == 1 && rl.num_steps < 4);
+            let btn_h = 19.0;
+            let export_label = "Export PNG";
+            let export_w = export_label.chars().count() as f32 * 6.0 + 16.0;
+            let send_label = "Send to Palette";
+            let send_w = send_label.chars().count() as f32 * 6.0 + 16.0;
 
-                // Shared tab dimensions matching OKL/HSV style
-                let btn_h = 19.0;
+            if show_info {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::new(4.0, 0.0);
 
-                // ── Export PNG ─────────────────────────────────────────────
-                let export_label = "Export PNG";
-                let export_w = export_label.chars().count() as f32 * 6.0 + 16.0;
-                let (export_rect, export_resp) = ui.allocate_exact_size(
-                    Vec2::new(export_w, btn_h), egui::Sense::click(),
-                );
-                let export_bg = if export_resp.hovered() { theme.surface } else { Color32::TRANSPARENT };
-                if export_bg != Color32::TRANSPARENT {
-                    ui.painter().rect_filled(export_rect, 0.0, export_bg);
-                }
-                let export_col = if export_resp.hovered() { theme.fg } else { theme.fg_desc };
-                ui.painter().text(
-                    export_rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    export_label,
-                    FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
-                    export_col,
-                );
-                if export_resp.clicked() { rl_do_export_png(rl); }
+                    // ── Export PNG ─────────────────────────────────────────────
+                    let (export_rect, export_resp) = ui.allocate_exact_size(
+                        Vec2::new(export_w, btn_h), egui::Sense::click(),
+                    );
+                    let export_bg = if export_resp.hovered() { theme.surface } else { Color32::TRANSPARENT };
+                    if export_bg != Color32::TRANSPARENT {
+                        ui.painter().rect_filled(export_rect, 0.0, export_bg);
+                    }
+                    let export_col = if export_resp.hovered() { theme.fg } else { theme.fg_desc };
+                    ui.painter().text(
+                        export_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        export_label,
+                        FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
+                        export_col,
+                    );
+                    if export_resp.clicked() { rl_do_export_png(rl); }
 
-                // ── Send to Palette ────────────────────────────────────────
-                let send_label = "Send to Palette";
-                let send_w = send_label.chars().count() as f32 * 6.0 + 16.0;
-                let (send_rect, send_resp) = ui.allocate_exact_size(
-                    Vec2::new(send_w, btn_h), egui::Sense::click(),
-                );
-                let send_bg = if send_resp.hovered() { theme.surface } else { Color32::TRANSPARENT };
-                if send_bg != Color32::TRANSPARENT {
-                    ui.painter().rect_filled(send_rect, 0.0, send_bg);
-                }
-                let send_col = if send_resp.hovered() { theme.fg } else { theme.fg_desc };
-                ui.painter().text(
-                    send_rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    send_label,
-                    FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
-                    send_col,
-                );
-                if send_resp.clicked() { project.palette = rl.all_colors(); }
+                    // ── Send to Palette ────────────────────────────────────────
+                    let (send_rect, send_resp) = ui.allocate_exact_size(
+                        Vec2::new(send_w, btn_h), egui::Sense::click(),
+                    );
+                    let send_bg = if send_resp.hovered() { theme.surface } else { Color32::TRANSPARENT };
+                    if send_bg != Color32::TRANSPARENT {
+                        ui.painter().rect_filled(send_rect, 0.0, send_bg);
+                    }
+                    let send_col = if send_resp.hovered() { theme.fg } else { theme.fg_desc };
+                    ui.painter().text(
+                        send_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        send_label,
+                        FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
+                        send_col,
+                    );
+                    if send_resp.clicked() { project.palette = rl.all_colors(); }
 
-                let total = rl.ramps.iter().map(|r| r.colors.len()).sum::<usize>();
-                let label = format!("{} colors · {} ramps × {} steps", total, rl.ramps.len(), rl.num_steps);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(egui::RichText::new(label).size(9.0).color(theme.muted));
+                    let total = rl.ramps.iter().map(|r| r.colors.len()).sum::<usize>();
+                    let label = format!("{} colors · {} ramps × {} steps", total, rl.ramps.len(), rl.num_steps);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(egui::RichText::new(label).size(9.0).color(theme.muted));
+                    });
                 });
-            });
+            } else {
+                let total_w = export_w + 4.0 + send_w;
+                ui.allocate_ui_with_layout(
+                    Vec2::new(ui.available_width(), btn_h),
+                    egui::Layout::top_down(egui::Align::Center),
+                    |ui| {
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(total_w, btn_h),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.spacing_mut().item_spacing = Vec2::new(4.0, 0.0);
+
+                                // ── Export PNG ─────────────────────────────────────────────
+                                let (export_rect, export_resp) = ui.allocate_exact_size(
+                                    Vec2::new(export_w, btn_h), egui::Sense::click(),
+                                );
+                                let export_bg = if export_resp.hovered() { theme.surface } else { Color32::TRANSPARENT };
+                                if export_bg != Color32::TRANSPARENT {
+                                    ui.painter().rect_filled(export_rect, 0.0, export_bg);
+                                }
+                                let export_col = if export_resp.hovered() { theme.fg } else { theme.fg_desc };
+                                ui.painter().text(
+                                    export_rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    export_label,
+                                    FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
+                                    export_col,
+                                );
+                                if export_resp.clicked() { rl_do_export_png(rl); }
+
+                                // ── Send to Palette ────────────────────────────────────────
+                                let (send_rect, send_resp) = ui.allocate_exact_size(
+                                    Vec2::new(send_w, btn_h), egui::Sense::click(),
+                                );
+                                let send_bg = if send_resp.hovered() { theme.surface } else { Color32::TRANSPARENT };
+                                if send_bg != Color32::TRANSPARENT {
+                                    ui.painter().rect_filled(send_rect, 0.0, send_bg);
+                                }
+                                let send_col = if send_resp.hovered() { theme.fg } else { theme.fg_desc };
+                                ui.painter().text(
+                                    send_rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    send_label,
+                                    FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
+                                    send_col,
+                                );
+                                if send_resp.clicked() { project.palette = rl.all_colors(); }
+                            }
+                        );
+                    }
+                );
+            }
         });
 }
 
