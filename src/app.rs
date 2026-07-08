@@ -4200,6 +4200,9 @@ impl App {
                                     .frame(false)
                                     .id(edit_id);
                                 let resp = ui.add(edit);
+                                if !resp.has_focus() {
+                                    resp.request_focus();
+                                }
                                 if resp.gained_focus() {
                                     // Select all text so typing immediately replaces it
                                     if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), edit_id) {
@@ -4211,7 +4214,6 @@ impl App {
                                         state.store(ui.ctx(), edit_id);
                                     }
                                 }
-                                resp.request_focus();
                                 let commit = ui.input(|i| i.key_pressed(egui::Key::Enter));
                                 let cancel = ui.input(|i| i.key_pressed(egui::Key::Escape));
                                 if commit || (!resp.has_focus() && !resp.gained_focus()) {
@@ -4550,6 +4552,9 @@ impl App {
                                         .frame(false)
                                         .id(edit_id);
                                     let resp = ui.add(edit);
+                                    if !resp.has_focus() {
+                                        resp.request_focus();
+                                    }
                                     if resp.gained_focus() {
                                         // Select all text so typing immediately replaces it
                                         if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), edit_id) {
@@ -4561,7 +4566,6 @@ impl App {
                                             state.store(ui.ctx(), edit_id);
                                         }
                                     }
-                                    resp.request_focus();
                                     let commit = ui.input(|inp| inp.key_pressed(egui::Key::Enter));
                                     let cancel = ui.input(|inp| inp.key_pressed(egui::Key::Escape));
                                     if commit || (!resp.has_focus() && !resp.gained_focus()) {
