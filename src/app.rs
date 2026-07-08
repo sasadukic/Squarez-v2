@@ -6513,9 +6513,6 @@ print("FAIL")
         let size = grid_width / cols as f32;
         let row_height = size;
 
-        let visible_rows = rows.min(16);
-        let max_height = visible_rows as f32 * row_height;
-
         let total_slots = cols * rows;
 
         Frame::new().fill(theme.panel).inner_margin(Margin::same(0)).show(ui, |ui| {
