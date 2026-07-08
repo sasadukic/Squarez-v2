@@ -4341,6 +4341,11 @@ impl App {
         } else {
             None
         };
+        let markers_icon = if self.project.is_tiled() {
+            Some(egui::include_image!("../assets/icons/start_end.svg"))
+        } else {
+            None
+        };
         let (show, add_clicked, onion_clicked, markers_clicked, grid_clicked, _) = section_header_with_add(
             ui,
             &self.theme,
@@ -4349,7 +4354,7 @@ impl App {
             egui::include_image!("../assets/icons/animation.svg"),
             Some(egui::include_image!("../assets/icons/onion.svg")),
             self.onion_skinning,
-            Some(egui::include_image!("../assets/icons/start_end.svg")),
+            markers_icon,
             self.show_start_end_markers,
             grid_icon,
             self.grid_visible,
