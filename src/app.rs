@@ -5715,7 +5715,7 @@ impl App {
                 }
                 if self.pending_zoom_fit {
                     let fit_rect = egui::Rect::from_min_max(
-                        Pos2::new(canvas_rect.min.x, canvas_rect.min.y + TOP_BAR_HEIGHT),
+                        Pos2::new(canvas_rect.min.x + 38.0, canvas_rect.min.y + TOP_BAR_HEIGHT),
                         Pos2::new(canvas_rect.max.x, canvas_rect.max.y - 104.0),
                     );
                     self.canvas.zoom_to_fit(fit_rect, disp_w, disp_h);
@@ -7537,8 +7537,8 @@ print("FAIL")
                 // Double-click → zoom to fit
                 self.canvas.zoom_to_fit(
                     egui::Rect::from_min_max(
-                        Pos2::new(canvas_rect.min.x, canvas_rect.min.y + TOP_BAR_HEIGHT),
-                        canvas_rect.max,
+                        Pos2::new(canvas_rect.min.x + 38.0, canvas_rect.min.y + TOP_BAR_HEIGHT),
+                        Pos2::new(canvas_rect.max.x, canvas_rect.max.y - 104.0),
                     ),
                     w, h,
                 );
