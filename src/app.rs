@@ -4610,6 +4610,7 @@ impl App {
         let inner = egui::Area::new(egui::Id::new("anim_tile_menu"))
             .fixed_pos(pos)
             .pivot(egui::Align2::RIGHT_TOP)
+            .order(egui::Order::Tooltip)
             .show(ctx, |ui| {
                 Frame::new()
                     .fill(self.theme.panel)
@@ -5027,7 +5028,7 @@ impl App {
         let inner = egui::Area::new(egui::Id::new("layer_ctx_menu"))
             .fixed_pos(pos)
             .pivot(egui::Align2::RIGHT_TOP)
-            .order(egui::Order::Foreground)
+            .order(egui::Order::Tooltip)
             .show(ctx, |ui| {
                 egui::Frame::new()
                     .fill(theme.panel)
@@ -5610,6 +5611,7 @@ impl App {
         }
         let inner = egui::Area::new(egui::Id::new("frame_context_menu"))
             .fixed_pos(pos)
+            .order(egui::Order::Tooltip)
             .show(ctx, |ui| {
                 Frame::new()
                     .fill(self.theme.panel)
