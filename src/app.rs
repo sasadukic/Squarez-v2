@@ -2760,19 +2760,6 @@ impl App {
     }
 
     fn draw_right_sidebar(&mut self, ctx: &egui::Context) {
-        if self.sidebar_drag.is_none() {
-            let mut expanded = Vec::new();
-            let mut collapsed = Vec::new();
-            for p in self.sidebar_order.clone() {
-                if self.ui_state.is_collapsed(p) {
-                    collapsed.push(p);
-                } else {
-                    expanded.push(p);
-                }
-            }
-            expanded.extend(collapsed);
-            self.sidebar_order = expanded;
-        }
         let sidebar_order = self.sidebar_order.clone();
 
         let any_visible = sidebar_order.iter().any(|&p| {
@@ -2855,11 +2842,15 @@ impl App {
                             } else {
                                 self.theme.border.linear_multiply(0.4)
                             };
-                            let y = handle_rect.center().y;
-                            ui.painter().line_segment(
-                                [egui::Pos2::new(handle_rect.left(), y), egui::Pos2::new(handle_rect.right(), y)],
-                                egui::Stroke::new(1.0, color),
-                            );
+                            let collapsed = self.ui_state.is_collapsed(panel);
+                            let should_draw = !collapsed || handle_active;
+                            if should_draw {
+                                let y = handle_rect.center().y;
+                                ui.painter().line_segment(
+                                    [egui::Pos2::new(handle_rect.left(), y), egui::Pos2::new(handle_rect.right(), y)],
+                                    egui::Stroke::new(1.0, color),
+                                );
+                            }
                             if handle_resp.double_clicked() {
                                 self.ui_state.toggle_collapsed(panel);
                             }
