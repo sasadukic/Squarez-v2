@@ -4649,7 +4649,7 @@ impl App {
                                 Vec2::new(32.0, BTN),
                                 egui::DragValue::new(&mut start)
                                     .range(0..=(max_tile.saturating_sub(1)))
-                                    .prefix("<"),
+                                    .prefix("[ "),
                             );
                             ui.add_space(PAD);
                             // End tile DragValue
@@ -4657,7 +4657,7 @@ impl App {
                                 Vec2::new(32.0, BTN),
                                 egui::DragValue::new(&mut end)
                                     .range(0..=(max_tile.saturating_sub(1)))
-                                    .suffix(">"),
+                                    .suffix(" ]"),
                             );
                             ui.visuals_mut().override_text_color = None;
 
