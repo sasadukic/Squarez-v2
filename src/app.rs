@@ -7522,8 +7522,11 @@ print("FAIL")
     }
 
     fn handle_zoom_tool_input(&mut self, response: &egui::Response, canvas_rect: egui::Rect) {
-        let w = self.project.canvas_width;
-        let h = self.project.canvas_height;
+        let (w, h) = if self.tile_display_active && self.project.is_tiled() {
+            (self.tile_display_cols * self.project.tile_w, self.tile_display_rows * self.project.tile_h)
+        } else {
+            (self.project.canvas_width, self.project.canvas_height)
+        };
 
         // Left click — manual double-click detection (response.double_clicked() is unreliable
         // because the first click may change canvas state, making egui lose the widget continuity)
