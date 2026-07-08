@@ -4204,15 +4204,28 @@ impl App {
                                 if commit || (!resp.has_focus() && !resp.gained_focus()) {
                                     if let Some((i, new_name)) = self.renaming_layer.take() {
                                         if !new_name.trim().is_empty() {
-                                            self.project.animations[ai].frames[fi].layers[i].name =
-                                                new_name.trim().to_string();
+                                            let trimmed = new_name.trim().to_string();
+                                            // Propagate the new name to all frames across all animations
+                                            for anim in &mut self.project.animations {
+                                                for frame in &mut anim.frames {
+                                                    if i < frame.layers.len() {
+                                                        frame.layers[i].name = trimmed.clone();
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 } else if cancel {
                                     self.renaming_layer = None;
                                 }
                             } else {
-                                let name = self.project.animations[ai].frames[fi].layers[idx].name.clone();
+                                // Always read name from frame 0 as the canonical source — in tiled
+                                // mode each tile is a separate frame and names must stay in sync.
+                                let name = self.project.animations[ai].frames
+                                    .first()
+                                    .and_then(|f| f.layers.get(idx))
+                                    .map(|l| l.name.clone())
+                                    .unwrap_or_default();
                                 let bg_color = self.project.animations[ai].frames[fi].layers[idx].background_color;
                                 let name_color = if idx == 0 && self.picking_background_color {
                                     theme.accent
