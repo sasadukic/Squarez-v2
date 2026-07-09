@@ -7495,7 +7495,7 @@ print("FAIL")
             let scroll_delta = ui.input(|i| i.smooth_scroll_delta.y);
             if response.hovered() && scroll_delta != 0.0 {
                 if scroll_delta > 0.0 {
-                    self.sprite_stack_zoom = (self.sprite_stack_zoom * 2.0).min(4.0);
+                    self.sprite_stack_zoom = (self.sprite_stack_zoom * 2.0).min(32.0);
                 } else {
                     self.sprite_stack_zoom = (self.sprite_stack_zoom / 2.0).max(1.0);
                 }
@@ -7708,11 +7708,11 @@ print("FAIL")
         let win_h = base_dim * scale + 34.0;
 
         let win_resp = egui::Window::new("##floating_preview_win")
-            .id(egui::Id::new(format!("floating_preview_win_{}", scale)))
+            .id(egui::Id::new("floating_preview_win"))
             .open(&mut open)
             .resizable(false)
             .title_bar(false)
-            .default_size(Vec2::new(win_w, win_h))
+            .fixed_size(Vec2::new(win_w, win_h))
             .frame(
                 Frame::new()
                     .fill(theme.panel)
@@ -7785,6 +7785,9 @@ print("FAIL")
                     let next_zoom = match self.sprite_stack_zoom {
                         1.0 => 2.0,
                         2.0 => 4.0,
+                        4.0 => 8.0,
+                        8.0 => 16.0,
+                        16.0 => 32.0,
                         _ => 1.0,
                     };
                     self.sprite_stack_zoom = next_zoom;
