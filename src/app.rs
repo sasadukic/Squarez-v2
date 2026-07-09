@@ -256,6 +256,9 @@ pub struct App {
     preview_popped_out: bool,
     /// Width of the floating preview window (from previous frame)
     preview_window_width: f32,
+    pub sprite_stack_angle: f32,
+    pub sprite_stack_tilt: f32,
+    pub sprite_stack_spacing: f32,
     /// Track if any menu was open at the start of the current frame
     menu_was_open_at_frame_start: bool,
     brushes: Vec<CustomBrush>,
@@ -943,6 +946,9 @@ impl App {
             sidebar_left_x: 0.0,
             preview_popped_out: false,
             preview_window_width: 176.0,
+            sprite_stack_angle: 0.0,
+            sprite_stack_tilt: 45.0,
+            sprite_stack_spacing: 1.0,
             menu_was_open_at_frame_start: false,
             brushes: {
                 let mut b = layout.as_ref().map(|l| l.brushes.clone()).unwrap_or_default();
@@ -1231,9 +1237,16 @@ impl App {
         self.canvas_dirty = true;
         self.pending_zoom_fit = true;
         self.project_created = true;
+        self.on_project_changed();
     }
 
-
+    fn on_project_changed(&mut self) {
+        if self.project.mode == crate::project::ProjectMode::SpriteStack {
+            self.ui_state.show_preview = true;
+            self.ui_state.collapse_preview = false;
+            self.preview_popped_out = true;
+        }
+    }
 
     /// Switch to the tab at logical index `i`.
     fn switch_to_tab(&mut self, i: usize) {
@@ -1258,6 +1271,7 @@ impl App {
         self.clear_transient_state();
         self.canvas_dirty = true;
         self.pending_zoom_fit = true;
+        self.on_project_changed();
     }
 
     /// Close the tab at logical index `i` without any save check.
@@ -7411,44 +7425,140 @@ print("FAIL")
     }
 
     fn draw_preview_content(&mut self, ui: &mut egui::Ui) {
-        let (mut pixels, pw_size, ph_size) = if self.project.is_tiled() {
-            let tile_w = self.project.tile_w;
-            let tile_h = self.project.tile_h;
-            let cw = self.project.canvas_width;
-            (crate::layers::composite_frame_tile(
-                self.project.active_frame_ref(),
-                cw,
-                tile_w,
-                tile_h,
-            ), tile_w, tile_h)
+        if self.project.mode == crate::project::ProjectMode::SpriteStack {
+            let frame = self.project.active_frame_ref();
+            let cw = self.project.canvas_width as f32;
+            let ch = self.project.canvas_height as f32;
+            let num_layers = frame.layers.len();
+
+            let max_idx = num_layers.saturating_sub(1) as f32;
+            let angle_rad = self.sprite_stack_angle;
+            let tilt_rad = self.sprite_stack_tilt.to_radians();
+            let dx_max = max_idx * self.sprite_stack_spacing * angle_rad.sin();
+            let dy_max = -max_idx * self.sprite_stack_spacing * angle_rad.cos() * tilt_rad.sin();
+
+            // Calculate bounding box relative to base layer
+            let min_x = 0.0f32.min(dx_max);
+            let max_x = cw.max(cw + dx_max);
+            let min_y = 0.0f32.min(dy_max);
+            let max_y = ch.max(ch + dy_max);
+
+            let stack_w = max_x - min_x;
+            let stack_h = max_y - min_y;
+
+            let avail = ui.available_width();
+            // Scale to fit available width/height
+            let scale = (avail / stack_w).min(avail / stack_h).min(15.0).max(1.0);
+
+            let screen_stack_h = stack_h * scale;
+
+            let (rect, response) = ui.allocate_exact_size(
+                Vec2::new(avail, screen_stack_h),
+                egui::Sense::drag(),
+            );
+
+            if response.dragged() {
+                let delta = response.drag_delta();
+                self.sprite_stack_angle += delta.x * 0.01;
+                // Keep angle in range
+                if self.sprite_stack_angle > std::f32::consts::PI {
+                    self.sprite_stack_angle -= 2.0 * std::f32::consts::PI;
+                } else if self.sprite_stack_angle < -std::f32::consts::PI {
+                    self.sprite_stack_angle += 2.0 * std::f32::consts::PI;
+                }
+                self.sprite_stack_tilt = (self.sprite_stack_tilt - delta.y * 0.5).clamp(0.0, 90.0);
+            }
+
+            let rect_center = rect.center();
+            let stack_center_rel = Vec2::new(min_x + stack_w / 2.0, min_y + stack_h / 2.0) * scale;
+            let base_top_left = rect_center - stack_center_rel;
+
+            // Draw layers bottom-to-top
+            for (i, layer) in frame.layers.iter().enumerate() {
+                if !layer.visible || layer.is_group || layer.pixels.is_empty() {
+                    continue;
+                }
+
+                let tex = ui.ctx().load_texture(
+                    format!("layer_stack_{}", layer.id),
+                    egui::ColorImage::from_rgba_unmultiplied(
+                        [layer.width as usize, layer.height as usize],
+                        &layer.pixels,
+                    ),
+                    egui::TextureOptions::NEAREST,
+                );
+
+                let offset_x = (i as f32) * self.sprite_stack_spacing * angle_rad.sin() * scale;
+                let offset_y = -(i as f32) * self.sprite_stack_spacing * angle_rad.cos() * tilt_rad.sin() * scale;
+
+                let layer_rect = egui::Rect::from_min_size(
+                    base_top_left + Vec2::new(offset_x, offset_y),
+                    Vec2::new(cw * scale, ch * scale),
+                );
+
+                ui.painter().image(
+                    tex.id(),
+                    layer_rect,
+                    egui::Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
+                    egui::Color32::WHITE.linear_multiply(layer.opacity as f32 / 255.0),
+                );
+            }
+
+            // Draw interaction / control sliders under the canvas
+            ui.add_space(8.0);
+            let theme = self.theme.clone();
+            ui.scope(|ui| {
+                ui.style_mut().spacing.slider_width = 50.0;
+                ui.horizontal(|ui| {
+                    ui.visuals_mut().override_text_color = Some(theme.fg_desc);
+                    ui.label("Angle:");
+                    ui.add(egui::Slider::new(&mut self.sprite_stack_angle, -std::f32::consts::PI..=std::f32::consts::PI).show_value(false));
+                    ui.label("Tilt:");
+                    ui.add(egui::Slider::new(&mut self.sprite_stack_tilt, 0.0..=90.0).show_value(false));
+                    ui.label("Spacing:");
+                    ui.add(egui::Slider::new(&mut self.sprite_stack_spacing, 0.1..=5.0).show_value(false));
+                });
+            });
         } else {
-            (self.composite_active_frame(), self.project.canvas_width, self.project.canvas_height)
-        };
-        self.overlay_floating_selection(&mut pixels, pw_size, ph_size);
-        let tex = ui.ctx().load_texture(
-            "preview_content",
-            egui::ColorImage::from_rgba_unmultiplied(
-                [pw_size as usize, ph_size as usize],
-                &pixels,
-            ),
-            egui::TextureOptions::NEAREST,
-        );
-        let avail = ui.available_width();
-        let cw = pw_size as f32;
-        let ch = ph_size as f32;
-        let aspect = cw / ch;
-        let (pw, ph) = if aspect >= 1.0 {
-            (avail, avail / aspect)
-        } else {
-            (avail * aspect, avail)
-        };
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(pw, ph), egui::Sense::hover());
-        ui.painter().image(
-            tex.id(),
-            rect,
-            egui::Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
-            egui::Color32::WHITE,
-        );
+            let (mut pixels, pw_size, ph_size) = if self.project.is_tiled() {
+                let tile_w = self.project.tile_w;
+                let tile_h = self.project.tile_h;
+                let cw = self.project.canvas_width;
+                (crate::layers::composite_frame_tile(
+                    self.project.active_frame_ref(),
+                    cw,
+                    tile_w,
+                    tile_h,
+                ), tile_w, tile_h)
+            } else {
+                (self.composite_active_frame(), self.project.canvas_width, self.project.canvas_height)
+            };
+            self.overlay_floating_selection(&mut pixels, pw_size, ph_size);
+            let tex = ui.ctx().load_texture(
+                "preview_content",
+                egui::ColorImage::from_rgba_unmultiplied(
+                    [pw_size as usize, ph_size as usize],
+                    &pixels,
+                ),
+                egui::TextureOptions::NEAREST,
+            );
+            let avail = ui.available_width();
+            let cw = pw_size as f32;
+            let ch = ph_size as f32;
+            let aspect = cw / ch;
+            let (pw, ph) = if aspect >= 1.0 {
+                (avail, avail / aspect)
+            } else {
+                (avail * aspect, avail)
+            };
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(pw, ph), egui::Sense::hover());
+            ui.painter().image(
+                tex.id(),
+                rect,
+                egui::Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
+                egui::Color32::WHITE,
+            );
+        }
     }
 
     fn draw_preview_section(&mut self, ui: &mut egui::Ui) {
@@ -9606,9 +9716,11 @@ print("FAIL")
                                                 .show_ui(ui, |ui| {
                                                     ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::Normal, "Normal");
                                                     ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::SpriteStack, "Sprite Stack");
-                                                    ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::ThreeD, "3D");
-                                                    ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::Blob, "Blob");
-                                                    ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::Wang, "Wang");
+                                                    ui.add_enabled_ui(false, |ui| {
+                                                        ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::ThreeD, "3D");
+                                                        ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::Blob, "Blob");
+                                                        ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::Wang, "Wang");
+                                                    });
                                                 }).response
                                         });
                                     }
@@ -9994,6 +10106,7 @@ print("FAIL")
                                         self.canvas_dirty = true;
                                         self.pending_zoom_fit = true;
                                         self.project_created = true;
+                                        self.on_project_changed();
                                     } else {
                                         self.open_in_new_tab(new_proj, None);
                                     }
