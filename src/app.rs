@@ -258,6 +258,7 @@ pub struct App {
     preview_window_width: f32,
     /// Height of the floating preview window (from previous frame)
     preview_window_height: f32,
+    pub sprite_stack_zoom: f32,
     pub sprite_stack_angle: f32,
     pub sprite_stack_tilt: f32,
     pub sprite_stack_spacing: f32,
@@ -949,6 +950,7 @@ impl App {
             preview_popped_out: false,
             preview_window_width: 176.0,
             preview_window_height: 220.0,
+            sprite_stack_zoom: 4.0,
             sprite_stack_angle: 0.0,
             sprite_stack_tilt: 45.0,
             sprite_stack_spacing: 1.0,
@@ -7437,53 +7439,32 @@ print("FAIL")
             let angle_rad = self.sprite_stack_angle;
             let tilt_rad = self.sprite_stack_tilt.to_radians();
 
-            let hw = cw / 2.0;
-            let hh = ch / 2.0;
             let sin_t = tilt_rad.sin();
             let cos_t = tilt_rad.cos();
             let cos_a = angle_rad.cos();
             let sin_a = angle_rad.sin();
 
-            let project_point = |lx: f32, ly: f32| -> egui::Vec2 {
-                let ly_squashed = ly * cos_t;
-                let rx = lx * cos_a - ly_squashed * sin_a;
-                let ry = lx * sin_a + ly_squashed * cos_a;
-                egui::Vec2::new(rx, ry)
-            };
-
-            let mut min_x = f32::MAX;
-            let mut max_x = f32::MIN;
-            let mut min_y = f32::MAX;
-            let mut max_y = f32::MIN;
-
-            for i in 0..num_layers {
-                let cy_rel = -(i as f32) * self.sprite_stack_spacing * sin_t;
-                for &(lx, ly) in &[(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)] {
-                    let pt = project_point(lx, ly);
-                    let px = pt.x;
-                    let py = cy_rel + pt.y;
-                    min_x = min_x.min(px);
-                    max_x = max_x.max(px);
-                    min_y = min_y.min(py);
-                    max_y = max_y.max(py);
-                }
-            }
-
-            let stack_w = max_x - min_x;
-            let stack_h = max_y - min_y;
-
-            let width = (stack_w.ceil() as usize).max(1);
-            let height = (stack_h.ceil() as usize).max(1);
+            // Calculate a FIXED size of the low-res buffer based on max possible diagonal + max stack height
+            let base_diagonal = (cw * cw + ch * ch).sqrt();
+            let max_stack_height = num_layers as f32 * 10.0;
+            let max_dim = (base_diagonal + max_stack_height).ceil();
+            
+            let width = max_dim as usize;
+            let height = max_dim as usize;
 
             let avail_w = ui.available_width();
             let avail_h = ui.available_height().max(10.0);
-            // Scale to fit available width/height, max zoom 16.0, min 1.0
-            let scale_raw = (avail_w / width as f32).min(avail_h / height as f32).min(16.0).max(1.0);
 
-            // Constrain scale to factor of two (1, 2, 4, 8, 16)
-            let mut scale = 1.0;
-            while scale * 2.0 <= scale_raw {
-                scale *= 2.0;
+            // Scale factor logic
+            let mut scale = self.sprite_stack_zoom;
+            if !self.preview_popped_out {
+                // Docked/sidebar: scale to fit available space
+                let scale_raw = (avail_w / width as f32).min(avail_h / height as f32).min(16.0).max(1.0);
+                let mut fit_scale = 1.0;
+                while fit_scale * 2.0 <= scale_raw {
+                    fit_scale *= 2.0;
+                }
+                scale = fit_scale;
             }
 
             let screen_w = width as f32 * scale;
@@ -7494,15 +7475,23 @@ print("FAIL")
                 egui::Sense::drag(),
             );
 
+            // Mouse scroll wheel zoom (factors of two)
+            let scroll_delta = ui.input(|i| i.smooth_scroll_delta.y);
+            if response.hovered() && scroll_delta != 0.0 {
+                if scroll_delta > 0.0 {
+                    self.sprite_stack_zoom = (self.sprite_stack_zoom * 2.0).min(16.0);
+                } else {
+                    self.sprite_stack_zoom = (self.sprite_stack_zoom / 2.0).max(1.0);
+                }
+            }
+
             if response.dragged() {
                 let delta = response.drag_delta();
                 let ctrl_held = ui.input(|i| i.modifiers.ctrl);
                 if ctrl_held {
-                    // Holding Ctrl controls layer spacing (vertical drag)
                     self.sprite_stack_spacing = (self.sprite_stack_spacing - delta.y * 0.05).clamp(0.1, 10.0);
                 } else {
                     self.sprite_stack_angle += delta.x * 0.01;
-                    // Keep angle in range
                     if self.sprite_stack_angle > std::f32::consts::PI {
                         self.sprite_stack_angle -= 2.0 * std::f32::consts::PI;
                     } else if self.sprite_stack_angle < -std::f32::consts::PI {
@@ -7515,6 +7504,12 @@ print("FAIL")
             let mut dest_pixels = vec![0u8; width * height * 4];
             let cos_t_div = cos_t.max(0.001);
 
+            let center_x = width as f32 / 2.0;
+            let center_y = height as f32 / 2.0;
+            let total_stack_height = (num_layers.saturating_sub(1) as f32) * self.sprite_stack_spacing * sin_t;
+            let base_cx = center_x;
+            let base_cy = center_y + total_stack_height / 2.0;
+
             for (i, layer) in frame.layers.iter().enumerate() {
                 if !layer.visible || layer.is_group || layer.pixels.is_empty() {
                     continue;
@@ -7523,15 +7518,15 @@ print("FAIL")
                 let src_w = layer.width as f32;
                 let src_h = layer.height as f32;
 
-                let dest_cx = -min_x;
-                let dest_cy = -min_y - (i as f32) * self.sprite_stack_spacing * sin_t;
+                let slice_cx = base_cx;
+                let slice_cy = base_cy - (i as f32) * self.sprite_stack_spacing * sin_t;
 
                 let alpha_factor = layer.opacity as f32 / 255.0;
 
                 for dy in 0..height {
                     for dx in 0..width {
-                        let rx = (dx as f32) - dest_cx;
-                        let ry = (dy as f32) - dest_cy;
+                        let rx = (dx as f32) - slice_cx;
+                        let ry = (dy as f32) - slice_cy;
 
                         // Inverse projection
                         let lx = rx * cos_a + ry * sin_a;
@@ -7694,15 +7689,26 @@ print("FAIL")
         let mut put_back = false;
         let theme = self.theme.clone();
 
-        let win_width = self.preview_window_width;
-        let win_height = self.preview_window_height;
+        let frame = self.project.active_frame_ref();
+        let cw = self.project.canvas_width as f32;
+        let ch = self.project.canvas_height as f32;
+        let num_layers = frame.layers.len();
+        let base_diagonal = (cw * cw + ch * ch).sqrt();
+        let max_stack_height = num_layers as f32 * 10.0;
+        let max_dim = (base_diagonal + max_stack_height).ceil();
+        let width = max_dim as usize;
+        let height = max_dim as usize;
+
+        let scale = self.sprite_stack_zoom;
+        let win_w = width as f32 * scale + 20.0;
+        let win_h = height as f32 * scale + 34.0;
 
         let win_resp = egui::Window::new("##floating_preview_win")
-            .id(egui::Id::new("floating_preview_win"))
+            .id(egui::Id::new(format!("floating_preview_win_{}", scale)))
             .open(&mut open)
             .resizable(true)
             .title_bar(false)
-            .default_size(Vec2::new(win_width, win_height))
+            .default_size(Vec2::new(win_w, win_h))
             .min_width(80.0)
             .min_height(80.0)
             .frame(
@@ -7768,8 +7774,30 @@ print("FAIL")
             });
 
         if let Some(resp) = win_resp {
-            self.preview_window_width = resp.response.rect.width();
-            self.preview_window_height = resp.response.rect.height();
+            let actual_w = resp.response.rect.width() - 20.0;
+            let actual_h = resp.response.rect.height() - 34.0;
+            let scale_w = (actual_w / width as f32).max(1.0);
+            let scale_h = (actual_h / height as f32).max(1.0);
+            let scale_raw = scale_w.min(scale_h);
+            
+            let snapped_scale = if scale_raw >= 12.0 {
+                16.0
+            } else if scale_raw >= 6.0 {
+                8.0
+            } else if scale_raw >= 3.0 {
+                4.0
+            } else if scale_raw >= 1.5 {
+                2.0
+            } else {
+                1.0
+            };
+            
+            if snapped_scale != self.sprite_stack_zoom {
+                self.sprite_stack_zoom = snapped_scale;
+            }
+            
+            self.preview_window_width = width as f32 * self.sprite_stack_zoom + 20.0;
+            self.preview_window_height = height as f32 * self.sprite_stack_zoom + 34.0;
         }
 
         if !open || put_back {
