@@ -7481,8 +7481,12 @@ print("FAIL")
             let avail_w = ui.available_width();
             let avail_h = ui.available_height().max(10.0);
 
-            // Zoom to fill available space
-            let draw_scale = (avail_w / width as f32).min(avail_h / height as f32);
+            // Zoom factor logic
+            let mut draw_scale = self.sprite_stack_zoom;
+            if !self.preview_popped_out {
+                // Docked/sidebar: scale to fit available space
+                draw_scale = (avail_w / width as f32).min(avail_h / height as f32);
+            }
             let screen_w = width as f32 * draw_scale;
             let screen_h = height as f32 * draw_scale;
 
@@ -7699,9 +7703,13 @@ print("FAIL")
         let mut put_back = false;
         let theme = self.theme.clone();
 
+        let frame = self.project.active_frame_ref();
         let cw = self.project.canvas_width as f32;
         let ch = self.project.canvas_height as f32;
-        let base_dim = cw.max(ch);
+        let num_layers = frame.layers.len();
+        let base_diagonal = (cw * cw + ch * ch).sqrt();
+        let max_stack_height = num_layers as f32 * self.sprite_stack_spacing;
+        let base_dim = (base_diagonal + max_stack_height).ceil();
 
         let scale = self.sprite_stack_zoom;
         let win_w = base_dim * scale + 20.0;
