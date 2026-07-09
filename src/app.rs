@@ -7505,15 +7505,8 @@ print("FAIL")
                 egui::Sense::drag(),
             );
 
-            // Mouse scroll wheel zoom (factors of two)
-            let scroll_delta = ui.input(|i| i.smooth_scroll_delta.y);
-            if response.hovered() && scroll_delta != 0.0 {
-                if scroll_delta > 0.0 {
-                    self.sprite_stack_zoom = (self.sprite_stack_zoom * 2.0).min(16.0);
-                } else {
-                    self.sprite_stack_zoom = (self.sprite_stack_zoom / 2.0).max(1.0);
-                }
-            }
+
+
 
             if response.dragged() {
                 let delta = response.drag_delta();
