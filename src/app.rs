@@ -5840,6 +5840,15 @@ impl App {
 
 
     fn draw_workspace(&mut self, ctx: &egui::Context) {
+        if self.project_created && self.project.mode == crate::project::ProjectMode::SpriteStack {
+            CentralPanel::default()
+                .frame(Frame::new().fill(self.theme.bg))
+                .show(ctx, |ui| {
+                    self.draw_voxel_workspace(ui);
+                });
+            return;
+        }
+
         let (disp_w, disp_h) = if self.tile_display_active && self.project.is_tiled() {
             (self.tile_display_cols * self.project.tile_w, self.tile_display_rows * self.project.tile_h)
         } else {
@@ -6302,6 +6311,310 @@ impl App {
                     self.handle_canvas_input(response, canvas_rect);
                 }
             });
+    }
+
+    fn draw_voxel_workspace(&mut self, ui: &mut egui::Ui) {
+        let cw = self.project.canvas_width as f32;
+        let ch = self.project.canvas_height as f32;
+        let num_layers = self.project.animations[self.project.active_animation].frames[self.project.active_frame].layers.len();
+
+        let angle_rad = self.sprite_stack_angle;
+        let tilt_rad = self.sprite_stack_tilt.to_radians();
+
+        let sin_t = tilt_rad.sin();
+        let cos_t = tilt_rad.cos();
+        let cos_a = angle_rad.cos();
+        let sin_a = angle_rad.sin();
+
+        let hw = cw / 2.0;
+        let hh = ch / 2.0;
+
+        let project_point = |lx: f32, ly: f32| -> egui::Vec2 {
+            let ly_squashed = ly * cos_t;
+            let rx = lx * cos_a - ly_squashed * sin_a;
+            let ry = lx * sin_a + ly_squashed * cos_a;
+            egui::Vec2::new(rx, ry)
+        };
+
+        let mut min_x = f32::MAX;
+        let mut max_x = f32::MIN;
+        let mut min_y = f32::MAX;
+        let mut max_y = f32::MIN;
+
+        for i in 0..num_layers {
+            let cy_rel = -(i as f32) * self.sprite_stack_spacing * sin_t;
+            for &(lx, ly) in &[(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)] {
+                let pt = project_point(lx, ly);
+                let x = pt.x;
+                let y = pt.y + cy_rel;
+                if x < min_x { min_x = x; }
+                if x > max_x { max_x = x; }
+                if y < min_y { min_y = y; }
+                if y > max_y { max_y = y; }
+            }
+        }
+
+        let width = ((max_x - min_x).ceil() as usize).max(8);
+        let height = ((max_y - min_y).ceil() as usize).max(8);
+
+        let avail_w = ui.available_width();
+        let avail_h = ui.available_height().max(10.0);
+
+        let draw_scale = self.sprite_stack_zoom;
+        let screen_w = width as f32 * draw_scale;
+        let screen_h = height as f32 * draw_scale;
+
+        let (rect, response) = ui.allocate_exact_size(
+            Vec2::new(avail_w, avail_h),
+            egui::Sense::click_and_drag(),
+        );
+
+        let scroll_delta = ui.input(|i| i.smooth_scroll_delta.y);
+        if response.hovered() && scroll_delta != 0.0 {
+            if scroll_delta > 0.0 {
+                self.sprite_stack_zoom = (self.sprite_stack_zoom * 1.2).min(32.0);
+            } else {
+                self.sprite_stack_zoom = (self.sprite_stack_zoom / 1.2).max(1.0);
+            }
+        }
+
+        let dest_rect = egui::Rect::from_center_size(rect.center(), Vec2::new(screen_w, screen_h));
+
+        let mut hover_coord = None;
+        if let Some(pos) = response.hover_pos() {
+            let cos_t_div = cos_t.max(0.001);
+            let rx = (pos.x - dest_rect.center().x) / draw_scale;
+            let ry = (pos.y - dest_rect.center().y) / draw_scale;
+            let ry_layer = ry + (self.project.active_layer as f32 * self.sprite_stack_spacing) * sin_t;
+            let lx = rx * cos_a + ry_layer * sin_a;
+            let ly = (-rx * sin_a + ry_layer * cos_a) / cos_t_div;
+            let cx = (lx + hw).floor() as i32;
+            let cy = (ly + hh).floor() as i32;
+            if cx >= 0 && cx < cw as i32 && cy >= 0 && cy < ch as i32 {
+                hover_coord = Some((cx, cy));
+            }
+        }
+
+        let is_painting_tool = matches!(self.active_tool, ActiveTool::Pencil | ActiveTool::Eraser);
+        let dragging = response.dragged();
+
+        if dragging {
+            let secondary_drag = ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary));
+            let paint_click = is_painting_tool && hover_coord.is_some() && !secondary_drag;
+
+            if paint_click {
+                if let Some((cx, cy)) = hover_coord {
+                    let li = self.project.active_layer;
+                    let color = if self.active_tool == ActiveTool::Pencil {
+                        self.color_state.foreground
+                    } else {
+                        [0, 0, 0, 0]
+                    };
+                    
+                    let active_frame = self.project.active_frame;
+                    let layer = &mut self.project.animations[self.project.active_animation].frames[active_frame].layers[li];
+                    let idx = (cy as usize * layer.width as usize + cx as usize) * 4;
+                    if idx + 3 < layer.pixels.len() {
+                        layer.pixels[idx] = color[0];
+                        layer.pixels[idx + 1] = color[1];
+                        layer.pixels[idx + 2] = color[2];
+                        layer.pixels[idx + 3] = color[3];
+                        self.canvas_dirty = true;
+                    }
+                }
+            } else {
+                self.sprite_stack_isometric = false;
+                let delta = response.drag_delta();
+                let ctrl_held = ui.input(|i| i.modifiers.ctrl);
+
+                if self.sprite_stack_drag_mode == SpriteStackDragMode::None {
+                    if ctrl_held {
+                        if delta.y.abs() > 0.1 {
+                            self.sprite_stack_drag_mode = SpriteStackDragMode::Spacing;
+                        }
+                    } else {
+                        if delta.x.abs() > delta.y.abs() && delta.x.abs() > 0.1 {
+                            self.sprite_stack_drag_mode = SpriteStackDragMode::Rotate;
+                        } else if delta.y.abs() > delta.x.abs() && delta.y.abs() > 0.1 {
+                            self.sprite_stack_drag_mode = SpriteStackDragMode::Tilt;
+                        }
+                    }
+                }
+
+                match self.sprite_stack_drag_mode {
+                    SpriteStackDragMode::Spacing => {
+                        self.sprite_stack_spacing = (self.sprite_stack_spacing - delta.y * 0.05).clamp(0.1, 10.0);
+                    }
+                    SpriteStackDragMode::Rotate => {
+                        self.sprite_stack_angle += delta.x * 0.01;
+                        if self.sprite_stack_angle > std::f32::consts::PI {
+                            self.sprite_stack_angle -= 2.0 * std::f32::consts::PI;
+                        } else if self.sprite_stack_angle < -std::f32::consts::PI {
+                            self.sprite_stack_angle += 2.0 * std::f32::consts::PI;
+                        }
+                    }
+                    SpriteStackDragMode::Tilt => {
+                        self.sprite_stack_tilt = (self.sprite_stack_tilt - delta.y * 0.5).clamp(0.0, 90.0);
+                    }
+                    SpriteStackDragMode::None => {}
+                }
+            }
+        } else {
+            self.sprite_stack_drag_mode = SpriteStackDragMode::None;
+        }
+
+        let frame = self.project.active_frame_ref();
+        let mut dest_pixels = vec![0u8; width * height * 4];
+        let cos_t_div = cos_t.max(0.001);
+
+        for (i, layer) in frame.layers.iter().enumerate() {
+            if !layer.visible || layer.is_group || layer.pixels.is_empty() {
+                continue;
+            }
+
+            let src_w = layer.width as f32;
+            let src_h = layer.height as f32;
+            let alpha_factor = layer.opacity as f32 / 255.0;
+
+            let steps = if self.sprite_stack_voxels {
+                let count = (self.sprite_stack_spacing * 2.0).ceil().max(1.0) as usize;
+                count
+            } else {
+                1
+            };
+
+            for step_idx in 0..steps {
+                let z_offset = if steps > 1 {
+                    (step_idx as f32 / steps as f32) * self.sprite_stack_spacing
+                } else {
+                    0.0
+                };
+
+                let draw_z = (i as f32) * self.sprite_stack_spacing + z_offset;
+                let dest_cx = -min_x;
+                let dest_cy = -min_y - draw_z * sin_t;
+
+                for dy in 0..height {
+                    for dx in 0..width {
+                        let rx = (dx as f32) - dest_cx;
+                        let ry = (dy as f32) - dest_cy;
+
+                        let lx = rx * cos_a + ry * sin_a;
+                        let ly = (-rx * sin_a + ry * cos_a) / cos_t_div;
+
+                        let sx = lx + src_w / 2.0;
+                        let sy = ly + src_h / 2.0;
+
+                        if sx >= 0.0 && sx < src_w && sy >= 0.0 && sy < src_h {
+                            let sidx = ((sy as usize) * (layer.width as usize) + (sx as usize)) * 4;
+                            let src_r = layer.pixels[sidx];
+                            let src_g = layer.pixels[sidx + 1];
+                            let src_b = layer.pixels[sidx + 2];
+                            let src_a = layer.pixels[sidx + 3];
+
+                            if src_a > 0 {
+                                let didx = (dy * width + dx) * 4;
+                                let a_src = (src_a as f32 / 255.0) * alpha_factor;
+                                let a_dst = dest_pixels[didx + 3] as f32 / 255.0;
+                                let a_out = a_src + a_dst * (1.0 - a_src);
+
+                                if a_out > 0.0 {
+                                    let r_out = (src_r as f32 * a_src + dest_pixels[didx] as f32 * a_dst * (1.0 - a_src)) / a_out;
+                                    let g_out = (src_g as f32 * a_src + dest_pixels[didx + 1] as f32 * a_dst * (1.0 - a_src)) / a_out;
+                                    let b_out = (src_b as f32 * a_src + dest_pixels[didx + 2] as f32 * a_dst * (1.0 - a_src)) / a_out;
+
+                                    dest_pixels[didx] = r_out.round() as u8;
+                                    dest_pixels[didx + 1] = g_out.round() as u8;
+                                    dest_pixels[didx + 2] = b_out.round() as u8;
+                                    dest_pixels[didx + 3] = (a_out * 255.0).round() as u8;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let tex = ui.ctx().load_texture(
+            "sprite_stack_workspace",
+            egui::ColorImage::from_rgba_unmultiplied(
+                [width, height],
+                &dest_pixels,
+            ),
+            egui::TextureOptions::NEAREST,
+        );
+
+        ui.painter().image(
+            tex.id(),
+            dest_rect,
+            egui::Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+
+        if self.sprite_stack_voxels {
+            let project_vertex = |lx: f32, ly: f32, lz: f32| -> egui::Pos2 {
+                let ly_squashed = ly * cos_t;
+                let rx = lx * cos_a - ly_squashed * sin_a;
+                let ry = lx * sin_a + ly_squashed * cos_a - lz * sin_t;
+                
+                let screen_x = dest_rect.center().x + rx * draw_scale;
+                let screen_y = dest_rect.center().y + ry * draw_scale;
+                egui::Pos2::new(screen_x, screen_y)
+            };
+
+            let hz = (num_layers as f32) * self.sprite_stack_spacing;
+            let c000 = project_vertex(-hw, -hh, 0.0);
+            let c100 = project_vertex(hw, -hh, 0.0);
+            let c110 = project_vertex(hw, hh, 0.0);
+            let c010 = project_vertex(-hw, hh, 0.0);
+            let c001 = project_vertex(-hw, -hh, hz);
+            let c101 = project_vertex(hw, -hh, hz);
+            let c111 = project_vertex(hw, hh, hz);
+            let c011 = project_vertex(-hw, hh, hz);
+
+            let stroke = egui::Stroke::new(1.0, self.theme.accent.linear_multiply(0.6));
+            ui.painter().line_segment([c000, c100], stroke);
+            ui.painter().line_segment([c100, c110], stroke);
+            ui.painter().line_segment([c110, c010], stroke);
+            ui.painter().line_segment([c010, c000], stroke);
+            ui.painter().line_segment([c001, c101], stroke);
+            ui.painter().line_segment([c101, c111], stroke);
+            ui.painter().line_segment([c111, c011], stroke);
+            ui.painter().line_segment([c011, c001], stroke);
+            ui.painter().line_segment([c000, c001], stroke);
+            ui.painter().line_segment([c100, c101], stroke);
+            ui.painter().line_segment([c110, c111], stroke);
+            ui.painter().line_segment([c010, c011], stroke);
+        }
+
+        if let Some((cx, cy)) = hover_coord {
+            let project_vertex = |lx: f32, ly: f32, lz: f32| -> egui::Pos2 {
+                let ly_squashed = ly * cos_t;
+                let rx = lx * cos_a - ly_squashed * sin_a;
+                let ry = lx * sin_a + ly_squashed * cos_a - lz * sin_t;
+                
+                let screen_x = dest_rect.center().x + rx * draw_scale;
+                let screen_y = dest_rect.center().y + ry * draw_scale;
+                egui::Pos2::new(screen_x, screen_y)
+            };
+
+            let lx0 = cx as f32 - hw;
+            let ly0 = cy as f32 - hh;
+            let lx1 = lx0 + 1.0;
+            let ly1 = ly0 + 1.0;
+            let az = self.project.active_layer as f32 * self.sprite_stack_spacing;
+
+            let p00 = project_vertex(lx0, ly0, az);
+            let p10 = project_vertex(lx1, ly0, az);
+            let p11 = project_vertex(lx1, ly1, az);
+            let p01 = project_vertex(lx0, ly1, az);
+
+            let stroke = egui::Stroke::new(2.0, Color32::WHITE);
+            ui.painter().line_segment([p00, p10], stroke);
+            ui.painter().line_segment([p10, p11], stroke);
+            ui.painter().line_segment([p11, p01], stroke);
+            ui.painter().line_segment([p01, p00], stroke);
+        }
     }
 
     fn paste_from_clipboard(&mut self) {
@@ -7764,102 +8077,84 @@ print("FAIL")
 
         // Header — same visual as section_header but without the "+" button.
         Frame::new().fill(fill_color).inner_margin(egui::Margin::symmetric(10, 3)).show(ui, |ui| {
-            let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), egui::Sense::hover());
-            let icon_size = Vec2::splat(16.0);
-            let left_x = rect.left() + 8.0;
-            let right_x = rect.right() - 8.0;
-            let icon_x = lerp(left_x, right_x, t);
-            let icon_rect = egui::Rect::from_center_size(Pos2::new(icon_x, rect.center().y), icon_size);
-            let icon_resp = ui.interact(icon_rect, egui::Id::new("hdr_icon_preview"), egui::Sense::click());
-            let tint = if icon_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
-            ui.put(icon_rect, egui::Image::new(egui::include_image!("../assets/icons/visibility.svg"))
-                .tint(tint)
-                .fit_to_exact_size(icon_size));
-            let icon_resp = icon_resp.on_hover_text(if collapsed { "Expand Preview" } else { "Collapse Preview" });
-            if icon_resp.clicked() {
-                self.ui_state.toggle_collapsed(Panel::Preview);
-            }
-
-            // Draw pin icon on the right side if the sidebar is not collapsed and section is not collapsed
-            let fade_t = 1.0 - t;
-            if rect.width() > 50.0 && fade_t > 0.0 {
-                // 2:1 view button
-                // 2:1 view button (toggle style)
-                let btn_size = Vec2::new(30.0, 16.0);
-                let btn_rect = egui::Rect::from_center_size(
-                    egui::Pos2::new(rect.right() - 32.0, rect.center().y),
-                    btn_size,
+            ui.horizontal(|ui| {
+                // Left: expand/collapse toggle button (visibility icon)
+                let icon_size = Vec2::splat(16.0);
+                let icon_tint = theme.fg_desc;
+                let icon_resp = ui.add(
+                    egui::ImageButton::new(
+                        egui::Image::new(egui::include_image!("../assets/icons/visibility.svg"))
+                            .tint(icon_tint)
+                            .fit_to_exact_size(icon_size)
+                    ).frame(false)
                 );
-                let btn_resp = ui.interact(btn_rect, egui::Id::new("hdr_2to1_preview"), egui::Sense::click());
-                let btn_bg = if self.sprite_stack_isometric {
-                    theme.accent.linear_multiply(0.4)
-                } else if btn_resp.hovered() {
-                    theme.accent.linear_multiply(0.2)
-                } else {
-                    Color32::TRANSPARENT
-                };
-                let btn_text_color = if self.sprite_stack_isometric || btn_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                if icon_resp.clicked() {
+                    self.ui_state.toggle_collapsed(Panel::Preview);
+                }
                 
-                ui.painter().rect_filled(btn_rect, egui::CornerRadius::same(3), btn_bg);
-                ui.put(
-                    btn_rect,
-                    egui::Label::new(
-                        egui::RichText::new("2:1")
+                if !collapsed {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Right-most: Pop-out pin button
+                        let pin_size = Vec2::splat(14.0);
+                        let pin_resp = ui.add(
+                            egui::ImageButton::new(
+                                egui::Image::new(egui::include_image!("../assets/icons/pin.svg"))
+                                    .tint(theme.fg_desc)
+                                    .fit_to_exact_size(pin_size)
+                            ).frame(false)
+                        );
+                        if pin_resp.clicked() {
+                            self.preview_popped_out = true;
+                        }
+                        
+                        ui.add_space(8.0);
+                        
+                        // 2:1 button
+                        let btn_text = egui::RichText::new("2:1")
                             .font(egui::FontId::proportional(10.0))
-                            .color(btn_text_color)
-                    )
-                );
-                if btn_resp.clicked() {
-                    self.sprite_stack_isometric = !self.sprite_stack_isometric;
-                }
-
-                // Voxel view button (toggle style)
-                let vox_size = Vec2::new(30.0, 16.0);
-                let vox_rect = egui::Rect::from_center_size(
-                    egui::Pos2::new(rect.right() - 66.0, rect.center().y),
-                    vox_size,
-                );
-                let vox_resp = ui.interact(vox_rect, egui::Id::new("hdr_vox_preview"), egui::Sense::click());
-                let vox_bg = if self.sprite_stack_voxels {
-                    theme.accent.linear_multiply(0.4)
-                } else if vox_resp.hovered() {
-                    theme.accent.linear_multiply(0.2)
-                } else {
-                    Color32::TRANSPARENT
-                };
-                let vox_text_color = if self.sprite_stack_voxels || vox_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
-                
-                ui.painter().rect_filled(vox_rect, egui::CornerRadius::same(3), vox_bg);
-                ui.put(
-                    vox_rect,
-                    egui::Label::new(
-                        egui::RichText::new("Vox")
+                            .color(if self.sprite_stack_isometric { Color32::WHITE } else { theme.fg_desc });
+                        
+                        let btn_bg = if self.sprite_stack_isometric {
+                            theme.accent.linear_multiply(0.4)
+                        } else {
+                            Color32::TRANSPARENT
+                        };
+                        
+                        let btn_resp = ui.add(
+                            egui::Button::new(btn_text)
+                                .fill(btn_bg)
+                                .stroke(egui::Stroke::NONE)
+                                .corner_radius(egui::CornerRadius::same(3))
+                        );
+                        if btn_resp.clicked() {
+                            self.sprite_stack_isometric = !self.sprite_stack_isometric;
+                        }
+                        
+                        ui.add_space(4.0);
+                        
+                        // Vox button
+                        let vox_text = egui::RichText::new("Vox")
                             .font(egui::FontId::proportional(10.0))
-                            .color(vox_text_color)
-                    )
-                );
-                if vox_resp.clicked() {
-                    self.sprite_stack_voxels = !self.sprite_stack_voxels;
+                            .color(if self.sprite_stack_voxels { Color32::WHITE } else { theme.fg_desc });
+                        
+                        let vox_bg = if self.sprite_stack_voxels {
+                            theme.accent.linear_multiply(0.4)
+                        } else {
+                            Color32::TRANSPARENT
+                        };
+                        
+                        let vox_resp = ui.add(
+                            egui::Button::new(vox_text)
+                                .fill(vox_bg)
+                                .stroke(egui::Stroke::NONE)
+                                .corner_radius(egui::CornerRadius::same(3))
+                        );
+                        if vox_resp.clicked() {
+                            self.sprite_stack_voxels = !self.sprite_stack_voxels;
+                        }
+                    });
                 }
-
-                let pin_size = Vec2::splat(14.0);
-                let pin_rect = egui::Rect::from_center_size(
-                    egui::Pos2::new(rect.right() - 8.0, rect.center().y),
-                    pin_size,
-                );
-                let pin_resp = ui.interact(pin_rect, egui::Id::new("hdr_pin_preview"), egui::Sense::click());
-                let pin_tint = (if pin_resp.hovered() { Color32::WHITE } else { theme.fg_desc }).linear_multiply(fade_t);
-                ui.put(
-                    pin_rect,
-                    egui::Image::new(egui::include_image!("../assets/icons/pin.svg"))
-                        .tint(pin_tint)
-                        .fit_to_exact_size(pin_size),
-                );
-                let pin_resp = pin_resp.on_hover_text("Pop Out Preview Window");
-                if pin_resp.clicked() {
-                    self.preview_popped_out = true;
-                }
-            }
+            });
         });
 
         if collapsed { return; }
@@ -7913,99 +8208,76 @@ print("FAIL")
 
                 // 1. Custom Title Bar/Header
                 Frame::new().fill(Color32::TRANSPARENT).inner_margin(egui::Margin::symmetric(10, 3)).show(ui, |ui| {
-                    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), egui::Sense::hover());
-
-                    // Left: visibility eye icon
-                    let icon_size = Vec2::splat(16.0);
-                    let icon_rect = egui::Rect::from_center_size(
-                        egui::Pos2::new(rect.left() + 8.0, rect.center().y),
-                        icon_size,
-                    );
-                    let icon_tint = theme.fg_desc;
-                    ui.put(
-                        icon_rect,
-                        egui::Image::new(egui::include_image!("../assets/icons/visibility.svg"))
-                            .tint(icon_tint)
-                            .fit_to_exact_size(icon_size),
-                    );
-
-                    // Right: 2:1 view button (toggle style)
-                    let btn_size = Vec2::new(30.0, 16.0);
-                    let btn_rect = egui::Rect::from_center_size(
-                        egui::Pos2::new(rect.right() - 32.0, rect.center().y),
-                        btn_size,
-                    );
-                    let btn_resp = ui.interact(btn_rect, ui.id().with("floating_preview_2to1"), egui::Sense::click());
-                    let btn_bg = if self.sprite_stack_isometric {
-                        theme.accent.linear_multiply(0.4)
-                    } else if btn_resp.hovered() {
-                        theme.accent.linear_multiply(0.2)
-                    } else {
-                        Color32::TRANSPARENT
-                    };
-                    let btn_text_color = if self.sprite_stack_isometric || btn_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
-                    
-                    ui.painter().rect_filled(btn_rect, egui::CornerRadius::same(3), btn_bg);
-                    ui.put(
-                        btn_rect,
-                        egui::Label::new(
-                            egui::RichText::new("2:1")
+                    ui.horizontal(|ui| {
+                        // Left: visibility eye icon
+                        let icon_size = Vec2::splat(16.0);
+                        ui.add(
+                            egui::Image::new(egui::include_image!("../assets/icons/visibility.svg"))
+                                .tint(theme.fg_desc)
+                                .fit_to_exact_size(icon_size)
+                        );
+                        
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            // Right-most: Pin button
+                            let pin_size = Vec2::splat(14.0);
+                            let pin_resp = ui.add(
+                                egui::ImageButton::new(
+                                    egui::Image::new(egui::include_image!("../assets/icons/pin.svg"))
+                                        .tint(theme.fg_desc)
+                                        .fit_to_exact_size(pin_size)
+                                ).frame(false)
+                            );
+                            if pin_resp.clicked() {
+                                put_back = true;
+                            }
+                            
+                            ui.add_space(8.0);
+                            
+                            // 2:1 button
+                            let btn_text = egui::RichText::new("2:1")
                                 .font(egui::FontId::proportional(10.0))
-                                .color(btn_text_color)
-                        )
-                    );
-                    
-                    if btn_resp.clicked() {
-                        self.sprite_stack_isometric = !self.sprite_stack_isometric;
-                    }
-
-                    // Right: Voxel view button (toggle style)
-                    let vox_size = Vec2::new(30.0, 16.0);
-                    let vox_rect = egui::Rect::from_center_size(
-                        egui::Pos2::new(rect.right() - 66.0, rect.center().y),
-                        vox_size,
-                    );
-                    let vox_resp = ui.interact(vox_rect, ui.id().with("floating_preview_vox"), egui::Sense::click());
-                    let vox_bg = if self.sprite_stack_voxels {
-                        theme.accent.linear_multiply(0.4)
-                    } else if vox_resp.hovered() {
-                        theme.accent.linear_multiply(0.2)
-                    } else {
-                        Color32::TRANSPARENT
-                    };
-                    let vox_text_color = if self.sprite_stack_voxels || vox_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
-                    
-                    ui.painter().rect_filled(vox_rect, egui::CornerRadius::same(3), vox_bg);
-                    ui.put(
-                        vox_rect,
-                        egui::Label::new(
-                            egui::RichText::new("Vox")
+                                .color(if self.sprite_stack_isometric { Color32::WHITE } else { theme.fg_desc });
+                            
+                            let btn_bg = if self.sprite_stack_isometric {
+                                theme.accent.linear_multiply(0.4)
+                            } else {
+                                Color32::TRANSPARENT
+                            };
+                            
+                            let btn_resp = ui.add(
+                                egui::Button::new(btn_text)
+                                    .fill(btn_bg)
+                                    .stroke(egui::Stroke::NONE)
+                                    .corner_radius(egui::CornerRadius::same(3))
+                            );
+                            if btn_resp.clicked() {
+                                self.sprite_stack_isometric = !self.sprite_stack_isometric;
+                            }
+                            
+                            ui.add_space(4.0);
+                            
+                            // Vox button
+                            let vox_text = egui::RichText::new("Vox")
                                 .font(egui::FontId::proportional(10.0))
-                                .color(vox_text_color)
-                        )
-                    );
-                    
-                    if vox_resp.clicked() {
-                        self.sprite_stack_voxels = !self.sprite_stack_voxels;
-                    }
-
-                    // Right: Pin button (to dock it back)
-                    let pin_size = Vec2::splat(14.0);
-                    let pin_rect = egui::Rect::from_center_size(
-                        egui::Pos2::new(rect.right() - 8.0, rect.center().y),
-                        pin_size,
-                    );
-                    let pin_resp = ui.interact(pin_rect, ui.id().with("floating_preview_pin"), egui::Sense::click());
-                    let pin_tint = if pin_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
-                    ui.put(
-                        pin_rect,
-                        egui::Image::new(egui::include_image!("../assets/icons/pin.svg"))
-                            .tint(pin_tint)
-                            .fit_to_exact_size(pin_size),
-                    );
-                    if pin_resp.clicked() {
-                        put_back = true;
-                    }
+                                .color(if self.sprite_stack_voxels { Color32::WHITE } else { theme.fg_desc });
+                            
+                            let vox_bg = if self.sprite_stack_voxels {
+                                theme.accent.linear_multiply(0.4)
+                            } else {
+                                Color32::TRANSPARENT
+                            };
+                            
+                            let vox_resp = ui.add(
+                                egui::Button::new(vox_text)
+                                    .fill(vox_bg)
+                                    .stroke(egui::Stroke::NONE)
+                                    .corner_radius(egui::CornerRadius::same(3))
+                            );
+                            if vox_resp.clicked() {
+                                self.sprite_stack_voxels = !self.sprite_stack_voxels;
+                            }
+                        });
+                    });
                 });
 
                 // 2. Content
