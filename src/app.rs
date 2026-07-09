@@ -271,6 +271,8 @@ pub struct App {
     pub sprite_stack_tilt: f32,
     pub sprite_stack_spacing: f32,
     pub sprite_stack_drag_mode: SpriteStackDragMode,
+    pub sprite_stack_isometric: bool,
+    pub sprite_stack_voxels: bool,
     /// Track if any menu was open at the start of the current frame
     menu_was_open_at_frame_start: bool,
     brushes: Vec<CustomBrush>,
@@ -964,6 +966,8 @@ impl App {
             sprite_stack_tilt: 45.0,
             sprite_stack_spacing: 1.0,
             sprite_stack_drag_mode: SpriteStackDragMode::None,
+            sprite_stack_isometric: false,
+            sprite_stack_voxels: false,
             menu_was_open_at_frame_start: false,
             brushes: {
                 let mut b = layout.as_ref().map(|l| l.brushes.clone()).unwrap_or_default();
@@ -7441,6 +7445,26 @@ print("FAIL")
 
     fn draw_preview_content(&mut self, ui: &mut egui::Ui) {
         if self.project.mode == crate::project::ProjectMode::SpriteStack {
+            // Hotkey detection for § and ± to toggle voxels / 3D box
+            let toggle_voxels = ui.input(|i| {
+                i.raw.events.iter().any(|e| {
+                    if let egui::Event::Text(text) = e {
+                        text == "§" || text == "±"
+                    } else {
+                        false
+                    }
+                })
+            });
+            if toggle_voxels {
+                self.sprite_stack_voxels = !self.sprite_stack_voxels;
+            }
+
+            if self.sprite_stack_isometric {
+                self.sprite_stack_angle = 45.0f32.to_radians();
+                self.sprite_stack_tilt = 60.0;
+                self.sprite_stack_spacing = 1.0;
+            }
+
             let frame = self.project.active_frame_ref();
             let cw = self.project.canvas_width as f32;
             let ch = self.project.canvas_height as f32;
@@ -7516,6 +7540,7 @@ print("FAIL")
             }
 
             if response.dragged() {
+                self.sprite_stack_isometric = false;
                 let delta = response.drag_delta();
                 let ctrl_held = ui.input(|i| i.modifiers.ctrl);
 
@@ -7564,46 +7589,62 @@ print("FAIL")
 
                 let src_w = layer.width as f32;
                 let src_h = layer.height as f32;
-
-                let dest_cx = -min_x;
-                let dest_cy = -min_y - (i as f32) * self.sprite_stack_spacing * sin_t;
-
                 let alpha_factor = layer.opacity as f32 / 255.0;
 
-                for dy in 0..height {
-                    for dx in 0..width {
-                        let rx = (dx as f32) - dest_cx;
-                        let ry = (dy as f32) - dest_cy;
+                // Voxel mode: render multiple slices to fill the vertical spacing
+                let steps = if self.sprite_stack_voxels {
+                    let count = (self.sprite_stack_spacing * 2.0).ceil().max(1.0) as usize;
+                    count
+                } else {
+                    1
+                };
 
-                        // Inverse projection
-                        let lx = rx * cos_a + ry * sin_a;
-                        let ly = (-rx * sin_a + ry * cos_a) / cos_t_div;
+                for step_idx in 0..steps {
+                    let z_offset = if steps > 1 {
+                        (step_idx as f32 / steps as f32) * self.sprite_stack_spacing
+                    } else {
+                        0.0
+                    };
 
-                        let sx = lx + src_w / 2.0;
-                        let sy = ly + src_h / 2.0;
+                    let draw_z = (i as f32) * self.sprite_stack_spacing + z_offset;
+                    let dest_cx = -min_x;
+                    let dest_cy = -min_y - draw_z * sin_t;
 
-                        if sx >= 0.0 && sx < src_w && sy >= 0.0 && sy < src_h {
-                            let sidx = ((sy as usize) * (layer.width as usize) + (sx as usize)) * 4;
-                            let src_r = layer.pixels[sidx];
-                            let src_g = layer.pixels[sidx + 1];
-                            let src_b = layer.pixels[sidx + 2];
-                            let src_a = layer.pixels[sidx + 3];
+                    for dy in 0..height {
+                        for dx in 0..width {
+                            let rx = (dx as f32) - dest_cx;
+                            let ry = (dy as f32) - dest_cy;
 
-                            if src_a > 0 {
-                                let didx = (dy * width + dx) * 4;
-                                let a_src = (src_a as f32 / 255.0) * alpha_factor;
-                                let a_dst = dest_pixels[didx + 3] as f32 / 255.0;
-                                let a_out = a_src + a_dst * (1.0 - a_src);
+                            // Inverse projection
+                            let lx = rx * cos_a + ry * sin_a;
+                            let ly = (-rx * sin_a + ry * cos_a) / cos_t_div;
 
-                                if a_out > 0.0 {
-                                    let r_out = (src_r as f32 * a_src + dest_pixels[didx] as f32 * a_dst * (1.0 - a_src)) / a_out;
-                                    let g_out = (src_g as f32 * a_src + dest_pixels[didx + 1] as f32 * a_dst * (1.0 - a_src)) / a_out;
-                                    let b_out = (src_b as f32 * a_src + dest_pixels[didx + 2] as f32 * a_dst * (1.0 - a_src)) / a_out;
+                            let sx = lx + src_w / 2.0;
+                            let sy = ly + src_h / 2.0;
 
-                                    dest_pixels[didx] = r_out.round() as u8;
-                                    dest_pixels[didx + 1] = g_out.round() as u8;
-                                    dest_pixels[didx + 2] = b_out.round() as u8;
-                                    dest_pixels[didx + 3] = (a_out * 255.0).round() as u8;
+                            if sx >= 0.0 && sx < src_w && sy >= 0.0 && sy < src_h {
+                                let sidx = ((sy as usize) * (layer.width as usize) + (sx as usize)) * 4;
+                                let src_r = layer.pixels[sidx];
+                                let src_g = layer.pixels[sidx + 1];
+                                let src_b = layer.pixels[sidx + 2];
+                                let src_a = layer.pixels[sidx + 3];
+
+                                if src_a > 0 {
+                                    let didx = (dy * width + dx) * 4;
+                                    let a_src = (src_a as f32 / 255.0) * alpha_factor;
+                                    let a_dst = dest_pixels[didx + 3] as f32 / 255.0;
+                                    let a_out = a_src + a_dst * (1.0 - a_src);
+
+                                    if a_out > 0.0 {
+                                        let r_out = (src_r as f32 * a_src + dest_pixels[didx] as f32 * a_dst * (1.0 - a_src)) / a_out;
+                                        let g_out = (src_g as f32 * a_src + dest_pixels[didx + 1] as f32 * a_dst * (1.0 - a_src)) / a_out;
+                                        let b_out = (src_b as f32 * a_src + dest_pixels[didx + 2] as f32 * a_dst * (1.0 - a_src)) / a_out;
+
+                                        dest_pixels[didx] = r_out.round() as u8;
+                                        dest_pixels[didx + 1] = g_out.round() as u8;
+                                        dest_pixels[didx + 2] = b_out.round() as u8;
+                                        dest_pixels[didx + 3] = (a_out * 255.0).round() as u8;
+                                    }
                                 }
                             }
                         }
@@ -7629,6 +7670,47 @@ print("FAIL")
                 egui::Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
                 egui::Color32::WHITE,
             );
+
+            if self.sprite_stack_voxels {
+                let project_vertex = |lx: f32, ly: f32, lz: f32| -> egui::Pos2 {
+                    let ly_squashed = ly * cos_t;
+                    let rx = lx * cos_a - ly_squashed * sin_a;
+                    let ry = lx * sin_a + ly_squashed * cos_a - lz * sin_t;
+                    
+                    let screen_x = dest_rect.center().x + rx * draw_scale;
+                    let screen_y = dest_rect.center().y + ry * draw_scale;
+                    egui::Pos2::new(screen_x, screen_y)
+                };
+
+                let hz = (num_layers as f32) * self.sprite_stack_spacing;
+                let c000 = project_vertex(-hw, -hh, 0.0);
+                let c100 = project_vertex(hw, -hh, 0.0);
+                let c110 = project_vertex(hw, hh, 0.0);
+                let c010 = project_vertex(-hw, hh, 0.0);
+                let c001 = project_vertex(-hw, -hh, hz);
+                let c101 = project_vertex(hw, -hh, hz);
+                let c111 = project_vertex(hw, hh, hz);
+                let c011 = project_vertex(-hw, hh, hz);
+
+                let theme = self.theme.clone();
+                let stroke = egui::Stroke::new(1.0, theme.accent.linear_multiply(0.6));
+                
+                // Bottom face
+                ui.painter().line_segment([c000, c100], stroke);
+                ui.painter().line_segment([c100, c110], stroke);
+                ui.painter().line_segment([c110, c010], stroke);
+                ui.painter().line_segment([c010, c000], stroke);
+                // Top face
+                ui.painter().line_segment([c001, c101], stroke);
+                ui.painter().line_segment([c101, c111], stroke);
+                ui.painter().line_segment([c111, c011], stroke);
+                ui.painter().line_segment([c011, c001], stroke);
+                // Vertical edges
+                ui.painter().line_segment([c000, c001], stroke);
+                ui.painter().line_segment([c100, c101], stroke);
+                ui.painter().line_segment([c110, c111], stroke);
+                ui.painter().line_segment([c010, c011], stroke);
+            }
         } else {
             let (mut pixels, pw_size, ph_size) = if self.project.is_tiled() {
                 let tile_w = self.project.tile_w;
@@ -7702,14 +7784,21 @@ print("FAIL")
             let fade_t = 1.0 - t;
             if rect.width() > 50.0 && fade_t > 0.0 {
                 // 2:1 view button
+                // 2:1 view button (toggle style)
                 let btn_size = Vec2::new(30.0, 16.0);
                 let btn_rect = egui::Rect::from_center_size(
                     egui::Pos2::new(rect.right() - 32.0, rect.center().y),
                     btn_size,
                 );
                 let btn_resp = ui.interact(btn_rect, egui::Id::new("hdr_2to1_preview"), egui::Sense::click());
-                let btn_bg = if btn_resp.hovered() { theme.accent.linear_multiply(0.2) } else { Color32::TRANSPARENT };
-                let btn_text_color = if btn_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                let btn_bg = if self.sprite_stack_isometric {
+                    theme.accent.linear_multiply(0.4)
+                } else if btn_resp.hovered() {
+                    theme.accent.linear_multiply(0.2)
+                } else {
+                    Color32::TRANSPARENT
+                };
+                let btn_text_color = if self.sprite_stack_isometric || btn_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
                 
                 ui.painter().rect_filled(btn_rect, egui::CornerRadius::same(3), btn_bg);
                 ui.put(
@@ -7721,9 +7810,36 @@ print("FAIL")
                     )
                 );
                 if btn_resp.clicked() {
-                    self.sprite_stack_angle = 45.0f32.to_radians();
-                    self.sprite_stack_tilt = 60.0;
-                    self.sprite_stack_spacing = 1.0;
+                    self.sprite_stack_isometric = !self.sprite_stack_isometric;
+                }
+
+                // Voxel view button (toggle style)
+                let vox_size = Vec2::new(30.0, 16.0);
+                let vox_rect = egui::Rect::from_center_size(
+                    egui::Pos2::new(rect.right() - 66.0, rect.center().y),
+                    vox_size,
+                );
+                let vox_resp = ui.interact(vox_rect, egui::Id::new("hdr_vox_preview"), egui::Sense::click());
+                let vox_bg = if self.sprite_stack_voxels {
+                    theme.accent.linear_multiply(0.4)
+                } else if vox_resp.hovered() {
+                    theme.accent.linear_multiply(0.2)
+                } else {
+                    Color32::TRANSPARENT
+                };
+                let vox_text_color = if self.sprite_stack_voxels || vox_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                
+                ui.painter().rect_filled(vox_rect, egui::CornerRadius::same(3), vox_bg);
+                ui.put(
+                    vox_rect,
+                    egui::Label::new(
+                        egui::RichText::new("Vox")
+                            .font(egui::FontId::proportional(10.0))
+                            .color(vox_text_color)
+                    )
+                );
+                if vox_resp.clicked() {
+                    self.sprite_stack_voxels = !self.sprite_stack_voxels;
                 }
 
                 let pin_size = Vec2::splat(14.0);
@@ -7813,15 +7929,21 @@ print("FAIL")
                             .fit_to_exact_size(icon_size),
                     );
 
-                    // Right: 2:1 view button
+                    // Right: 2:1 view button (toggle style)
                     let btn_size = Vec2::new(30.0, 16.0);
                     let btn_rect = egui::Rect::from_center_size(
                         egui::Pos2::new(rect.right() - 32.0, rect.center().y),
                         btn_size,
                     );
                     let btn_resp = ui.interact(btn_rect, ui.id().with("floating_preview_2to1"), egui::Sense::click());
-                    let btn_bg = if btn_resp.hovered() { theme.accent.linear_multiply(0.2) } else { Color32::TRANSPARENT };
-                    let btn_text_color = if btn_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                    let btn_bg = if self.sprite_stack_isometric {
+                        theme.accent.linear_multiply(0.4)
+                    } else if btn_resp.hovered() {
+                        theme.accent.linear_multiply(0.2)
+                    } else {
+                        Color32::TRANSPARENT
+                    };
+                    let btn_text_color = if self.sprite_stack_isometric || btn_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
                     
                     ui.painter().rect_filled(btn_rect, egui::CornerRadius::same(3), btn_bg);
                     ui.put(
@@ -7834,9 +7956,37 @@ print("FAIL")
                     );
                     
                     if btn_resp.clicked() {
-                        self.sprite_stack_angle = 45.0f32.to_radians();
-                        self.sprite_stack_tilt = 60.0;
-                        self.sprite_stack_spacing = 1.0;
+                        self.sprite_stack_isometric = !self.sprite_stack_isometric;
+                    }
+
+                    // Right: Voxel view button (toggle style)
+                    let vox_size = Vec2::new(30.0, 16.0);
+                    let vox_rect = egui::Rect::from_center_size(
+                        egui::Pos2::new(rect.right() - 66.0, rect.center().y),
+                        vox_size,
+                    );
+                    let vox_resp = ui.interact(vox_rect, ui.id().with("floating_preview_vox"), egui::Sense::click());
+                    let vox_bg = if self.sprite_stack_voxels {
+                        theme.accent.linear_multiply(0.4)
+                    } else if vox_resp.hovered() {
+                        theme.accent.linear_multiply(0.2)
+                    } else {
+                        Color32::TRANSPARENT
+                    };
+                    let vox_text_color = if self.sprite_stack_voxels || vox_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                    
+                    ui.painter().rect_filled(vox_rect, egui::CornerRadius::same(3), vox_bg);
+                    ui.put(
+                        vox_rect,
+                        egui::Label::new(
+                            egui::RichText::new("Vox")
+                                .font(egui::FontId::proportional(10.0))
+                                .color(vox_text_color)
+                        )
+                    );
+                    
+                    if vox_resp.clicked() {
+                        self.sprite_stack_voxels = !self.sprite_stack_voxels;
                     }
 
                     // Right: Pin button (to dock it back)
