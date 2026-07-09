@@ -56,6 +56,14 @@ enum MirrorStream {
     XY,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpriteStackDragMode {
+    None,
+    Rotate,
+    Tilt,
+    Spacing,
+}
+
 pub struct App {
     pub project: Project,
     pub theme: Theme,
@@ -262,6 +270,7 @@ pub struct App {
     pub sprite_stack_angle: f32,
     pub sprite_stack_tilt: f32,
     pub sprite_stack_spacing: f32,
+    pub sprite_stack_drag_mode: SpriteStackDragMode,
     /// Track if any menu was open at the start of the current frame
     menu_was_open_at_frame_start: bool,
     brushes: Vec<CustomBrush>,
@@ -954,6 +963,7 @@ impl App {
             sprite_stack_angle: 0.0,
             sprite_stack_tilt: 45.0,
             sprite_stack_spacing: 1.0,
+            sprite_stack_drag_mode: SpriteStackDragMode::None,
             menu_was_open_at_frame_start: false,
             brushes: {
                 let mut b = layout.as_ref().map(|l| l.brushes.clone()).unwrap_or_default();
@@ -7508,17 +7518,40 @@ print("FAIL")
             if response.dragged() {
                 let delta = response.drag_delta();
                 let ctrl_held = ui.input(|i| i.modifiers.ctrl);
-                if ctrl_held {
-                    self.sprite_stack_spacing = (self.sprite_stack_spacing - delta.y * 0.05).clamp(0.1, 10.0);
-                } else {
-                    self.sprite_stack_angle += delta.x * 0.01;
-                    if self.sprite_stack_angle > std::f32::consts::PI {
-                        self.sprite_stack_angle -= 2.0 * std::f32::consts::PI;
-                    } else if self.sprite_stack_angle < -std::f32::consts::PI {
-                        self.sprite_stack_angle += 2.0 * std::f32::consts::PI;
+
+                if self.sprite_stack_drag_mode == SpriteStackDragMode::None {
+                    if ctrl_held {
+                        if delta.y.abs() > 0.1 {
+                            self.sprite_stack_drag_mode = SpriteStackDragMode::Spacing;
+                        }
+                    } else {
+                        if delta.x.abs() > delta.y.abs() && delta.x.abs() > 0.1 {
+                            self.sprite_stack_drag_mode = SpriteStackDragMode::Rotate;
+                        } else if delta.y.abs() > delta.x.abs() && delta.y.abs() > 0.1 {
+                            self.sprite_stack_drag_mode = SpriteStackDragMode::Tilt;
+                        }
                     }
-                    self.sprite_stack_tilt = (self.sprite_stack_tilt - delta.y * 0.5).clamp(0.0, 90.0);
                 }
+
+                match self.sprite_stack_drag_mode {
+                    SpriteStackDragMode::Spacing => {
+                        self.sprite_stack_spacing = (self.sprite_stack_spacing - delta.y * 0.05).clamp(0.1, 10.0);
+                    }
+                    SpriteStackDragMode::Rotate => {
+                        self.sprite_stack_angle += delta.x * 0.01;
+                        if self.sprite_stack_angle > std::f32::consts::PI {
+                            self.sprite_stack_angle -= 2.0 * std::f32::consts::PI;
+                        } else if self.sprite_stack_angle < -std::f32::consts::PI {
+                            self.sprite_stack_angle += 2.0 * std::f32::consts::PI;
+                        }
+                    }
+                    SpriteStackDragMode::Tilt => {
+                        self.sprite_stack_tilt = (self.sprite_stack_tilt - delta.y * 0.5).clamp(0.0, 90.0);
+                    }
+                    SpriteStackDragMode::None => {}
+                }
+            } else {
+                self.sprite_stack_drag_mode = SpriteStackDragMode::None;
             }
 
             let mut dest_pixels = vec![0u8; width * height * 4];
