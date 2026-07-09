@@ -9671,6 +9671,11 @@ print("FAIL")
                                 let response = ui.interact(bg_rect, "lock_btn".into(), egui::Sense::click());
                                 if response.clicked() {
                                     self.new_aspect_locked = !self.new_aspect_locked;
+                                    if self.new_aspect_locked {
+                                        // Snap height to match width when locking
+                                        self.new_height = self.new_width;
+                                        self.new_height_str = self.new_height.to_string();
+                                    }
                                 }
                             });
                         });
@@ -9699,14 +9704,13 @@ print("FAIL")
                         let icon_rect = egui::Rect::from_center_size(bg_rect.center(), Vec2::splat(16.0));
                         ui.put(icon_rect, Image::new(lock_icon).tint(lock_tint).fit_to_exact_size(Vec2::splat(16.0)));
 
-                        // Aspect ratio lock
+                        // Lock: copy changed value to the other field
                         if self.new_aspect_locked {
-                            let ratio = old_w as f32 / old_h as f32;
                             if self.new_width != old_w {
-                                self.new_height = (self.new_width as f32 / ratio).round().max(1.0).min(2048.0) as u32;
+                                self.new_height = self.new_width;
                                 self.new_height_str = self.new_height.to_string();
                             } else if self.new_height != old_h {
-                                self.new_width = (self.new_height as f32 * ratio).round().max(1.0).min(2048.0) as u32;
+                                self.new_width = self.new_height;
                                 self.new_width_str = self.new_width.to_string();
                             }
                         }
@@ -9818,6 +9822,11 @@ print("FAIL")
                                 let response = ui.interact(bg_rect, "tiles_lock_btn".into(), egui::Sense::click());
                                 if response.clicked() {
                                     self.new_tiles_aspect_locked = !self.new_tiles_aspect_locked;
+                                    if self.new_tiles_aspect_locked {
+                                        // Snap tile height to match tile width when locking
+                                        self.new_tiles_h = self.new_tiles_w;
+                                        self.new_tiles_h_str = self.new_tiles_h.to_string();
+                                    }
                                 }
                             });
                         });
@@ -9844,14 +9853,13 @@ print("FAIL")
                         let t_icon_rect = egui::Rect::from_center_size(t_bg_rect.center(), Vec2::splat(16.0));
                         ui.put(t_icon_rect, Image::new(t_lock_icon).tint(t_lock_tint).fit_to_exact_size(Vec2::splat(16.0)));
 
-                        // Tiles aspect ratio lock
+                        // Lock: copy changed value to the other field
                         if self.new_tiles_aspect_locked {
-                            let ratio = old_tw as f32 / old_th as f32;
                             if self.new_tiles_w != old_tw {
-                                self.new_tiles_h = (self.new_tiles_w as f32 / ratio).round().max(1.0).min(64.0) as u32;
+                                self.new_tiles_h = self.new_tiles_w;
                                 self.new_tiles_h_str = self.new_tiles_h.to_string();
                             } else if self.new_tiles_h != old_th {
-                                self.new_tiles_w = (self.new_tiles_h as f32 * ratio).round().max(1.0).min(64.0) as u32;
+                                self.new_tiles_w = self.new_tiles_h;
                                 self.new_tiles_w_str = self.new_tiles_w.to_string();
                             }
                         }
@@ -10797,6 +10805,10 @@ print("FAIL")
                                         let response = ui.interact(bg_rect, "resize_lock_btn".into(), egui::Sense::click());
                                         if response.clicked() {
                                             self.new_aspect_locked = !self.new_aspect_locked;
+                                            if self.new_aspect_locked {
+                                                self.new_height = self.new_width;
+                                                self.new_height_str = self.new_height.to_string();
+                                            }
                                         }
                                     },
                                 );
@@ -10829,12 +10841,11 @@ print("FAIL")
 
                         // Aspect ratio lock
                         if self.new_aspect_locked {
-                            let ratio = old_w as f32 / old_h as f32;
                             if self.new_width != old_w {
-                                self.new_height = (self.new_width as f32 / ratio).round().max(1.0).min(2048.0) as u32;
+                                self.new_height = self.new_width;
                                 self.new_height_str = self.new_height.to_string();
                             } else if self.new_height != old_h {
-                                self.new_width = (self.new_height as f32 * ratio).round().max(1.0).min(2048.0) as u32;
+                                self.new_width = self.new_height;
                                 self.new_width_str = self.new_width.to_string();
                             }
                         }
@@ -10947,6 +10958,10 @@ print("FAIL")
                                         let response = ui.interact(bg_rect, "resize_tiles_lock_btn".into(), egui::Sense::click());
                                         if response.clicked() {
                                             self.new_tiles_aspect_locked = !self.new_tiles_aspect_locked;
+                                            if self.new_tiles_aspect_locked {
+                                                self.new_tiles_h = self.new_tiles_w;
+                                                self.new_tiles_h_str = self.new_tiles_h.to_string();
+                                            }
                                         }
                                     },
                                 );
@@ -10975,14 +10990,13 @@ print("FAIL")
                         let t_icon_rect = egui::Rect::from_center_size(t_bg_rect.center(), Vec2::splat(16.0));
                         ui.put(t_icon_rect, Image::new(t_lock_icon).tint(t_lock_tint).fit_to_exact_size(Vec2::splat(16.0)));
 
-                        // Tiles aspect ratio lock
+                        // Lock: copy changed value to the other field
                         if self.new_tiles_aspect_locked {
-                            let ratio = old_tw as f32 / old_th as f32;
                             if self.new_tiles_w != old_tw {
-                                self.new_tiles_h = (self.new_tiles_w as f32 / ratio).round().max(1.0).min(64.0) as u32;
+                                self.new_tiles_h = self.new_tiles_w;
                                 self.new_tiles_h_str = self.new_tiles_h.to_string();
                             } else if self.new_tiles_h != old_th {
-                                self.new_tiles_w = (self.new_tiles_h as f32 * ratio).round().max(1.0).min(64.0) as u32;
+                                self.new_tiles_w = self.new_tiles_h;
                                 self.new_tiles_w_str = self.new_tiles_w.to_string();
                             }
                         }
