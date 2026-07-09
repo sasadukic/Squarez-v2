@@ -6318,6 +6318,13 @@ impl App {
         let ch = self.project.canvas_height as f32;
         let num_layers = self.project.animations[self.project.active_animation].frames[self.project.active_frame].layers.len();
 
+        // Lock to 2:1 isometric view when toggle is active
+        if self.sprite_stack_isometric {
+            self.sprite_stack_angle = 45.0f32.to_radians();
+            self.sprite_stack_tilt = 60.0;
+            self.sprite_stack_spacing = 1.0;
+        }
+
         let angle_rad = self.sprite_stack_angle;
         let tilt_rad = self.sprite_stack_tilt.to_radians();
 
@@ -6396,70 +6403,97 @@ impl App {
         }
 
         let is_painting_tool = matches!(self.active_tool, ActiveTool::Pencil | ActiveTool::Eraser);
-        let dragging = response.dragged();
+        let secondary_held = ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary));
 
-        if dragging {
-            let secondary_drag = ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary));
-            let paint_click = is_painting_tool && hover_coord.is_some() && !secondary_drag;
+        // Paint on click or drag when using a painting tool (but not RMB)
+        let should_paint = is_painting_tool
+            && !secondary_held
+            && (response.clicked() || response.dragged())
+            && hover_coord.is_some();
 
-            if paint_click {
-                if let Some((cx, cy)) = hover_coord {
-                    let li = self.project.active_layer;
-                    let color = if self.active_tool == ActiveTool::Pencil {
-                        self.color_state.foreground
-                    } else {
-                        [0, 0, 0, 0]
-                    };
-                    
-                    let active_frame = self.project.active_frame;
-                    let layer = &mut self.project.animations[self.project.active_animation].frames[active_frame].layers[li];
-                    let idx = (cy as usize * layer.width as usize + cx as usize) * 4;
-                    if idx + 3 < layer.pixels.len() {
-                        layer.pixels[idx] = color[0];
-                        layer.pixels[idx + 1] = color[1];
-                        layer.pixels[idx + 2] = color[2];
-                        layer.pixels[idx + 3] = color[3];
-                        self.canvas_dirty = true;
-                    }
-                }
-            } else {
-                self.sprite_stack_isometric = false;
-                let delta = response.drag_delta();
-                let ctrl_held = ui.input(|i| i.modifiers.ctrl);
+        if should_paint {
+            if let Some((cx, cy)) = hover_coord {
+                let li = self.project.active_layer;
+                let color = if self.active_tool == ActiveTool::Pencil {
+                    self.color_state.foreground
+                } else {
+                    [0, 0, 0, 0]
+                };
 
-                if self.sprite_stack_drag_mode == SpriteStackDragMode::None {
-                    if ctrl_held {
-                        if delta.y.abs() > 0.1 {
-                            self.sprite_stack_drag_mode = SpriteStackDragMode::Spacing;
-                        }
-                    } else {
-                        if delta.x.abs() > delta.y.abs() && delta.x.abs() > 0.1 {
-                            self.sprite_stack_drag_mode = SpriteStackDragMode::Rotate;
-                        } else if delta.y.abs() > delta.x.abs() && delta.y.abs() > 0.1 {
-                            self.sprite_stack_drag_mode = SpriteStackDragMode::Tilt;
-                        }
-                    }
-                }
-
-                match self.sprite_stack_drag_mode {
-                    SpriteStackDragMode::Spacing => {
-                        self.sprite_stack_spacing = (self.sprite_stack_spacing - delta.y * 0.05).clamp(0.1, 10.0);
-                    }
-                    SpriteStackDragMode::Rotate => {
-                        self.sprite_stack_angle += delta.x * 0.01;
-                        if self.sprite_stack_angle > std::f32::consts::PI {
-                            self.sprite_stack_angle -= 2.0 * std::f32::consts::PI;
-                        } else if self.sprite_stack_angle < -std::f32::consts::PI {
-                            self.sprite_stack_angle += 2.0 * std::f32::consts::PI;
-                        }
-                    }
-                    SpriteStackDragMode::Tilt => {
-                        self.sprite_stack_tilt = (self.sprite_stack_tilt - delta.y * 0.5).clamp(0.0, 90.0);
-                    }
-                    SpriteStackDragMode::None => {}
+                let active_frame = self.project.active_frame;
+                let layer = &mut self.project.animations[self.project.active_animation].frames[active_frame].layers[li];
+                let idx = (cy as usize * layer.width as usize + cx as usize) * 4;
+                if idx + 3 < layer.pixels.len() {
+                    layer.pixels[idx]     = color[0];
+                    layer.pixels[idx + 1] = color[1];
+                    layer.pixels[idx + 2] = color[2];
+                    layer.pixels[idx + 3] = color[3];
+                    self.canvas_dirty = true;
                 }
             }
-        } else {
+        } else if !is_painting_tool && response.dragged() {
+            // Orbit / spacing controls (non-painting tools only)
+            self.sprite_stack_isometric = false;
+            let delta = response.drag_delta();
+            let ctrl_held = ui.input(|i| i.modifiers.ctrl);
+
+            if self.sprite_stack_drag_mode == SpriteStackDragMode::None {
+                if ctrl_held {
+                    if delta.y.abs() > 0.1 {
+                        self.sprite_stack_drag_mode = SpriteStackDragMode::Spacing;
+                    }
+                } else if delta.x.abs() > delta.y.abs() && delta.x.abs() > 0.1 {
+                    self.sprite_stack_drag_mode = SpriteStackDragMode::Rotate;
+                } else if delta.y.abs() > delta.x.abs() && delta.y.abs() > 0.1 {
+                    self.sprite_stack_drag_mode = SpriteStackDragMode::Tilt;
+                }
+            }
+
+            match self.sprite_stack_drag_mode {
+                SpriteStackDragMode::Spacing => {
+                    self.sprite_stack_spacing = (self.sprite_stack_spacing - delta.y * 0.05).clamp(0.1, 10.0);
+                }
+                SpriteStackDragMode::Rotate => {
+                    self.sprite_stack_angle += delta.x * 0.01;
+                    if self.sprite_stack_angle > std::f32::consts::PI {
+                        self.sprite_stack_angle -= 2.0 * std::f32::consts::PI;
+                    } else if self.sprite_stack_angle < -std::f32::consts::PI {
+                        self.sprite_stack_angle += 2.0 * std::f32::consts::PI;
+                    }
+                }
+                SpriteStackDragMode::Tilt => {
+                    self.sprite_stack_tilt = (self.sprite_stack_tilt - delta.y * 0.5).clamp(0.0, 90.0);
+                }
+                SpriteStackDragMode::None => {}
+            }
+        } else if response.dragged() && is_painting_tool && secondary_held {
+            // RMB drag → orbit even with painting tool
+            self.sprite_stack_isometric = false;
+            let delta = response.drag_delta();
+            if self.sprite_stack_drag_mode == SpriteStackDragMode::None {
+                if delta.x.abs() > delta.y.abs() && delta.x.abs() > 0.1 {
+                    self.sprite_stack_drag_mode = SpriteStackDragMode::Rotate;
+                } else if delta.y.abs() > delta.x.abs() && delta.y.abs() > 0.1 {
+                    self.sprite_stack_drag_mode = SpriteStackDragMode::Tilt;
+                }
+            }
+            match self.sprite_stack_drag_mode {
+                SpriteStackDragMode::Rotate => {
+                    self.sprite_stack_angle += delta.x * 0.01;
+                    if self.sprite_stack_angle > std::f32::consts::PI {
+                        self.sprite_stack_angle -= 2.0 * std::f32::consts::PI;
+                    } else if self.sprite_stack_angle < -std::f32::consts::PI {
+                        self.sprite_stack_angle += 2.0 * std::f32::consts::PI;
+                    }
+                }
+                SpriteStackDragMode::Tilt => {
+                    self.sprite_stack_tilt = (self.sprite_stack_tilt - delta.y * 0.5).clamp(0.0, 90.0);
+                }
+                _ => {}
+            }
+        }
+
+        if !response.dragged() {
             self.sprite_stack_drag_mode = SpriteStackDragMode::None;
         }
 
@@ -6592,7 +6626,6 @@ impl App {
                 let ly_squashed = ly * cos_t;
                 let rx = lx * cos_a - ly_squashed * sin_a;
                 let ry = lx * sin_a + ly_squashed * cos_a - lz * sin_t;
-                
                 let screen_x = dest_rect.center().x + rx * draw_scale;
                 let screen_y = dest_rect.center().y + ry * draw_scale;
                 egui::Pos2::new(screen_x, screen_y)
@@ -6609,11 +6642,35 @@ impl App {
             let p11 = project_vertex(lx1, ly1, az);
             let p01 = project_vertex(lx0, ly1, az);
 
-            let stroke = egui::Stroke::new(2.0, Color32::WHITE);
+            // Fill the hovered pixel quad with a semi-transparent color
+            let fill_color = if self.active_tool == ActiveTool::Eraser {
+                Color32::from_rgba_unmultiplied(255, 80, 80, 60)
+            } else {
+                let fg = self.color_state.foreground;
+                Color32::from_rgba_unmultiplied(fg[0], fg[1], fg[2], 80)
+            };
+            ui.painter().add(egui::Shape::convex_polygon(
+                vec![p00, p10, p11, p01],
+                fill_color,
+                egui::Stroke::NONE,
+            ));
+
+            // Outline
+            let outline_color = if self.active_tool == ActiveTool::Eraser {
+                Color32::from_rgba_unmultiplied(255, 100, 100, 200)
+            } else {
+                Color32::WHITE
+            };
+            let stroke = egui::Stroke::new(1.5, outline_color);
             ui.painter().line_segment([p00, p10], stroke);
             ui.painter().line_segment([p10, p11], stroke);
             ui.painter().line_segment([p11, p01], stroke);
             ui.painter().line_segment([p01, p00], stroke);
+
+            // Show crosshair cursor when painting
+            if is_painting_tool {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+            }
         }
     }
 
