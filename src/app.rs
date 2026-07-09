@@ -7495,7 +7495,7 @@ print("FAIL")
             let scroll_delta = ui.input(|i| i.smooth_scroll_delta.y);
             if response.hovered() && scroll_delta != 0.0 {
                 if scroll_delta > 0.0 {
-                    self.sprite_stack_zoom = (self.sprite_stack_zoom * 2.0).min(16.0);
+                    self.sprite_stack_zoom = (self.sprite_stack_zoom * 2.0).min(4.0);
                 } else {
                     self.sprite_stack_zoom = (self.sprite_stack_zoom / 2.0).max(1.0);
                 }
@@ -7785,9 +7785,6 @@ print("FAIL")
                     let next_zoom = match self.sprite_stack_zoom {
                         1.0 => 2.0,
                         2.0 => 4.0,
-                        4.0 => 8.0,
-                        8.0 => 16.0,
-                        16.0 => 32.0,
                         _ => 1.0,
                     };
                     self.sprite_stack_zoom = next_zoom;
