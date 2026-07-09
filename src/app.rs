@@ -7431,17 +7431,40 @@ print("FAIL")
             let ch = self.project.canvas_height as f32;
             let num_layers = frame.layers.len();
 
-            let max_idx = num_layers.saturating_sub(1) as f32;
             let angle_rad = self.sprite_stack_angle;
             let tilt_rad = self.sprite_stack_tilt.to_radians();
-            let dx_max = max_idx * self.sprite_stack_spacing * angle_rad.sin();
-            let dy_max = -max_idx * self.sprite_stack_spacing * angle_rad.cos() * tilt_rad.sin();
 
-            // Calculate bounding box relative to base layer
-            let min_x = 0.0f32.min(dx_max);
-            let max_x = cw.max(cw + dx_max);
-            let min_y = 0.0f32.min(dy_max);
-            let max_y = ch.max(ch + dy_max);
+            let hw = cw / 2.0;
+            let hh = ch / 2.0;
+            let sin_t = tilt_rad.sin();
+            let cos_t = tilt_rad.cos();
+            let cos_a = angle_rad.cos();
+            let sin_a = angle_rad.sin();
+
+            let project_point = |lx: f32, ly: f32| -> egui::Vec2 {
+                let ly_squashed = ly * cos_t;
+                let rx = lx * cos_a - ly_squashed * sin_a;
+                let ry = lx * sin_a + ly_squashed * cos_a;
+                egui::Vec2::new(rx, ry)
+            };
+
+            let mut min_x = f32::MAX;
+            let mut max_x = f32::MIN;
+            let mut min_y = f32::MAX;
+            let mut max_y = f32::MIN;
+
+            for i in 0..num_layers {
+                let cy_rel = -(i as f32) * self.sprite_stack_spacing * sin_t;
+                for &(lx, ly) in &[(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)] {
+                    let pt = project_point(lx, ly);
+                    let px = pt.x;
+                    let py = cy_rel + pt.y;
+                    min_x = min_x.min(px);
+                    max_x = max_x.max(px);
+                    min_y = min_y.min(py);
+                    max_y = max_y.max(py);
+                }
+            }
 
             let stack_w = max_x - min_x;
             let stack_h = max_y - min_y;
@@ -7470,8 +7493,9 @@ print("FAIL")
             }
 
             let rect_center = rect.center();
-            let stack_center_rel = Vec2::new(min_x + stack_w / 2.0, min_y + stack_h / 2.0) * scale;
-            let base_top_left = rect_center - stack_center_rel;
+            let center_rel_x = min_x + stack_w / 2.0;
+            let center_rel_y = min_y + stack_h / 2.0;
+            let base_center_screen = rect_center - Vec2::new(center_rel_x, center_rel_y) * scale;
 
             // Draw layers bottom-to-top
             for (i, layer) in frame.layers.iter().enumerate() {
@@ -7488,20 +7512,22 @@ print("FAIL")
                     egui::TextureOptions::NEAREST,
                 );
 
-                let offset_x = (i as f32) * self.sprite_stack_spacing * angle_rad.sin() * scale;
-                let offset_y = -(i as f32) * self.sprite_stack_spacing * angle_rad.cos() * tilt_rad.sin() * scale;
+                let slice_center_screen = base_center_screen + Vec2::new(0.0, -(i as f32) * self.sprite_stack_spacing * sin_t * scale);
 
-                let layer_rect = egui::Rect::from_min_size(
-                    base_top_left + Vec2::new(offset_x, offset_y),
-                    Vec2::new(cw * scale, ch * scale),
-                );
+                let c0 = slice_center_screen + project_point(-hw, -hh) * scale;
+                let c1 = slice_center_screen + project_point(hw, -hh) * scale;
+                let c2 = slice_center_screen + project_point(hw, hh) * scale;
+                let c3 = slice_center_screen + project_point(-hw, hh) * scale;
 
-                ui.painter().image(
-                    tex.id(),
-                    layer_rect,
-                    egui::Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
-                    egui::Color32::WHITE.linear_multiply(layer.opacity as f32 / 255.0),
-                );
+                let mut mesh = egui::Mesh::with_texture(tex.id());
+                let color = egui::Color32::WHITE.linear_multiply(layer.opacity as f32 / 255.0);
+                mesh.vertices.push(egui::epaint::Vertex { pos: c0, uv: egui::Pos2::new(0.0, 0.0), color });
+                mesh.vertices.push(egui::epaint::Vertex { pos: c1, uv: egui::Pos2::new(1.0, 0.0), color });
+                mesh.vertices.push(egui::epaint::Vertex { pos: c2, uv: egui::Pos2::new(1.0, 1.0), color });
+                mesh.vertices.push(egui::epaint::Vertex { pos: c3, uv: egui::Pos2::new(0.0, 1.0), color });
+                mesh.add_triangle(0, 1, 2);
+                mesh.add_triangle(0, 2, 3);
+                ui.painter().add(egui::Shape::mesh(mesh));
             }
 
             // Draw interaction / control sliders under the canvas
