@@ -7469,9 +7469,12 @@ print("FAIL")
             let stack_w = max_x - min_x;
             let stack_h = max_y - min_y;
 
+            let width = (stack_w.ceil() as usize).max(1);
+            let height = (stack_h.ceil() as usize).max(1);
+
             let avail = ui.available_width();
             // Scale to fit available width/height, max zoom 16.0, min 1.0
-            let scale_raw = (avail / stack_w).min(avail / stack_h).min(16.0).max(1.0);
+            let scale_raw = (avail / width as f32).min(avail / height as f32).min(16.0).max(1.0);
 
             // Constrain scale to factor of two (1, 2, 4, 8, 16)
             let mut scale = 1.0;
@@ -7479,10 +7482,11 @@ print("FAIL")
                 scale *= 2.0;
             }
 
-            let screen_stack_h = (stack_h * scale).round();
+            let screen_w = width as f32 * scale;
+            let screen_h = height as f32 * scale;
 
             let (rect, response) = ui.allocate_exact_size(
-                Vec2::new(avail, screen_stack_h),
+                Vec2::new(avail, screen_h),
                 egui::Sense::drag(),
             );
 
@@ -7498,54 +7502,81 @@ print("FAIL")
                 self.sprite_stack_tilt = (self.sprite_stack_tilt - delta.y * 0.5).clamp(0.0, 90.0);
             }
 
-            let rect_center = rect.center();
-            let center_rel_x = min_x + stack_w / 2.0;
-            let center_rel_y = min_y + stack_h / 2.0;
-            let base_center_screen = egui::Pos2::new(
-                (rect_center.x - center_rel_x * scale).round(),
-                (rect_center.y - center_rel_y * scale).round(),
-            );
+            let mut dest_pixels = vec![0u8; width * height * 4];
+            let cos_t_div = cos_t.max(0.001);
 
-            // Draw layers bottom-to-top
             for (i, layer) in frame.layers.iter().enumerate() {
                 if !layer.visible || layer.is_group || layer.pixels.is_empty() {
                     continue;
                 }
 
-                let tex = ui.ctx().load_texture(
-                    format!("layer_stack_{}", layer.id),
-                    egui::ColorImage::from_rgba_unmultiplied(
-                        [layer.width as usize, layer.height as usize],
-                        &layer.pixels,
-                    ),
-                    egui::TextureOptions::NEAREST,
-                );
+                let src_w = layer.width as f32;
+                let src_h = layer.height as f32;
 
-                let slice_center_screen = egui::Pos2::new(
-                    base_center_screen.x,
-                    (base_center_screen.y - (i as f32) * self.sprite_stack_spacing * sin_t * scale).round(),
-                );
+                let dest_cx = -min_x;
+                let dest_cy = -min_y - (i as f32) * self.sprite_stack_spacing * sin_t;
 
-                let pt0 = project_point(-hw, -hh);
-                let pt1 = project_point(hw, -hh);
-                let pt2 = project_point(hw, hh);
-                let pt3 = project_point(-hw, hh);
+                let alpha_factor = layer.opacity as f32 / 255.0;
 
-                let c0 = egui::Pos2::new((slice_center_screen.x + pt0.x * scale).round(), (slice_center_screen.y + pt0.y * scale).round());
-                let c1 = egui::Pos2::new((slice_center_screen.x + pt1.x * scale).round(), (slice_center_screen.y + pt1.y * scale).round());
-                let c2 = egui::Pos2::new((slice_center_screen.x + pt2.x * scale).round(), (slice_center_screen.y + pt2.y * scale).round());
-                let c3 = egui::Pos2::new((slice_center_screen.x + pt3.x * scale).round(), (slice_center_screen.y + pt3.y * scale).round());
+                for dy in 0..height {
+                    for dx in 0..width {
+                        let rx = (dx as f32) - dest_cx;
+                        let ry = (dy as f32) - dest_cy;
 
-                let mut mesh = egui::Mesh::with_texture(tex.id());
-                let color = egui::Color32::WHITE.linear_multiply(layer.opacity as f32 / 255.0);
-                mesh.vertices.push(egui::epaint::Vertex { pos: c0, uv: egui::Pos2::new(0.0, 0.0), color });
-                mesh.vertices.push(egui::epaint::Vertex { pos: c1, uv: egui::Pos2::new(1.0, 0.0), color });
-                mesh.vertices.push(egui::epaint::Vertex { pos: c2, uv: egui::Pos2::new(1.0, 1.0), color });
-                mesh.vertices.push(egui::epaint::Vertex { pos: c3, uv: egui::Pos2::new(0.0, 1.0), color });
-                mesh.add_triangle(0, 1, 2);
-                mesh.add_triangle(0, 2, 3);
-                ui.painter().add(egui::Shape::mesh(mesh));
+                        // Inverse projection
+                        let lx = rx * cos_a + ry * sin_a;
+                        let ly = (-rx * sin_a + ry * cos_a) / cos_t_div;
+
+                        let sx = lx + src_w / 2.0;
+                        let sy = ly + src_h / 2.0;
+
+                        if sx >= 0.0 && sx < src_w && sy >= 0.0 && sy < src_h {
+                            let sidx = ((sy as usize) * (layer.width as usize) + (sx as usize)) * 4;
+                            let src_r = layer.pixels[sidx];
+                            let src_g = layer.pixels[sidx + 1];
+                            let src_b = layer.pixels[sidx + 2];
+                            let src_a = layer.pixels[sidx + 3];
+
+                            if src_a > 0 {
+                                let didx = (dy * width + dx) * 4;
+                                let a_src = (src_a as f32 / 255.0) * alpha_factor;
+                                let a_dst = dest_pixels[didx + 3] as f32 / 255.0;
+                                let a_out = a_src + a_dst * (1.0 - a_src);
+
+                                if a_out > 0.0 {
+                                    let r_out = (src_r as f32 * a_src + dest_pixels[didx] as f32 * a_dst * (1.0 - a_src)) / a_out;
+                                    let g_out = (src_g as f32 * a_src + dest_pixels[didx + 1] as f32 * a_dst * (1.0 - a_src)) / a_out;
+                                    let b_out = (src_b as f32 * a_src + dest_pixels[didx + 2] as f32 * a_dst * (1.0 - a_src)) / a_out;
+
+                                    dest_pixels[didx] = r_out.round() as u8;
+                                    dest_pixels[didx + 1] = g_out.round() as u8;
+                                    dest_pixels[didx + 2] = b_out.round() as u8;
+                                    dest_pixels[didx + 3] = (a_out * 255.0).round() as u8;
+                                }
+                            }
+                        }
+                    }
+                }
             }
+
+            let tex = ui.ctx().load_texture(
+                "sprite_stack_lowres",
+                egui::ColorImage::from_rgba_unmultiplied(
+                    [width, height],
+                    &dest_pixels,
+                ),
+                egui::TextureOptions::NEAREST,
+            );
+
+            let rect_center = rect.center();
+            let dest_rect = egui::Rect::from_center_size(rect_center, Vec2::new(screen_w, screen_h));
+
+            ui.painter().image(
+                tex.id(),
+                dest_rect,
+                egui::Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
+                egui::Color32::WHITE,
+            );
 
             // Draw interaction / control sliders under the canvas
             ui.add_space(8.0);
