@@ -4267,11 +4267,16 @@ impl App {
                             } else {
                                 // Always read name from frame 0 as the canonical source — in tiled
                                 // mode each tile is a separate frame and names must stay in sync.
-                                let name = self.project.animations[ai].frames
+                                let name_full = self.project.animations[ai].frames
                                     .first()
                                     .and_then(|f| f.layers.get(idx))
                                     .map(|l| l.name.clone())
                                     .unwrap_or_default();
+                                let name = if name_full.chars().count() > 12 {
+                                    format!("{}…", name_full.chars().take(12).collect::<String>())
+                                } else {
+                                    name_full
+                                };
                                 let bg_color = self.project.animations[ai].frames[fi].layers[idx].background_color;
                                 let name_color = if idx == 0 && self.picking_background_color {
                                     theme.accent
@@ -4609,13 +4614,18 @@ impl App {
                                         self.renaming_animation = None;
                                     }
                                 } else {
-                                    let name = self.project.animations[i].name.clone();
+                                    let name_full = self.project.animations[i].name.clone();
+                                    let name = if name_full.chars().count() > 12 {
+                                        format!("{}…", name_full.chars().take(12).collect::<String>())
+                                    } else {
+                                        name_full.clone()
+                                    };
                                     let label_resp = ui.add(
                                         egui::Label::new(rich(&name, if selected { theme.fg } else { theme.fg_desc }, FONT_SIZE_SM))
                                             .sense(egui::Sense::click()),
                                     );
                                     if label_resp.double_clicked() {
-                                        self.renaming_animation = Some((i, name));
+                                        self.renaming_animation = Some((i, name_full));
                                     }
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.add_space(10.0);
