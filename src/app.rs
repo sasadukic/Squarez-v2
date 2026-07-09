@@ -7455,23 +7455,13 @@ print("FAIL")
             let avail_w = ui.available_width();
             let avail_h = ui.available_height().max(10.0);
 
-            // Scale factor logic
-            let mut scale = self.sprite_stack_zoom;
-            if !self.preview_popped_out {
-                // Docked/sidebar: scale to fit available space
-                let scale_raw = (avail_w / width as f32).min(avail_h / height as f32).min(16.0).max(1.0);
-                let mut fit_scale = 1.0;
-                while fit_scale * 2.0 <= scale_raw {
-                    fit_scale *= 2.0;
-                }
-                scale = fit_scale;
-            }
-
-            let screen_w = width as f32 * scale;
-            let screen_h = height as f32 * scale;
+            // Zoom to fill available space
+            let draw_scale = (avail_w / width as f32).min(avail_h / height as f32);
+            let screen_w = width as f32 * draw_scale;
+            let screen_h = height as f32 * draw_scale;
 
             let (rect, response) = ui.allocate_exact_size(
-                Vec2::new(avail_w, screen_h),
+                Vec2::new(avail_w, avail_h),
                 egui::Sense::drag(),
             );
 
@@ -7689,28 +7679,20 @@ print("FAIL")
         let mut put_back = false;
         let theme = self.theme.clone();
 
-        let frame = self.project.active_frame_ref();
         let cw = self.project.canvas_width as f32;
         let ch = self.project.canvas_height as f32;
-        let num_layers = frame.layers.len();
-        let base_diagonal = (cw * cw + ch * ch).sqrt();
-        let max_stack_height = num_layers as f32 * 10.0;
-        let max_dim = (base_diagonal + max_stack_height).ceil();
-        let width = max_dim as usize;
-        let height = max_dim as usize;
+        let base_dim = cw.max(ch);
 
         let scale = self.sprite_stack_zoom;
-        let win_w = width as f32 * scale + 20.0;
-        let win_h = height as f32 * scale + 34.0;
+        let win_w = base_dim * scale + 20.0;
+        let win_h = base_dim * scale + 34.0;
 
         let win_resp = egui::Window::new("##floating_preview_win")
             .id(egui::Id::new(format!("floating_preview_win_{}", scale)))
             .open(&mut open)
-            .resizable(true)
+            .resizable(false)
             .title_bar(false)
             .default_size(Vec2::new(win_w, win_h))
-            .min_width(80.0)
-            .min_height(80.0)
             .frame(
                 Frame::new()
                     .fill(theme.panel)
@@ -7771,33 +7753,38 @@ print("FAIL")
                     .show(ui, |ui| {
                         self.draw_preview_content(ui);
                     });
+
+                // Draw and handle custom corner resize button
+                let corner_size = Vec2::splat(12.0);
+                let corner_rect = egui::Rect::from_min_size(
+                    egui::Pos2::new(ui.max_rect().max.x - corner_size.x, ui.max_rect().max.y - corner_size.y),
+                    corner_size,
+                );
+                let corner_resp = ui.interact(corner_rect, ui.id().with("corner_resize_btn"), egui::Sense::click());
+                if corner_resp.clicked() {
+                    let next_zoom = match self.sprite_stack_zoom {
+                        1.0 => 2.0,
+                        2.0 => 4.0,
+                        4.0 => 8.0,
+                        8.0 => 16.0,
+                        16.0 => 32.0,
+                        _ => 1.0,
+                    };
+                    self.sprite_stack_zoom = next_zoom;
+                }
+
+                // Draw retro pixel-art diagonal lines for the corner handle
+                let handle_color = if corner_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                let max_x = ui.max_rect().max.x;
+                let max_y = ui.max_rect().max.y;
+                ui.painter().line_segment([egui::Pos2::new(max_x - 10.0, max_y - 2.0), egui::Pos2::new(max_x - 2.0, max_y - 10.0)], egui::Stroke::new(1.0, handle_color));
+                ui.painter().line_segment([egui::Pos2::new(max_x - 7.0, max_y - 2.0), egui::Pos2::new(max_x - 2.0, max_y - 7.0)], egui::Stroke::new(1.0, handle_color));
+                ui.painter().line_segment([egui::Pos2::new(max_x - 4.0, max_y - 2.0), egui::Pos2::new(max_x - 2.0, max_y - 4.0)], egui::Stroke::new(1.0, handle_color));
             });
 
         if let Some(resp) = win_resp {
-            let actual_w = resp.response.rect.width() - 20.0;
-            let actual_h = resp.response.rect.height() - 34.0;
-            let scale_w = (actual_w / width as f32).max(1.0);
-            let scale_h = (actual_h / height as f32).max(1.0);
-            let scale_raw = scale_w.min(scale_h);
-            
-            let snapped_scale = if scale_raw >= 12.0 {
-                16.0
-            } else if scale_raw >= 6.0 {
-                8.0
-            } else if scale_raw >= 3.0 {
-                4.0
-            } else if scale_raw >= 1.5 {
-                2.0
-            } else {
-                1.0
-            };
-            
-            if snapped_scale != self.sprite_stack_zoom {
-                self.sprite_stack_zoom = snapped_scale;
-            }
-            
-            self.preview_window_width = width as f32 * self.sprite_stack_zoom + 20.0;
-            self.preview_window_height = height as f32 * self.sprite_stack_zoom + 34.0;
+            self.preview_window_width = resp.response.rect.width();
+            self.preview_window_height = resp.response.rect.height();
         }
 
         if !open || put_back {
