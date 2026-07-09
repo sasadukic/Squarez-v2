@@ -256,6 +256,8 @@ pub struct App {
     preview_popped_out: bool,
     /// Width of the floating preview window (from previous frame)
     preview_window_width: f32,
+    /// Height of the floating preview window (from previous frame)
+    preview_window_height: f32,
     pub sprite_stack_angle: f32,
     pub sprite_stack_tilt: f32,
     pub sprite_stack_spacing: f32,
@@ -946,6 +948,7 @@ impl App {
             sidebar_left_x: 0.0,
             preview_popped_out: false,
             preview_window_width: 176.0,
+            preview_window_height: 220.0,
             sprite_stack_angle: 0.0,
             sprite_stack_tilt: 45.0,
             sprite_stack_spacing: 1.0,
@@ -7472,9 +7475,10 @@ print("FAIL")
             let width = (stack_w.ceil() as usize).max(1);
             let height = (stack_h.ceil() as usize).max(1);
 
-            let avail = ui.available_width();
+            let avail_w = ui.available_width();
+            let avail_h = ui.available_height().max(10.0);
             // Scale to fit available width/height, max zoom 16.0, min 1.0
-            let scale_raw = (avail / width as f32).min(avail / height as f32).min(16.0).max(1.0);
+            let scale_raw = (avail_w / width as f32).min(avail_h / height as f32).min(16.0).max(1.0);
 
             // Constrain scale to factor of two (1, 2, 4, 8, 16)
             let mut scale = 1.0;
@@ -7486,20 +7490,26 @@ print("FAIL")
             let screen_h = height as f32 * scale;
 
             let (rect, response) = ui.allocate_exact_size(
-                Vec2::new(avail, screen_h),
+                Vec2::new(avail_w, screen_h),
                 egui::Sense::drag(),
             );
 
             if response.dragged() {
                 let delta = response.drag_delta();
-                self.sprite_stack_angle += delta.x * 0.01;
-                // Keep angle in range
-                if self.sprite_stack_angle > std::f32::consts::PI {
-                    self.sprite_stack_angle -= 2.0 * std::f32::consts::PI;
-                } else if self.sprite_stack_angle < -std::f32::consts::PI {
-                    self.sprite_stack_angle += 2.0 * std::f32::consts::PI;
+                let ctrl_held = ui.input(|i| i.modifiers.ctrl);
+                if ctrl_held {
+                    // Holding Ctrl controls layer spacing (vertical drag)
+                    self.sprite_stack_spacing = (self.sprite_stack_spacing - delta.y * 0.05).clamp(0.1, 10.0);
+                } else {
+                    self.sprite_stack_angle += delta.x * 0.01;
+                    // Keep angle in range
+                    if self.sprite_stack_angle > std::f32::consts::PI {
+                        self.sprite_stack_angle -= 2.0 * std::f32::consts::PI;
+                    } else if self.sprite_stack_angle < -std::f32::consts::PI {
+                        self.sprite_stack_angle += 2.0 * std::f32::consts::PI;
+                    }
+                    self.sprite_stack_tilt = (self.sprite_stack_tilt - delta.y * 0.5).clamp(0.0, 90.0);
                 }
-                self.sprite_stack_tilt = (self.sprite_stack_tilt - delta.y * 0.5).clamp(0.0, 90.0);
             }
 
             let mut dest_pixels = vec![0u8; width * height * 4];
@@ -7577,22 +7587,6 @@ print("FAIL")
                 egui::Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
                 egui::Color32::WHITE,
             );
-
-            // Draw interaction / control sliders under the canvas
-            ui.add_space(8.0);
-            let theme = self.theme.clone();
-            ui.scope(|ui| {
-                ui.style_mut().spacing.slider_width = 50.0;
-                ui.horizontal(|ui| {
-                    ui.visuals_mut().override_text_color = Some(theme.fg_desc);
-                    ui.label("Angle:");
-                    ui.add(egui::Slider::new(&mut self.sprite_stack_angle, -std::f32::consts::PI..=std::f32::consts::PI).show_value(false));
-                    ui.label("Tilt:");
-                    ui.add(egui::Slider::new(&mut self.sprite_stack_tilt, 0.0..=90.0).show_value(false));
-                    ui.label("Spacing:");
-                    ui.add(egui::Slider::new(&mut self.sprite_stack_spacing, 0.1..=5.0).show_value(false));
-                });
-            });
         } else {
             let (mut pixels, pw_size, ph_size) = if self.project.is_tiled() {
                 let tile_w = self.project.tile_w;
@@ -7701,30 +7695,16 @@ print("FAIL")
         let theme = self.theme.clone();
 
         let win_width = self.preview_window_width;
-        let avail_w = (win_width - 20.0).max(10.0);
-
-        let pw_size = if self.project.is_tiled() { self.project.tile_w } else { self.project.canvas_width };
-        let ph_size = if self.project.is_tiled() { self.project.tile_h } else { self.project.canvas_height };
-        let cw = pw_size as f32;
-        let ch = ph_size as f32;
-        let aspect = if ch > 0.0 { cw / ch } else { 1.0 };
-
-        let ph = if aspect >= 1.0 {
-            avail_w / aspect
-        } else {
-            avail_w
-        };
-
-        let total_h = ph + 42.0;
+        let win_height = self.preview_window_height;
 
         let win_resp = egui::Window::new("##floating_preview_win")
             .id(egui::Id::new("floating_preview_win"))
             .open(&mut open)
             .resizable(true)
             .title_bar(false)
-            .default_width(176.0)
-            .min_height(total_h)
-            .max_height(total_h)
+            .default_size(Vec2::new(win_width, win_height))
+            .min_width(80.0)
+            .min_height(80.0)
             .frame(
                 Frame::new()
                     .fill(theme.panel)
@@ -7789,6 +7769,7 @@ print("FAIL")
 
         if let Some(resp) = win_resp {
             self.preview_window_width = resp.response.rect.width();
+            self.preview_window_height = resp.response.rect.height();
         }
 
         if !open || put_back {
@@ -10683,6 +10664,10 @@ print("FAIL")
                                         ("Ctrl + Click brush", "Toggle 'Use Swatch Color' mode on custom brush"),
                                         ("A / F", "Navigate to previous / next frame"),
                                         ("Space", "Toggle animation playback play/pause"),
+                                    ]),
+                                    ("SPRITE STACK PREVIEW", vec![
+                                        ("Drag Mouse", "Rotate angle (X-drag) & tilt pitch (Y-drag)"),
+                                        ("Ctrl + Drag Mouse", "Adjust slice spacing (Y-drag up/down)"),
                                     ]),
                                 ];
 
