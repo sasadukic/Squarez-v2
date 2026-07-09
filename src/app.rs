@@ -107,6 +107,7 @@ pub struct App {
     new_tiles_h_str: String,
     new_aspect_locked: bool,
     new_tiles_aspect_locked: bool,
+    new_project_mode: crate::project::ProjectMode,
     // Compact clip-only display for multi-tile (hides non-clip tiles, rearranges clip tiles)
     tile_display_active: bool,
     tile_display_cols: u32,
@@ -817,6 +818,7 @@ impl App {
             new_tiles_h_str: "1".to_string(),
             new_aspect_locked: false,
             new_tiles_aspect_locked: false,
+            new_project_mode: crate::project::ProjectMode::Normal,
             tile_display_active: false,
             tile_display_cols: 0,
             tile_display_rows: 0,
@@ -1184,8 +1186,8 @@ impl App {
         self.new_tiles_h_focused = false;
         self.new_tiles_w = 1;
         self.new_tiles_h = 1;
-        self.new_aspect_locked = false;
         self.new_tiles_aspect_locked = false;
+        self.new_project_mode = crate::project::ProjectMode::Normal;
         self.new_width_str = self.new_width.to_string();
         self.new_height_str = self.new_height.to_string();
         self.new_tiles_w_str = self.new_tiles_w.to_string();
@@ -9561,20 +9563,66 @@ print("FAIL")
                             },
                         );
 
-                        ui.add_space(12.0);
-
-                        // ── Width / Height with lock ──
-                        let row_h = 22.0;
-                        let gap = 4.0;
-                        let total_h = row_h * 2.0 + gap;
-
-                        let old_w = self.new_width;
-                        let old_h = self.new_height;
+                        ui.add_space(8.0);
 
                         let label_w = 100.0;
                         let lock_w = 26.0;
                         let input_w = 52.0;
                         let col_offset = (row_w - (label_w + input_w + lock_w)) / 2.0;
+                        let row_h = 22.0;
+                        let gap = 4.0;
+
+                        // ── Mode selector ──
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(row_w, row_h),
+                            egui::Layout::left_to_right(egui::Align::TOP),
+                            |ui| {
+                                ui.spacing_mut().item_spacing = Vec2::ZERO;
+                                ui.add_space(col_offset);
+
+                                // Column 1: Mode label
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(label_w, row_h),
+                                    egui::Layout::top_down(egui::Align::Center),
+                                    |ui| {
+                                        ui.visuals_mut().override_text_color = Some(theme.fg_desc);
+                                        let (r, _) = ui.allocate_exact_size(Vec2::new(label_w, row_h), egui::Sense::hover());
+                                        ui.put(r, egui::Label::new(self.label_desc("Mode")).selectable(false));
+                                    }
+                                );
+
+                                // Column 2 & 3 combined: ComboBox dropdown
+                                let select_w = input_w + lock_w;
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(select_w, row_h),
+                                    egui::Layout::top_down(egui::Align::LEFT),
+                                    |ui| {
+                                        ui.spacing_mut().item_spacing = Vec2::ZERO;
+                                        let (r, _) = ui.allocate_exact_size(Vec2::new(select_w, row_h), egui::Sense::hover());
+                                        ui.put(r, |ui: &mut egui::Ui| {
+                                            egui::ComboBox::from_id_salt("new_project_mode")
+                                                .selected_text(self.new_project_mode.label())
+                                                .width(select_w)
+                                                .show_ui(ui, |ui| {
+                                                    ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::Normal, "Normal");
+                                                    ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::SpriteStack, "Sprite Stack");
+                                                    ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::ThreeD, "3D");
+                                                    ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::Blob, "Blob");
+                                                    ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::Wang, "Wang");
+                                                }).response
+                                        });
+                                    }
+                                );
+                            }
+                        );
+
+                        ui.add_space(8.0);
+
+                        // ── Width / Height with lock ──
+                        let total_h = row_h * 2.0 + gap;
+
+                        let old_w = self.new_width;
+                        let old_h = self.new_height;
 
                         let wh_outer = ui.allocate_ui_with_layout(
                             Vec2::new(row_w, total_h),
@@ -9723,157 +9771,160 @@ print("FAIL")
                         ui.painter().rect_stroke(in1, 2.0, input_stroke, egui::StrokeKind::Inside);
                         ui.painter().rect_stroke(in2, 2.0, input_stroke, egui::StrokeKind::Inside);
 
-                        ui.add_space(20.0);
+                        let (cw, ch) = if self.new_project_mode == crate::project::ProjectMode::SpriteStack {
+                            (self.new_width.max(1), self.new_height.max(1))
+                        } else {
+                            ui.add_space(20.0);
 
-                        // ── Number of tiles ──
-                        let old_tw = self.new_tiles_w;
-                        let old_th = self.new_tiles_h;
-                        let tiles_outer = ui.allocate_ui_with_layout(
-                            Vec2::new(row_w, total_h),
-                            egui::Layout::left_to_right(egui::Align::TOP),
-                            |ui| {
-                            ui.spacing_mut().item_spacing = Vec2::ZERO;
-                            ui.add_space(col_offset);
-                            // Column 1: labels
-                            ui.allocate_ui_with_layout(
-                                Vec2::new(label_w, total_h),
-                                egui::Layout::top_down(egui::Align::Center),
+                            // ── Number of tiles ──
+                            let old_tw = self.new_tiles_w;
+                            let old_th = self.new_tiles_h;
+                            let tiles_outer = ui.allocate_ui_with_layout(
+                                Vec2::new(row_w, total_h),
+                                egui::Layout::left_to_right(egui::Align::TOP),
                                 |ui| {
-                                ui.visuals_mut().override_text_color = Some(theme.fg_desc);
-                                let (r, _) = ui.allocate_exact_size(Vec2::new(label_w, total_h), egui::Sense::hover());
-                                ui.put(r, egui::Label::new(self.label_desc("Number of tiles")).selectable(false));
-                            });
-                            // Column 2: values
-                            ui.allocate_ui_with_layout(
-                                Vec2::new(input_w, total_h),
-                                egui::Layout::top_down(egui::Align::LEFT),
-                                |ui| {
-                                ui.visuals_mut().override_text_color = Some(theme.fg_desc);
-                                let (r, _) = ui.allocate_exact_size(Vec2::new(input_w, row_h), egui::Sense::hover());
-                                // Use vertical_align to center text within the row height
-                                let resp1 = ui.put(r, egui::TextEdit::singleline(&mut self.new_tiles_w_str)
-                                    .frame(false)
-                                    .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
-                                    .text_color(theme.fg)
-                                    .horizontal_align(egui::Align::Center)
-                                    .vertical_align(egui::Align::Center)
-                                    .id_source("new_tiles_w"));
-                                if resp1.has_focus() {
-                                    if !self.new_tiles_w_focused {
-                                        self.new_tiles_w_focused = true;
-                                        let text_len = self.new_tiles_w_str.len();
-                                        if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp1.id) {
-                                            let min = egui::text::CCursor::new(0);
-                                            let max = egui::text::CCursor::new(text_len);
-                                            state.cursor.set_char_range(Some(egui::text::CCursorRange::two(min, max)));
-                                            state.store(ui.ctx(), resp1.id);
+                                ui.spacing_mut().item_spacing = Vec2::ZERO;
+                                ui.add_space(col_offset);
+                                // Column 1: labels
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(label_w, total_h),
+                                    egui::Layout::top_down(egui::Align::Center),
+                                    |ui| {
+                                    ui.visuals_mut().override_text_color = Some(theme.fg_desc);
+                                    let (r, _) = ui.allocate_exact_size(Vec2::new(label_w, total_h), egui::Sense::hover());
+                                    ui.put(r, egui::Label::new(self.label_desc("Number of tiles")).selectable(false));
+                                });
+                                // Column 2: values
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(input_w, total_h),
+                                    egui::Layout::top_down(egui::Align::LEFT),
+                                    |ui| {
+                                    ui.visuals_mut().override_text_color = Some(theme.fg_desc);
+                                    let (r, _) = ui.allocate_exact_size(Vec2::new(input_w, row_h), egui::Sense::hover());
+                                    // Use vertical_align to center text within the row height
+                                    let resp1 = ui.put(r, egui::TextEdit::singleline(&mut self.new_tiles_w_str)
+                                        .frame(false)
+                                        .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
+                                        .text_color(theme.fg)
+                                        .horizontal_align(egui::Align::Center)
+                                        .vertical_align(egui::Align::Center)
+                                        .id_source("new_tiles_w"));
+                                    if resp1.has_focus() {
+                                        if !self.new_tiles_w_focused {
+                                            self.new_tiles_w_focused = true;
+                                            let text_len = self.new_tiles_w_str.len();
+                                            if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp1.id) {
+                                                let min = egui::text::CCursor::new(0);
+                                                let max = egui::text::CCursor::new(text_len);
+                                                state.cursor.set_char_range(Some(egui::text::CCursorRange::two(min, max)));
+                                                state.store(ui.ctx(), resp1.id);
+                                            }
                                         }
+                                    } else {
+                                        self.new_tiles_w_focused = false;
                                     }
-                                } else {
-                                    self.new_tiles_w_focused = false;
-                                }
-                                if resp1.changed() {
-                                    if let Ok(val) = self.new_tiles_w_str.trim().parse::<u32>() {
-                                        self.new_tiles_w = val.clamp(1, 64);
+                                    if resp1.changed() {
+                                        if let Ok(val) = self.new_tiles_w_str.trim().parse::<u32>() {
+                                            self.new_tiles_w = val.clamp(1, 64);
+                                        }
+                                    } else if !resp1.has_focus() {
+                                        self.new_tiles_w_str = self.new_tiles_w.to_string();
                                     }
-                                } else if !resp1.has_focus() {
-                                    self.new_tiles_w_str = self.new_tiles_w.to_string();
-                                }
 
-                                ui.add_space(gap);
-                                let (r, _) = ui.allocate_exact_size(Vec2::new(input_w, row_h), egui::Sense::hover());
-                                let resp2 = ui.put(r, egui::TextEdit::singleline(&mut self.new_tiles_h_str)
-                                    .frame(false)
-                                    .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
-                                    .text_color(theme.fg)
-                                    .horizontal_align(egui::Align::Center)
-                                    .vertical_align(egui::Align::Center)
-                                    .id_source("new_tiles_h"));
-                                if resp2.has_focus() {
-                                    if !self.new_tiles_h_focused {
-                                        self.new_tiles_h_focused = true;
-                                        let text_len = self.new_tiles_h_str.len();
-                                        if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp2.id) {
-                                            let min = egui::text::CCursor::new(0);
-                                            let max = egui::text::CCursor::new(text_len);
-                                            state.cursor.set_char_range(Some(egui::text::CCursorRange::two(min, max)));
-                                            state.store(ui.ctx(), resp2.id);
+                                    ui.add_space(gap);
+                                    let (r, _) = ui.allocate_exact_size(Vec2::new(input_w, row_h), egui::Sense::hover());
+                                    let resp2 = ui.put(r, egui::TextEdit::singleline(&mut self.new_tiles_h_str)
+                                        .frame(false)
+                                        .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
+                                        .text_color(theme.fg)
+                                        .horizontal_align(egui::Align::Center)
+                                        .vertical_align(egui::Align::Center)
+                                        .id_source("new_tiles_h"));
+                                    if resp2.has_focus() {
+                                        if !self.new_tiles_h_focused {
+                                            self.new_tiles_h_focused = true;
+                                            let text_len = self.new_tiles_h_str.len();
+                                            if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp2.id) {
+                                                let min = egui::text::CCursor::new(0);
+                                                let max = egui::text::CCursor::new(text_len);
+                                                state.cursor.set_char_range(Some(egui::text::CCursorRange::two(min, max)));
+                                                state.store(ui.ctx(), resp2.id);
+                                            }
                                         }
+                                    } else {
+                                        self.new_tiles_h_focused = false;
                                     }
-                                } else {
-                                    self.new_tiles_h_focused = false;
-                                }
-                                if resp2.changed() {
-                                    if let Ok(val) = self.new_tiles_h_str.trim().parse::<u32>() {
-                                        self.new_tiles_h = val.clamp(1, 64);
-                                    }
-                                } else if !resp2.has_focus() {
-                                    self.new_tiles_h_str = self.new_tiles_h.to_string();
-                                }
-                            });
-                            // Column 3: lock interaction
-                            ui.allocate_ui_with_layout(
-                                Vec2::new(lock_w, total_h),
-                                egui::Layout::top_down(egui::Align::TOP),
-                                |ui| {
-                                let alloc_rect = ui.max_rect();
-                                let center = egui::Pos2::new(alloc_rect.center().x, alloc_rect.center().y + 1.0);
-                                let bg_rect = egui::Rect::from_center_size(center, Vec2::splat(20.0));
-                                let response = ui.interact(bg_rect, "tiles_lock_btn".into(), egui::Sense::click());
-                                if response.clicked() {
-                                    self.new_tiles_aspect_locked = !self.new_tiles_aspect_locked;
-                                    if self.new_tiles_aspect_locked {
-                                        // Snap tile height to match tile width when locking
-                                        self.new_tiles_h = self.new_tiles_w;
+                                    if resp2.changed() {
+                                        if let Ok(val) = self.new_tiles_h_str.trim().parse::<u32>() {
+                                            self.new_tiles_h = val.clamp(1, 64);
+                                        }
+                                    } else if !resp2.has_focus() {
                                         self.new_tiles_h_str = self.new_tiles_h.to_string();
                                     }
-                                }
+                                });
+                                // Column 3: lock interaction
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(lock_w, total_h),
+                                    egui::Layout::top_down(egui::Align::TOP),
+                                    |ui| {
+                                    let alloc_rect = ui.max_rect();
+                                    let center = egui::Pos2::new(alloc_rect.center().x, alloc_rect.center().y + 1.0);
+                                    let bg_rect = egui::Rect::from_center_size(center, Vec2::splat(20.0));
+                                    let response = ui.interact(bg_rect, "tiles_lock_btn".into(), egui::Sense::click());
+                                    if response.clicked() {
+                                        self.new_tiles_aspect_locked = !self.new_tiles_aspect_locked;
+                                        if self.new_tiles_aspect_locked {
+                                            // Snap tile height to match tile width when locking
+                                            self.new_tiles_h = self.new_tiles_w;
+                                            self.new_tiles_h_str = self.new_tiles_h.to_string();
+                                        }
+                                    }
+                                });
                             });
-                        });
 
-                        // Draw tiles lines, fill, and lock icon
-                        let tr = tiles_outer.response.rect;
-                        let t_input_right = tr.left() + col_offset + label_w + input_w;
-                        let t_lock_cx = tr.left() + col_offset + label_w + input_w + lock_w / 2.0;
-                        let tw_cy = tr.top() + row_h / 2.0;
-                        let th_cy = tr.top() + row_h + gap + row_h / 2.0;
-                        if self.new_tiles_aspect_locked {
-                            ui.painter().line_segment([egui::Pos2::new(t_input_right, tw_cy), egui::Pos2::new(t_lock_cx, tw_cy)], stroke);
-                            ui.painter().line_segment([egui::Pos2::new(t_input_right, th_cy), egui::Pos2::new(t_lock_cx, th_cy)], stroke);
-                            ui.painter().line_segment([egui::Pos2::new(t_lock_cx, tw_cy), egui::Pos2::new(t_lock_cx, th_cy)], stroke);
-                        }
-                        let t_bg_rect = egui::Rect::from_center_size(egui::Pos2::new(t_lock_cx, tw_cy + (th_cy - tw_cy) / 2.0 + 1.0), Vec2::splat(20.0));
-                        ui.painter().rect_filled(t_bg_rect, 4.0, theme.panel);
-                        let t_lock_tint = if self.new_tiles_aspect_locked { theme.fg_desc } else { theme.accent };
-                        let t_lock_icon = if self.new_tiles_aspect_locked {
-                            egui::include_image!("../assets/icons/lock.svg")
-                        } else {
-                            egui::include_image!("../assets/icons/lock_open.svg")
-                        };
-                        let t_icon_rect = egui::Rect::from_center_size(t_bg_rect.center(), Vec2::splat(16.0));
-                        ui.put(t_icon_rect, Image::new(t_lock_icon).tint(t_lock_tint).fit_to_exact_size(Vec2::splat(16.0)));
-
-                        // Lock: copy changed value to the other field
-                        if self.new_tiles_aspect_locked {
-                            if self.new_tiles_w != old_tw {
-                                self.new_tiles_h = self.new_tiles_w;
-                                self.new_tiles_h_str = self.new_tiles_h.to_string();
-                            } else if self.new_tiles_h != old_th {
-                                self.new_tiles_w = self.new_tiles_h;
-                                self.new_tiles_w_str = self.new_tiles_w.to_string();
+                            // Draw tiles lines, fill, and lock icon
+                            let tr = tiles_outer.response.rect;
+                            let t_input_right = tr.left() + col_offset + label_w + input_w;
+                            let t_lock_cx = tr.left() + col_offset + label_w + input_w + lock_w / 2.0;
+                            let tw_cy = tr.top() + row_h / 2.0;
+                            let th_cy = tr.top() + row_h + gap + row_h / 2.0;
+                            if self.new_tiles_aspect_locked {
+                                ui.painter().line_segment([egui::Pos2::new(t_input_right, tw_cy), egui::Pos2::new(t_lock_cx, tw_cy)], stroke);
+                                ui.painter().line_segment([egui::Pos2::new(t_input_right, th_cy), egui::Pos2::new(t_lock_cx, th_cy)], stroke);
+                                ui.painter().line_segment([egui::Pos2::new(t_lock_cx, tw_cy), egui::Pos2::new(t_lock_cx, th_cy)], stroke);
                             }
-                        }
+                            let t_bg_rect = egui::Rect::from_center_size(egui::Pos2::new(t_lock_cx, tw_cy + (th_cy - tw_cy) / 2.0 + 1.0), Vec2::splat(20.0));
+                            ui.painter().rect_filled(t_bg_rect, 4.0, theme.panel);
+                            let t_lock_tint = if self.new_tiles_aspect_locked { theme.fg_desc } else { theme.accent };
+                            let t_lock_icon = if self.new_tiles_aspect_locked {
+                                egui::include_image!("../assets/icons/lock.svg")
+                            } else {
+                                egui::include_image!("../assets/icons/lock_open.svg")
+                            };
+                            let t_icon_rect = egui::Rect::from_center_size(t_bg_rect.center(), Vec2::splat(16.0));
+                            ui.put(t_icon_rect, Image::new(t_lock_icon).tint(t_lock_tint).fit_to_exact_size(Vec2::splat(16.0)));
 
-                        // Input outlines (tile number section)
-                        let t_input_x = tr.left() + col_offset + label_w;
-                        let tin1 = egui::Rect::from_min_size(egui::Pos2::new(t_input_x, tr.top()), Vec2::new(input_w, row_h));
-                        let tin2 = egui::Rect::from_min_size(egui::Pos2::new(t_input_x, tr.top() + row_h + gap), Vec2::new(input_w, row_h));
-                        ui.painter().rect_stroke(tin1, 2.0, input_stroke, egui::StrokeKind::Inside);
-                        ui.painter().rect_stroke(tin2, 2.0, input_stroke, egui::StrokeKind::Inside);
+                            // Lock: copy changed value to the other field
+                            if self.new_tiles_aspect_locked {
+                                if self.new_tiles_w != old_tw {
+                                    self.new_tiles_h = self.new_tiles_w;
+                                    self.new_tiles_h_str = self.new_tiles_h.to_string();
+                                } else if self.new_tiles_h != old_th {
+                                    self.new_tiles_w = self.new_tiles_h;
+                                    self.new_tiles_w_str = self.new_tiles_w.to_string();
+                                }
+                            }
 
-                        // ── Total size ──
-                        let cw = self.new_width.max(1) * self.new_tiles_w.max(1);
-                        let ch = self.new_height.max(1) * self.new_tiles_h.max(1);
+                            // Input outlines (tile number section)
+                            let t_input_x = tr.left() + col_offset + label_w;
+                            let tin1 = egui::Rect::from_min_size(egui::Pos2::new(t_input_x, tr.top()), Vec2::new(input_w, row_h));
+                            let tin2 = egui::Rect::from_min_size(egui::Pos2::new(t_input_x, tr.top() + row_h + gap), Vec2::new(input_w, row_h));
+                            ui.painter().rect_stroke(tin1, 2.0, input_stroke, egui::StrokeKind::Inside);
+                            ui.painter().rect_stroke(tin2, 2.0, input_stroke, egui::StrokeKind::Inside);
+
+                            (self.new_width.max(1) * self.new_tiles_w.max(1), self.new_height.max(1) * self.new_tiles_h.max(1))
+                        };
+
                         ui.add_space(28.0);
                         ui.allocate_ui_with_layout(
                             Vec2::new(row_w, 18.0),
@@ -9922,11 +9973,14 @@ print("FAIL")
                                 if create_resp.clicked() {
                                     let tile_w = self.new_width;
                                     let tile_h = self.new_height;
-                                    let tiles_w = self.new_tiles_w;
-                                    let tiles_h = self.new_tiles_h;
+                                    let (tiles_w, tiles_h) = if self.new_project_mode == crate::project::ProjectMode::SpriteStack {
+                                        (1, 1)
+                                    } else {
+                                        (self.new_tiles_w, self.new_tiles_h)
+                                    };
                                     let cw = tile_w * tiles_w;
                                     let ch = tile_h * tiles_h;
-                                    let new_proj = Project::new_tiled(cw, ch, self.new_name.clone(), tiles_w, tiles_h, tile_w, tile_h);
+                                    let new_proj = Project::new_tiled_with_mode(cw, ch, self.new_name.clone(), tiles_w, tiles_h, tile_w, tile_h, self.new_project_mode);
                                     self.grid_size = tile_w;
                                     self.grid_visible = true;
                                     if self.replace_project_pending {

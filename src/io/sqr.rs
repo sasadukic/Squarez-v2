@@ -72,6 +72,7 @@ impl LegacyProjectV1 {
             tiles_h: 1,
             tile_w: 0,
             tile_h: 0,
+            mode: crate::project::ProjectMode::Normal,
         }
     }
 }

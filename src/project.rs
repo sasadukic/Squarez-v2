@@ -16,6 +16,33 @@ pub enum Anchor {
     BottomRight,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProjectMode {
+    Normal,
+    SpriteStack,
+    ThreeD,
+    Blob,
+    Wang,
+}
+
+impl Default for ProjectMode {
+    fn default() -> Self {
+        Self::Normal
+    }
+}
+
+impl ProjectMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Normal => "Normal",
+            Self::SpriteStack => "Sprite Stack",
+            Self::ThreeD => "3D",
+            Self::Blob => "Blob",
+            Self::Wang => "Wang",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
     pub name: String,
@@ -38,6 +65,8 @@ pub struct Project {
     pub tile_w: u32,
     #[serde(default)]
     pub tile_h: u32,
+    #[serde(default)]
+    pub mode: ProjectMode,
 }
 
 fn default_id_counter() -> u64 { 1 }
@@ -74,7 +103,20 @@ impl Project {
             tiles_h,
             tile_w,
             tile_h,
+            mode: ProjectMode::Normal,
         }
+    }
+
+    pub fn new_with_mode(width: u32, height: u32, name: String, mode: ProjectMode) -> Self {
+        let mut proj = Self::new(width, height, name);
+        proj.mode = mode;
+        proj
+    }
+
+    pub fn new_tiled_with_mode(width: u32, height: u32, name: String, tiles_w: u32, tiles_h: u32, tile_w: u32, tile_h: u32, mode: ProjectMode) -> Self {
+        let mut proj = Self::new_tiled(width, height, name, tiles_w, tiles_h, tile_w, tile_h);
+        proj.mode = mode;
+        proj
     }
 
     pub fn is_tiled(&self) -> bool {
