@@ -7444,13 +7444,39 @@ print("FAIL")
             let cos_a = angle_rad.cos();
             let sin_a = angle_rad.sin();
 
-            // Calculate a FIXED size of the low-res buffer based on max possible diagonal + max stack height
-            let base_diagonal = (cw * cw + ch * ch).sqrt();
-            let max_stack_height = num_layers as f32 * 10.0;
-            let max_dim = (base_diagonal + max_stack_height).ceil();
-            
-            let width = max_dim as usize;
-            let height = max_dim as usize;
+            let hw = cw / 2.0;
+            let hh = ch / 2.0;
+
+            let project_point = |lx: f32, ly: f32| -> egui::Vec2 {
+                let ly_squashed = ly * cos_t;
+                let rx = lx * cos_a - ly_squashed * sin_a;
+                let ry = lx * sin_a + ly_squashed * cos_a;
+                egui::Vec2::new(rx, ry)
+            };
+
+            let mut min_x = f32::MAX;
+            let mut max_x = f32::MIN;
+            let mut min_y = f32::MAX;
+            let mut max_y = f32::MIN;
+
+            for i in 0..num_layers {
+                let cy_rel = -(i as f32) * self.sprite_stack_spacing * sin_t;
+                for &(lx, ly) in &[(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)] {
+                    let pt = project_point(lx, ly);
+                    let px = pt.x;
+                    let py = cy_rel + pt.y;
+                    min_x = min_x.min(px);
+                    max_x = max_x.max(px);
+                    min_y = min_y.min(py);
+                    max_y = max_y.max(py);
+                }
+            }
+
+            let stack_w = max_x - min_x;
+            let stack_h = max_y - min_y;
+
+            let width = (stack_w.ceil() as usize).max(1);
+            let height = (stack_h.ceil() as usize).max(1);
 
             let avail_w = ui.available_width();
             let avail_h = ui.available_height().max(10.0);
@@ -7494,12 +7520,6 @@ print("FAIL")
             let mut dest_pixels = vec![0u8; width * height * 4];
             let cos_t_div = cos_t.max(0.001);
 
-            let center_x = width as f32 / 2.0;
-            let center_y = height as f32 / 2.0;
-            let total_stack_height = (num_layers.saturating_sub(1) as f32) * self.sprite_stack_spacing * sin_t;
-            let base_cx = center_x;
-            let base_cy = center_y + total_stack_height / 2.0;
-
             for (i, layer) in frame.layers.iter().enumerate() {
                 if !layer.visible || layer.is_group || layer.pixels.is_empty() {
                     continue;
@@ -7508,15 +7528,15 @@ print("FAIL")
                 let src_w = layer.width as f32;
                 let src_h = layer.height as f32;
 
-                let slice_cx = base_cx;
-                let slice_cy = base_cy - (i as f32) * self.sprite_stack_spacing * sin_t;
+                let dest_cx = -min_x;
+                let dest_cy = -min_y - (i as f32) * self.sprite_stack_spacing * sin_t;
 
                 let alpha_factor = layer.opacity as f32 / 255.0;
 
                 for dy in 0..height {
                     for dx in 0..width {
-                        let rx = (dx as f32) - slice_cx;
-                        let ry = (dy as f32) - slice_cy;
+                        let rx = (dx as f32) - dest_cx;
+                        let ry = (dy as f32) - dest_cy;
 
                         // Inverse projection
                         let lx = rx * cos_a + ry * sin_a;
