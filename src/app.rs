@@ -7701,6 +7701,31 @@ print("FAIL")
             // Draw pin icon on the right side if the sidebar is not collapsed and section is not collapsed
             let fade_t = 1.0 - t;
             if rect.width() > 50.0 && fade_t > 0.0 {
+                // 2:1 view button
+                let btn_size = Vec2::new(30.0, 16.0);
+                let btn_rect = egui::Rect::from_center_size(
+                    egui::Pos2::new(rect.right() - 32.0, rect.center().y),
+                    btn_size,
+                );
+                let btn_resp = ui.interact(btn_rect, egui::Id::new("hdr_2to1_preview"), egui::Sense::click());
+                let btn_bg = if btn_resp.hovered() { theme.accent.linear_multiply(0.2) } else { Color32::TRANSPARENT };
+                let btn_text_color = if btn_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                
+                ui.painter().rect_filled(btn_rect, egui::CornerRadius::same(3), btn_bg);
+                ui.put(
+                    btn_rect,
+                    egui::Label::new(
+                        egui::RichText::new("2:1")
+                            .font(egui::FontId::proportional(10.0))
+                            .color(btn_text_color)
+                    )
+                );
+                if btn_resp.clicked() {
+                    self.sprite_stack_angle = 45.0f32.to_radians();
+                    self.sprite_stack_tilt = 60.0;
+                    self.sprite_stack_spacing = 1.0;
+                }
+
                 let pin_size = Vec2::splat(14.0);
                 let pin_rect = egui::Rect::from_center_size(
                     egui::Pos2::new(rect.right() - 8.0, rect.center().y),
@@ -7787,6 +7812,32 @@ print("FAIL")
                             .tint(icon_tint)
                             .fit_to_exact_size(icon_size),
                     );
+
+                    // Right: 2:1 view button
+                    let btn_size = Vec2::new(30.0, 16.0);
+                    let btn_rect = egui::Rect::from_center_size(
+                        egui::Pos2::new(rect.right() - 32.0, rect.center().y),
+                        btn_size,
+                    );
+                    let btn_resp = ui.interact(btn_rect, ui.id().with("floating_preview_2to1"), egui::Sense::click());
+                    let btn_bg = if btn_resp.hovered() { theme.accent.linear_multiply(0.2) } else { Color32::TRANSPARENT };
+                    let btn_text_color = if btn_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                    
+                    ui.painter().rect_filled(btn_rect, egui::CornerRadius::same(3), btn_bg);
+                    ui.put(
+                        btn_rect,
+                        egui::Label::new(
+                            egui::RichText::new("2:1")
+                                .font(egui::FontId::proportional(10.0))
+                                .color(btn_text_color)
+                        )
+                    );
+                    
+                    if btn_resp.clicked() {
+                        self.sprite_stack_angle = 45.0f32.to_radians();
+                        self.sprite_stack_tilt = 60.0;
+                        self.sprite_stack_spacing = 1.0;
+                    }
 
                     // Right: Pin button (to dock it back)
                     let pin_size = Vec2::splat(14.0);
