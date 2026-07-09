@@ -7470,10 +7470,16 @@ print("FAIL")
             let stack_h = max_y - min_y;
 
             let avail = ui.available_width();
-            // Scale to fit available width/height
-            let scale = (avail / stack_w).min(avail / stack_h).min(15.0).max(1.0);
+            // Scale to fit available width/height, max zoom 16.0, min 1.0
+            let scale_raw = (avail / stack_w).min(avail / stack_h).min(16.0).max(1.0);
 
-            let screen_stack_h = stack_h * scale;
+            // Constrain scale to factor of two (1, 2, 4, 8, 16)
+            let mut scale = 1.0;
+            while scale * 2.0 <= scale_raw {
+                scale *= 2.0;
+            }
+
+            let screen_stack_h = (stack_h * scale).round();
 
             let (rect, response) = ui.allocate_exact_size(
                 Vec2::new(avail, screen_stack_h),
@@ -7495,7 +7501,10 @@ print("FAIL")
             let rect_center = rect.center();
             let center_rel_x = min_x + stack_w / 2.0;
             let center_rel_y = min_y + stack_h / 2.0;
-            let base_center_screen = rect_center - Vec2::new(center_rel_x, center_rel_y) * scale;
+            let base_center_screen = egui::Pos2::new(
+                (rect_center.x - center_rel_x * scale).round(),
+                (rect_center.y - center_rel_y * scale).round(),
+            );
 
             // Draw layers bottom-to-top
             for (i, layer) in frame.layers.iter().enumerate() {
@@ -7512,12 +7521,20 @@ print("FAIL")
                     egui::TextureOptions::NEAREST,
                 );
 
-                let slice_center_screen = base_center_screen + Vec2::new(0.0, -(i as f32) * self.sprite_stack_spacing * sin_t * scale);
+                let slice_center_screen = egui::Pos2::new(
+                    base_center_screen.x,
+                    (base_center_screen.y - (i as f32) * self.sprite_stack_spacing * sin_t * scale).round(),
+                );
 
-                let c0 = slice_center_screen + project_point(-hw, -hh) * scale;
-                let c1 = slice_center_screen + project_point(hw, -hh) * scale;
-                let c2 = slice_center_screen + project_point(hw, hh) * scale;
-                let c3 = slice_center_screen + project_point(-hw, hh) * scale;
+                let pt0 = project_point(-hw, -hh);
+                let pt1 = project_point(hw, -hh);
+                let pt2 = project_point(hw, hh);
+                let pt3 = project_point(-hw, hh);
+
+                let c0 = egui::Pos2::new((slice_center_screen.x + pt0.x * scale).round(), (slice_center_screen.y + pt0.y * scale).round());
+                let c1 = egui::Pos2::new((slice_center_screen.x + pt1.x * scale).round(), (slice_center_screen.y + pt1.y * scale).round());
+                let c2 = egui::Pos2::new((slice_center_screen.x + pt2.x * scale).round(), (slice_center_screen.y + pt2.y * scale).round());
+                let c3 = egui::Pos2::new((slice_center_screen.x + pt3.x * scale).round(), (slice_center_screen.y + pt3.y * scale).round());
 
                 let mut mesh = egui::Mesh::with_texture(tex.id());
                 let color = egui::Color32::WHITE.linear_multiply(layer.opacity as f32 / 255.0);
