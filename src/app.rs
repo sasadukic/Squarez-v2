@@ -8876,7 +8876,7 @@ print("FAIL")
             && response.hovered()
         {
             if let (Some((x0, y0)), Some(pos)) = (self.drag_start, pos_opt) {
-                let (epx, epy) = self.canvas.screen_to_canvas_i32(pos, canvas_rect, w, h);
+                let (epx, epy) = self.get_canvas_coords_i32(pos, canvas_rect);
                 let x1 = epx.clamp(0, w as i32 - 1) as u32;
                 let y1 = epy.clamp(0, h as i32 - 1) as u32;
                 if self.iso_box_dragging {
@@ -8911,7 +8911,7 @@ print("FAIL")
                  && !self.project.animations[ai].frames[fi].layers[li].is_group
             {
                 if let (Some((x0, y0)), Some(pos)) = (self.drag_start, pos_opt) {
-                    let (epx, epy) = self.canvas.screen_to_canvas_i32(pos, canvas_rect, w, h);
+                    let (epx, epy) = self.get_canvas_coords_i32(pos, canvas_rect);
                     let shift_commit = response.ctx.input(|i| i.modifiers.shift);
                     let ctrl_commit = response.ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
                     let active_tool = self.active_tool.clone();
@@ -9351,7 +9351,7 @@ print("FAIL")
             }
 
             if is_select_tool && self.select_state.has_float() {
-                let (cx_px, cy_px) = self.canvas.screen_to_canvas_f32(pos, canvas_rect, w, h);
+                let (cx_px, cy_px) = self.get_canvas_coords_f32(pos, canvas_rect);
                 if self.hit_test_selection(cx_px, cy_px).is_none() {
                     self.commit_float_to_layer();
                 } else {
@@ -9380,7 +9380,7 @@ print("FAIL")
                             self.lift_mask_to_float();
                             self.select_state.interaction = SelectInteraction::Moving;
                             let latest = response.ctx.input(|i| i.pointer.latest_pos()).unwrap_or(pos);
-                            let (cx, cy) = self.canvas.screen_to_canvas_f32(latest, canvas_rect, w, h);
+                            let (cx, cy) = self.get_canvas_coords_f32(latest, canvas_rect);
                             self.select_state.drag_anchor = Some(crate::tools::DragAnchor {
                                 mouse_x: cx,
                                 mouse_y: cy,
@@ -10145,9 +10145,7 @@ print("FAIL")
             return false;
         };
 
-        let w = self.project.canvas_width;
-        let h = self.project.canvas_height;
-        let (cx_px, cy_px) = self.canvas.screen_to_canvas_f32(pos, canvas_rect, w, h);
+        let (cx_px, cy_px) = self.get_canvas_coords_f32(pos, canvas_rect);
 
         // Start an interaction on press or drag_started inside a handle or the rect.
         let press_started = response.ctx.input(|i| i.pointer.primary_pressed()) && response.hovered();
