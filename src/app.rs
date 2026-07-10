@@ -5966,8 +5966,8 @@ impl App {
                     }
                 }
 
+                let art_rect = self.canvas.art_rect(canvas_rect, disp_w, disp_h);
                 if self.project.mode != crate::project::ProjectMode::SpriteStack {
-                    let art_rect = self.canvas.art_rect(canvas_rect, disp_w, disp_h);
                     painter.rect_stroke(
                         art_rect,
                         0.0,
