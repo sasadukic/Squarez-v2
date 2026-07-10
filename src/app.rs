@@ -7510,11 +7510,6 @@ print("FAIL")
             let avail_w = ui.available_width();
             let avail_h = ui.available_height().max(10.0);
 
-            let (rect, _) = ui.allocate_exact_size(
-                Vec2::new(avail_w, avail_h),
-                egui::Sense::hover(),
-            );
-
             // Project point relative to center of the stack with zoom = 1.0
             let project_3d_base = |x_val: f32, y_val: f32, z_val: f32| -> egui::Vec2 {
                 let cx = x_val - w as f32 / 2.0;
@@ -7554,7 +7549,19 @@ print("FAIL")
             let bounding_w = max_x - min_x;
             let bounding_h = max_y - min_y;
 
-            let zoom = (avail_w / bounding_w.max(1.0)).min(avail_h / bounding_h.max(1.0)) * 0.85;
+            let aspect = bounding_h / bounding_w.max(1.0);
+            let target_h = if self.preview_popped_out {
+                avail_h
+            } else {
+                (avail_w * aspect).min(avail_h).max(64.0)
+            };
+
+            let (rect, _) = ui.allocate_exact_size(
+                Vec2::new(avail_w, target_h),
+                egui::Sense::hover(),
+            );
+
+            let zoom = (avail_w / bounding_w.max(1.0)).min(target_h / bounding_h.max(1.0)) * 0.90;
 
             let center_pos = rect.center();
             let project_3d_preview = |x_val: f32, y_val: f32, z_val: f32| -> egui::Pos2 {
