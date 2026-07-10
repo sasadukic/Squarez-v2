@@ -7838,7 +7838,7 @@ print("FAIL")
         if collapsed { return; }
 
         let theme = self.theme.clone();
-        Frame::new().fill(theme.panel).inner_margin(Margin::symmetric(10, 8)).show(ui, |ui| {
+        Frame::new().fill(Color32::WHITE).inner_margin(Margin::symmetric(10, 8)).show(ui, |ui| {
             self.draw_preview_content(ui);
         });
     }
@@ -7983,7 +7983,7 @@ print("FAIL")
 
                 // 2. Content
                 Frame::new()
-                    .fill(theme.panel)
+                    .fill(Color32::WHITE)
                     .inner_margin(Margin { left: 10, right: 10, top: 0, bottom: 8 })
                     .show(ui, |ui| {
                         self.draw_preview_content(ui);
