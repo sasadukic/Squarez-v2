@@ -8428,7 +8428,8 @@ print("FAIL")
             }
         }
 
-        // Draw hover preview of tool drawing as a flat overlay on the active layer plane
+        // Draw hover preview of tool drawing as 3D voxels without wireframe strokes
+        let no_stroke = egui::Stroke::new(0.0, egui::Color32::TRANSPARENT);
         for &(px, py, color) in &self.shape_preview {
             let col32 = egui::Color32::from_rgba_unmultiplied(color[0], color[1], color[2], 160);
             let p00_1 = project_3d(px as f32, py as f32, (li + 1) as f32);
@@ -8436,10 +8437,66 @@ print("FAIL")
             let p11_1 = project_3d((px + 1) as f32, (py + 1) as f32, (li + 1) as f32);
             let p01_1 = project_3d(px as f32, (py + 1) as f32, (li + 1) as f32);
 
+            let p00_0 = project_3d(px as f32, py as f32, li as f32);
+            let p10_0 = project_3d((px + 1) as f32, py as f32, li as f32);
+            let p11_0 = project_3d((px + 1) as f32, (py + 1) as f32, li as f32);
+            let p01_0 = project_3d(px as f32, (py + 1) as f32, li as f32);
+
+            let mut max_y = p00_0.y;
+            let mut front_idx = 0;
+            if p10_0.y > max_y { max_y = p10_0.y; front_idx = 1; }
+            if p11_0.y > max_y { max_y = p11_0.y; front_idx = 2; }
+            if p01_0.y > max_y { front_idx = 3; }
+
+            let col_side1 = shade_color(col32, 0.85);
+            let col_side2 = shade_color(col32, 0.7);
+
+            match front_idx {
+                0 => {
+                    painter.add(egui::Shape::convex_polygon(
+                        vec![p00_0, p10_0, p10_1, p00_1],
+                        col_side1, no_stroke,
+                    ));
+                    painter.add(egui::Shape::convex_polygon(
+                        vec![p00_0, p01_0, p01_1, p00_1],
+                        col_side2, no_stroke,
+                    ));
+                }
+                1 => {
+                    painter.add(egui::Shape::convex_polygon(
+                        vec![p10_0, p11_0, p11_1, p10_1],
+                        col_side1, no_stroke,
+                    ));
+                    painter.add(egui::Shape::convex_polygon(
+                        vec![p00_0, p10_0, p10_1, p00_1],
+                        col_side2, no_stroke,
+                    ));
+                }
+                2 => {
+                    painter.add(egui::Shape::convex_polygon(
+                        vec![p01_0, p11_0, p11_1, p01_1],
+                        col_side1, no_stroke,
+                    ));
+                    painter.add(egui::Shape::convex_polygon(
+                        vec![p10_0, p11_0, p11_1, p10_1],
+                        col_side2, no_stroke,
+                    ));
+                }
+                _ => {
+                    painter.add(egui::Shape::convex_polygon(
+                        vec![p00_0, p01_0, p01_1, p00_1],
+                        col_side1, no_stroke,
+                    ));
+                    painter.add(egui::Shape::convex_polygon(
+                        vec![p01_0, p11_0, p11_1, p01_1],
+                        col_side2, no_stroke,
+                    ));
+                }
+            }
+
             painter.add(egui::Shape::convex_polygon(
                 vec![p00_1, p10_1, p11_1, p01_1],
-                col32,
-                egui::Stroke::new(0.0, egui::Color32::TRANSPARENT),
+                col32, no_stroke,
             ));
         }
 
