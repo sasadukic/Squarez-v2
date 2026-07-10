@@ -7503,186 +7503,103 @@ print("FAIL")
     fn draw_preview_content(&mut self, ui: &mut egui::Ui) {
         if self.project.mode == crate::project::ProjectMode::SpriteStack {
             let frame = self.project.active_frame_ref();
-            let cw = self.project.canvas_width as f32;
-            let ch = self.project.canvas_height as f32;
+            let w = self.project.canvas_width;
+            let h = self.project.canvas_height;
             let num_layers = frame.layers.len();
 
-            let angle_rad = self.sprite_stack_angle - (self.sprite_stack_rotation_90 as f32) * std::f32::consts::FRAC_PI_2;
-            let tilt_rad = self.sprite_stack_tilt.to_radians();
+            let avail_w = ui.available_width();
+            let avail_h = ui.available_height().max(10.0);
 
-            let sin_t = tilt_rad.sin();
-            let cos_t = tilt_rad.cos();
-            let cos_a = angle_rad.cos();
-            let sin_a = angle_rad.sin();
+            let (rect, _) = ui.allocate_exact_size(
+                Vec2::new(avail_w, avail_h),
+                egui::Sense::hover(),
+            );
 
-            let hw = cw / 2.0;
-            let hh = ch / 2.0;
+            // Project point relative to center of the stack with zoom = 1.0
+            let project_3d_base = |x_val: f32, y_val: f32, z_val: f32| -> egui::Vec2 {
+                let cx = x_val - w as f32 / 2.0;
+                let cy = y_val - h as f32 / 2.0;
+                let cz = z_val - num_layers as f32 / 2.0;
 
-            let project_point = |lx: f32, ly: f32| -> egui::Vec2 {
-                let ly_squashed = ly * cos_t;
-                let rx = lx * cos_a - ly_squashed * sin_a;
-                let ry = lx * sin_a + ly_squashed * cos_a;
-                egui::Vec2::new(rx, ry)
+                let (rx, ry) = match self.sprite_stack_rotation_90 % 4 {
+                    0 => (cx, cy),
+                    1 => (-cy, cx),
+                    2 => (-cx, -cy),
+                    _ => (cy, -cx),
+                };
+
+                let px = rx - ry;
+                let py = (rx + ry) * 0.5 - cz * 1.0;
+                egui::Vec2::new(px, py)
             };
 
+            // Calculate bounding box of the whole project under zoom = 1.0 to fit it in preview panel
             let mut min_x = f32::MAX;
             let mut max_x = f32::MIN;
             let mut min_y = f32::MAX;
             let mut max_y = f32::MIN;
 
-            for i in 0..num_layers {
-                let cy_rel = -(i as f32) * self.sprite_stack_spacing * sin_t;
-                for &(lx, ly) in &[(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)] {
-                    let pt = project_point(lx, ly);
-                    let px = pt.x;
-                    let py = cy_rel + pt.y;
-                    min_x = min_x.min(px);
-                    max_x = max_x.max(px);
-                    min_y = min_y.min(py);
-                    max_y = max_y.max(py);
+            for &z in &[0.0, num_layers as f32] {
+                for &x in &[0.0, w as f32] {
+                    for &y in &[0.0, h as f32] {
+                        let p = project_3d_base(x, y, z);
+                        min_x = min_x.min(p.x);
+                        max_x = max_x.max(p.x);
+                        min_y = min_y.min(p.y);
+                        max_y = max_y.max(p.y);
+                    }
                 }
             }
 
-            let stack_w = max_x - min_x;
-            let stack_h = max_y - min_y;
+            let bounding_w = max_x - min_x;
+            let bounding_h = max_y - min_y;
 
-            let width = (stack_w.ceil() as usize).max(1);
-            let height = (stack_h.ceil() as usize).max(1);
+            let zoom = (avail_w / bounding_w.max(1.0)).min(avail_h / bounding_h.max(1.0)) * 0.85;
 
-            let avail_w = ui.available_width();
-            let avail_h = ui.available_height().max(10.0);
+            let center_pos = rect.center();
+            let project_3d_preview = |x_val: f32, y_val: f32, z_val: f32| -> egui::Pos2 {
+                let base = project_3d_base(x_val, y_val, z_val);
+                center_pos + base * zoom
+            };
 
-            // Zoom factor logic
-            let mut draw_scale = self.sprite_stack_zoom;
-            if !self.preview_popped_out {
-                // Docked/sidebar: scale to fit available space
-                draw_scale = (avail_w / width as f32).min(avail_h / height as f32);
-            }
-            let screen_w = width as f32 * draw_scale;
-            let screen_h = height as f32 * draw_scale;
+            let painter = ui.painter();
 
-            let (rect, response) = ui.allocate_exact_size(
-                Vec2::new(avail_w, avail_h),
-                egui::Sense::drag(),
-            );
+            // Depth sorting for rendering the flat pixels
+            let x_range: Vec<u32> = match self.sprite_stack_rotation_90 % 4 {
+                0 | 1 => (0..w).collect(),
+                _ => (0..w).rev().collect(),
+            };
+            let y_range: Vec<u32> = match self.sprite_stack_rotation_90 % 4 {
+                0 | 3 => (0..h).collect(),
+                _ => (0..h).rev().collect(),
+            };
 
-
-
-
-            if response.dragged() {
-                let delta = response.drag_delta();
-                let ctrl_held = ui.input(|i| i.modifiers.ctrl);
-
-                if self.sprite_stack_drag_mode == SpriteStackDragMode::None {
-                    if ctrl_held {
-                        if delta.y.abs() > 0.1 {
-                            self.sprite_stack_drag_mode = SpriteStackDragMode::Spacing;
-                        }
-                    } else {
-                        if delta.x.abs() > delta.y.abs() && delta.x.abs() > 0.1 {
-                            self.sprite_stack_drag_mode = SpriteStackDragMode::Rotate;
-                        } else if delta.y.abs() > delta.x.abs() && delta.y.abs() > 0.1 {
-                            self.sprite_stack_drag_mode = SpriteStackDragMode::Tilt;
-                        }
-                    }
-                }
-
-                match self.sprite_stack_drag_mode {
-                    SpriteStackDragMode::Spacing => {
-                        self.sprite_stack_spacing = (self.sprite_stack_spacing - delta.y * 0.05).clamp(0.1, 10.0);
-                    }
-                    SpriteStackDragMode::Rotate => {
-                        self.sprite_stack_angle += delta.x * 0.01;
-                        if self.sprite_stack_angle > std::f32::consts::PI {
-                            self.sprite_stack_angle -= 2.0 * std::f32::consts::PI;
-                        } else if self.sprite_stack_angle < -std::f32::consts::PI {
-                            self.sprite_stack_angle += 2.0 * std::f32::consts::PI;
-                        }
-                    }
-                    SpriteStackDragMode::Tilt => {
-                        self.sprite_stack_tilt = (self.sprite_stack_tilt - delta.y * 0.5).clamp(0.0, 90.0);
-                    }
-                    SpriteStackDragMode::None => {}
-                }
-            } else {
-                self.sprite_stack_drag_mode = SpriteStackDragMode::None;
-            }
-
-            let mut dest_pixels = vec![0u8; width * height * 4];
-            let cos_t_div = cos_t.max(0.001);
-
-            for (i, layer) in frame.layers.iter().enumerate() {
-                if !layer.visible || layer.is_group || layer.pixels.is_empty() {
+            for z_val in 0..num_layers {
+                let layer = &frame.layers[z_val];
+                if !layer.visible || layer.is_group {
                     continue;
                 }
+                for &x_val in &x_range {
+                    for &y_val in &y_range {
+                        let color = layer.get_pixel(x_val, y_val);
+                        if color[3] > 0 {
+                            let col32 = egui::Color32::from_rgba_unmultiplied(color[0], color[1], color[2], color[3]);
 
-                let src_w = layer.width as f32;
-                let src_h = layer.height as f32;
+                            // Draw each pixel as a flat 2D horizontal quad at this layer's height z_val
+                            let p00 = project_3d_preview(x_val as f32, y_val as f32, z_val as f32);
+                            let p10 = project_3d_preview((x_val + 1) as f32, y_val as f32, z_val as f32);
+                            let p11 = project_3d_preview((x_val + 1) as f32, (y_val + 1) as f32, z_val as f32);
+                            let p01 = project_3d_preview(x_val as f32, (y_val + 1) as f32, z_val as f32);
 
-                let dest_cx = -min_x;
-                let dest_cy = -min_y - (i as f32) * self.sprite_stack_spacing * sin_t;
-
-                let alpha_factor = layer.opacity as f32 / 255.0;
-
-                for dy in 0..height {
-                    for dx in 0..width {
-                        let rx = (dx as f32) - dest_cx;
-                        let ry = (dy as f32) - dest_cy;
-
-                        // Inverse projection
-                        let lx = rx * cos_a + ry * sin_a;
-                        let ly = (-rx * sin_a + ry * cos_a) / cos_t_div;
-
-                        let sx = lx + src_w / 2.0;
-                        let sy = ly + src_h / 2.0;
-
-                        if sx >= 0.0 && sx < src_w && sy >= 0.0 && sy < src_h {
-                            let sidx = ((sy as usize) * (layer.width as usize) + (sx as usize)) * 4;
-                            let src_r = layer.pixels[sidx];
-                            let src_g = layer.pixels[sidx + 1];
-                            let src_b = layer.pixels[sidx + 2];
-                            let src_a = layer.pixels[sidx + 3];
-
-                            if src_a > 0 {
-                                let didx = (dy * width + dx) * 4;
-                                let a_src = (src_a as f32 / 255.0) * alpha_factor;
-                                let a_dst = dest_pixels[didx + 3] as f32 / 255.0;
-                                let a_out = a_src + a_dst * (1.0 - a_src);
-
-                                if a_out > 0.0 {
-                                    let r_out = (src_r as f32 * a_src + dest_pixels[didx] as f32 * a_dst * (1.0 - a_src)) / a_out;
-                                    let g_out = (src_g as f32 * a_src + dest_pixels[didx + 1] as f32 * a_dst * (1.0 - a_src)) / a_out;
-                                    let b_out = (src_b as f32 * a_src + dest_pixels[didx + 2] as f32 * a_dst * (1.0 - a_src)) / a_out;
-
-                                    dest_pixels[didx] = r_out.round() as u8;
-                                    dest_pixels[didx + 1] = g_out.round() as u8;
-                                    dest_pixels[didx + 2] = b_out.round() as u8;
-                                    dest_pixels[didx + 3] = (a_out * 255.0).round() as u8;
-                                }
-                            }
+                            painter.add(egui::Shape::convex_polygon(
+                                vec![p00, p10, p11, p01],
+                                col32,
+                                egui::Stroke::NONE,
+                            ));
                         }
                     }
                 }
             }
-
-            let tex = ui.ctx().load_texture(
-                "sprite_stack_lowres",
-                egui::ColorImage::from_rgba_unmultiplied(
-                    [width, height],
-                    &dest_pixels,
-                ),
-                egui::TextureOptions::NEAREST,
-            );
-
-            let rect_center = rect.center();
-            let dest_rect = egui::Rect::from_center_size(rect_center, Vec2::new(screen_w, screen_h));
-
-            ui.painter().image(
-                tex.id(),
-                dest_rect,
-                egui::Rect::from_min_max(egui::Pos2::new(0.0, 0.0), egui::Pos2::new(1.0, 1.0)),
-                egui::Color32::WHITE,
-            );
         } else {
             let (mut pixels, pw_size, ph_size) = if self.project.is_tiled() {
                 let tile_w = self.project.tile_w;
