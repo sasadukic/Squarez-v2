@@ -6389,17 +6389,17 @@ impl App {
                     overlay_ui.label(label_text);
                 }
 
-                // Check if clicking on the visibility button - if so, skip canvas interaction
-                let clicking_on_vis_button = if let Some(btn_rect) = self.sprite_stack_grid_btn_rect {
+                // Check if pointer is hovering over the visibility button
+                let hovering_over_vis_button = if let Some(btn_rect) = self.sprite_stack_grid_btn_rect {
                     ui.ctx().input(|i| {
-                        i.pointer.any_click() && i.pointer.interact_pos().map(|p| btn_rect.contains(p)).unwrap_or(false)
+                        i.pointer.hover_pos().map(|p| btn_rect.contains(p)).unwrap_or(false)
                     })
                 } else {
                     false
                 };
 
-                let response = if clicking_on_vis_button {
-                    // Don't allocate canvas rect when clicking on button
+                let response = if hovering_over_vis_button {
+                    // Don't consume clicks when hovering over button
                     ui.allocate_rect(canvas_rect, egui::Sense::hover())
                 } else {
                     ui.allocate_rect(canvas_rect, egui::Sense::click_and_drag())
