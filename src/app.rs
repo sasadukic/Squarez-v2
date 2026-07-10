@@ -1277,7 +1277,7 @@ impl App {
     }
 
     fn on_project_changed(&mut self) {
-        if self.project.mode == crate::project::ProjectMode::SpriteStack {
+        if self.project.mode == crate::project::ProjectMode::SpriteStack || self.project.mode == crate::project::ProjectMode::ThreeD {
             self.ui_state.collapse_palette = false;
             self.ui_state.collapse_color = false;
             self.ui_state.collapse_preview = false;
@@ -2399,7 +2399,7 @@ impl App {
                             TopMenu::Layer => {
                                 let ai = self.project.active_animation;
                                 let mut fi = self.project.active_frame;
-                                let reached_limit = self.project.mode == crate::project::ProjectMode::SpriteStack
+                                let reached_limit = (self.project.mode == crate::project::ProjectMode::SpriteStack || self.project.mode == crate::project::ProjectMode::ThreeD)
                                     && self.project.sprite_stack_max_layers.map_or(false, |max| {
                                         self.project.animations[ai].frames[fi].layers.len() >= max as usize
                                     });
@@ -4034,7 +4034,7 @@ impl App {
         let ai = self.project.active_animation;
         let fi = self.project.active_frame;
 
-        let reached_limit = self.project.mode == crate::project::ProjectMode::SpriteStack
+        let reached_limit = (self.project.mode == crate::project::ProjectMode::SpriteStack || self.project.mode == crate::project::ProjectMode::ThreeD)
             && self.project.sprite_stack_max_layers.map_or(false, |max| {
                 self.project.animations[ai].frames[fi].layers.len() >= max as usize
             });
@@ -5257,7 +5257,7 @@ impl App {
 
                     ui.horizontal(|ui| {
                         ui.style_mut().spacing.item_spacing = Vec2::ZERO;
-                            let reached_limit = self.project.mode == crate::project::ProjectMode::SpriteStack
+                            let reached_limit = (self.project.mode == crate::project::ProjectMode::SpriteStack || self.project.mode == crate::project::ProjectMode::ThreeD)
                                 && self.project.sprite_stack_max_layers.map_or(false, |max| {
                                     layer_count >= max as usize
                                 });
@@ -5946,7 +5946,7 @@ impl App {
                         Pos2::new(canvas_rect.min.x + 38.0, canvas_rect.min.y + TOP_BAR_HEIGHT),
                         Pos2::new(canvas_rect.max.x, canvas_rect.max.y),
                     );
-                    if self.project.mode == crate::project::ProjectMode::SpriteStack {
+                    if self.project.mode == crate::project::ProjectMode::SpriteStack || self.project.mode == crate::project::ProjectMode::ThreeD {
                         let w = self.project.canvas_width as f32;
                         let h = self.project.canvas_height as f32;
                         let num_layers = self.project.active_frame_ref().layers.len() as f32;
@@ -6008,7 +6008,7 @@ impl App {
                 }
 
                 let art_rect = self.canvas.art_rect(canvas_rect, disp_w, disp_h);
-                if self.project.mode != crate::project::ProjectMode::SpriteStack {
+                if self.project.mode != crate::project::ProjectMode::SpriteStack && self.project.mode != crate::project::ProjectMode::ThreeD {
                     painter.rect_stroke(
                         art_rect,
                         0.0,
@@ -6352,7 +6352,7 @@ impl App {
                 }
 
                 // Render info overlay box in the top-left corner of the canvas (under logo, next to tools)
-                if self.project.mode != crate::project::ProjectMode::SpriteStack {
+                if self.project.mode != crate::project::ProjectMode::SpriteStack && self.project.mode != crate::project::ProjectMode::ThreeD {
                     let hover_canvas = ctx.pointer_hover_pos()
                         .and_then(|p| self.get_canvas_coords(p, canvas_rect))
                         .filter(|&(hx, hy)| hx < disp_w && hy < disp_h);
@@ -7555,7 +7555,7 @@ print("FAIL")
     }
 
     fn draw_preview_content(&mut self, ui: &mut egui::Ui) {
-        if self.project.mode == crate::project::ProjectMode::SpriteStack {
+        if self.project.mode == crate::project::ProjectMode::SpriteStack || self.project.mode == crate::project::ProjectMode::ThreeD {
             let frame = self.project.active_frame_ref();
             let w = self.project.canvas_width;
             let h = self.project.canvas_height;
@@ -7911,7 +7911,7 @@ print("FAIL")
                             .fit_to_exact_size(icon_size),
                     );
 
-                    if self.project.mode == crate::project::ProjectMode::SpriteStack {
+                if self.project.mode == crate::project::ProjectMode::SpriteStack || self.project.mode == crate::project::ProjectMode::ThreeD {
                         let btn_size = Vec2::new(30.0, 15.0);
                         let btn_rect = egui::Rect::from_center_size(
                             egui::Pos2::new(rect.right() - 32.0, rect.center().y),
@@ -8211,7 +8211,7 @@ print("FAIL")
     fn get_canvas_coords(&self, pos: egui::Pos2, canvas_rect: egui::Rect) -> Option<(u32, u32)> {
         let w = self.project.canvas_width;
         let h = self.project.canvas_height;
-        if self.project.mode == crate::project::ProjectMode::SpriteStack {
+        if self.project.mode == crate::project::ProjectMode::SpriteStack || self.project.mode == crate::project::ProjectMode::ThreeD {
             self.screen_to_voxel_coord(pos, canvas_rect)
         } else {
             self.canvas.screen_to_canvas(pos, canvas_rect, w, h)
@@ -8219,7 +8219,7 @@ print("FAIL")
     }
 
     fn get_canvas_coords_i32(&self, pos: egui::Pos2, canvas_rect: egui::Rect) -> (i32, i32) {
-        if self.project.mode == crate::project::ProjectMode::SpriteStack {
+        if self.project.mode == crate::project::ProjectMode::SpriteStack || self.project.mode == crate::project::ProjectMode::ThreeD {
             let (xf, yf) = self.screen_to_voxel_coord_unconstrained(pos, canvas_rect);
             (xf.floor() as i32, yf.floor() as i32)
         } else {
@@ -8230,7 +8230,7 @@ print("FAIL")
     }
 
     fn get_canvas_coords_f32(&self, pos: egui::Pos2, canvas_rect: egui::Rect) -> (f32, f32) {
-        if self.project.mode == crate::project::ProjectMode::SpriteStack {
+        if self.project.mode == crate::project::ProjectMode::SpriteStack || self.project.mode == crate::project::ProjectMode::ThreeD {
             let (xf, yf) = self.screen_to_voxel_coord_unconstrained(pos, canvas_rect);
             (xf, yf)
         } else {
@@ -9487,7 +9487,7 @@ print("FAIL")
         let is_over_ui = pos.x < 38.0 // Left toolbar
             || pos.y < TOP_BAR_HEIGHT // Top bar
             || pos.x > self.sidebar_left_x // Right sidebar
-            || (self.project.mode != crate::project::ProjectMode::SpriteStack && pos.y > timeline_y) // Timeline
+            || ((self.project.mode != crate::project::ProjectMode::SpriteStack && self.project.mode != crate::project::ProjectMode::ThreeD) && pos.y > timeline_y) // Timeline
             || (self.open_tool_submenu.is_some() && pos.x < 38.0 + 80.0 && pos.y < TOP_BAR_HEIGHT + 200.0) // Tool submenu
             || self.palette_browser.open
             || self.tile_browser.open
