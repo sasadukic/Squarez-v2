@@ -5961,7 +5961,8 @@ impl App {
                 let painter = ui.painter_at(canvas_rect);
                 if self.project.mode == crate::project::ProjectMode::SpriteStack {
                     self.draw_3d_voxel_workspace(ui, &painter, canvas_rect);
-
+                } else if self.project.mode == crate::project::ProjectMode::ThreeD {
+                    self.draw_3d_workspace(ui, &painter, canvas_rect);
                 } else {
                     self.canvas.draw(
                         ctx,
@@ -8666,6 +8667,236 @@ print("FAIL")
         }
     }
 
+    fn draw_3d_workspace(&mut self, ui: &mut egui::Ui, painter: &egui::Painter, canvas_rect: egui::Rect) {
+        let ctx = ui.ctx().clone();
+        let w = self.project.canvas_width;
+        let h = self.project.canvas_height;
+        let ai = self.project.active_animation;
+        let fi = self.project.active_frame;
+        let li = self.project.active_layer;
+        let frame = &self.project.animations[ai].frames[fi];
+        let num_layers = frame.layers.len();
+
+        let center_pos = canvas_rect.center() + self.canvas.offset;
+
+        let project_3d = |x_val: f32, y_val: f32, z_val: f32| -> egui::Pos2 {
+            let cx = x_val - w as f32 / 2.0;
+            let cy = y_val - h as f32 / 2.0;
+            let cz = z_val - num_layers as f32 / 2.0;
+
+            let (rx, ry) = match self.sprite_stack_rotation_90 % 4 {
+                0 => (cx, cy),
+                1 => (-cy, cx),
+                2 => (-cx, -cy),
+                _ => (cy, -cx),
+            };
+
+            let px = rx - ry;
+            let py = (rx + ry) * 0.5 - cz * 1.0;
+            center_pos + egui::Vec2::new(px, py) * self.canvas.zoom
+        };
+
+        // Draw wireframe bounding box
+        let c000 = project_3d(0.0, 0.0, 0.0);
+        let c100 = project_3d(w as f32, 0.0, 0.0);
+        let c110 = project_3d(w as f32, h as f32, 0.0);
+        let c010 = project_3d(0.0, h as f32, 0.0);
+
+        let c001 = project_3d(0.0, 0.0, num_layers as f32);
+        let c101 = project_3d(w as f32, 0.0, num_layers as f32);
+        let c111 = project_3d(w as f32, h as f32, num_layers as f32);
+        let c011 = project_3d(0.0, h as f32, num_layers as f32);
+
+        let mut max_y = c000.y;
+        let mut front_idx = 0;
+        if c100.y > max_y { max_y = c100.y; front_idx = 1; }
+        if c110.y > max_y { max_y = c110.y; front_idx = 2; }
+        if c010.y > max_y { front_idx = 3; }
+
+        let back_idx = (front_idx + 2) % 4;
+        let cb = [c000, c100, c110, c010];
+        let ct = [c001, c101, c111, c011];
+
+        // Draw back edges
+        let back_stroke = egui::Stroke::new(1.0, self.theme.muted.gamma_multiply(0.35));
+        let b1 = (back_idx + 1) % 4;
+        let b3 = (back_idx + 3) % 4;
+        painter.line_segment([cb[back_idx], cb[b1]], back_stroke);
+        painter.line_segment([cb[back_idx], cb[b3]], back_stroke);
+        painter.line_segment([ct[back_idx], ct[b1]], back_stroke);
+        painter.line_segment([ct[back_idx], ct[b3]], back_stroke);
+        painter.line_segment([cb[back_idx], ct[back_idx]], back_stroke);
+
+        // Draw grid on active layer
+        if self.sprite_stack_show_grid {
+            let grid_stroke = egui::Stroke::new(0.5, self.theme.accent.gamma_multiply(0.4));
+            for y_val in 0..=h {
+                let p1 = project_3d(0.0, y_val as f32, li as f32);
+                let p2 = project_3d(w as f32, y_val as f32, li as f32);
+                painter.line_segment([p1, p2], grid_stroke);
+            }
+            for x_val in 0..=w {
+                let p1 = project_3d(x_val as f32, 0.0, li as f32);
+                let p2 = project_3d(x_val as f32, h as f32, li as f32);
+                painter.line_segment([p1, p2], grid_stroke);
+            }
+        }
+
+        // Draw vertices
+        let mesh = &frame.mesh;
+        let vertex_color = self.theme.accent;
+        let vertex_size = 4.0 * self.canvas.zoom;
+
+        for vertex in &mesh.vertices {
+            let pos = project_3d(vertex.x, vertex.y, vertex.z);
+            let rect = egui::Rect::from_center_size(pos, egui::Vec2::splat(vertex_size));
+            painter.circle_filled(pos, vertex_size / 2.0, vertex_color);
+        }
+
+        // Draw faces
+        for face in &mesh.faces {
+            if face.vertex_indices.len() < 3 { continue; }
+
+            let points: Vec<egui::Pos2> = face.vertex_indices.iter()
+                .filter_map(|&idx| mesh.vertices.get(idx).map(|v| project_3d(v.x, v.y, v.z)))
+                .collect();
+
+            if points.len() >= 3 {
+                let face_color = egui::Color32::from_rgba_unmultiplied(
+                    face.color[0], face.color[1], face.color[2], 128
+                );
+                painter.add(egui::Shape::convex_polygon(
+                    points,
+                    face_color,
+                    egui::Stroke::new(1.0, face.color),
+                ));
+            }
+        }
+
+        // Draw front edges
+        let front_stroke = egui::Stroke::new(1.0, self.theme.muted);
+        let f1 = (front_idx + 1) % 4;
+        let f3 = (front_idx + 3) % 4;
+        painter.line_segment([cb[front_idx], cb[f1]], front_stroke);
+        painter.line_segment([cb[front_idx], cb[f3]], front_stroke);
+        painter.line_segment([ct[front_idx], ct[f1]], front_stroke);
+        painter.line_segment([ct[front_idx], ct[f3]], front_stroke);
+        painter.line_segment([cb[front_idx], ct[front_idx]], front_stroke);
+        painter.line_segment([cb[f1], ct[f1]], front_stroke);
+        painter.line_segment([cb[f3], ct[f3]], front_stroke);
+
+        // Draw layer indicator
+        let pl_corners = [
+            project_3d(0.0, 0.0, li as f32),
+            project_3d(w as f32, 0.0, li as f32),
+            project_3d(w as f32, h as f32, li as f32),
+            project_3d(0.0, h as f32, li as f32),
+        ];
+        let mut right_most_p = pl_corners[0];
+        for &p in &pl_corners {
+            if p.x > right_most_p.x {
+                right_most_p = p;
+            }
+        }
+        let line_start = right_most_p;
+        let line_end = egui::Pos2::new(right_most_p.x + 25.0, right_most_p.y);
+        let indicator_color = self.theme.accent;
+        painter.line_segment([line_start, line_end], egui::Stroke::new(1.5, indicator_color));
+
+        let active_layer_name = &self.project.animations[ai].frames[fi].layers[li].name;
+        let label_pos = egui::Pos2::new(line_end.x + 4.0, line_end.y - 6.0);
+        painter.text(
+            label_pos,
+            egui::Align2::LEFT_TOP,
+            active_layer_name,
+            egui::FontId::new(10.0, egui::FontFamily::Proportional),
+            indicator_color,
+        );
+
+        // Keyboard handlers
+        if ctx.input(|i| i.key_pressed(egui::Key::Q)) || ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
+            self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 3) % 4;
+            self.canvas_dirty = true;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::E)) || ctx.input(|i| i.key_pressed(egui::Key::ArrowRight)) {
+            self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 1) % 4;
+            self.canvas_dirty = true;
+        }
+
+        let total_layers = self.project.animations[ai].frames[fi].layers.len();
+        if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+            if self.project.active_layer + 1 < total_layers {
+                self.project.active_layer += 1;
+                self.canvas_dirty = true;
+            }
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+            if self.project.active_layer > 0 {
+                self.project.active_layer -= 1;
+                self.canvas_dirty = true;
+            }
+        }
+    }
+
+    /// Try to create triangular faces from the newly added vertex and nearby vertices.
+    /// Creates faces when 3 vertices are close enough to form a triangle.
+    fn try_create_faces(&mut self, new_x: f32, new_y: f32, new_z: f32, color: crate::project::Rgba) {
+        use crate::project::{Face3D, Vertex3D};
+
+        let mesh = self.project.active_mesh();
+        let new_idx = mesh.vertices.len() - 1; // The vertex we just added
+
+        // Find nearby vertices (within threshold distance)
+        let threshold = 2.0;
+        let nearby: Vec<usize> = mesh.vertices.iter().enumerate()
+            .filter(|(idx, v)| {
+                *idx != new_idx &&
+                (v.x - new_x).abs() < threshold &&
+                (v.y - new_y).abs() < threshold &&
+                (v.z - new_z).abs() < threshold
+            })
+            .map(|(idx, _)| idx)
+            .collect();
+
+        // Try to form triangles with pairs of nearby vertices
+        for i in 0..nearby.len() {
+            for j in (i + 1)..nearby.len() {
+                let idx1 = nearby[i];
+                let idx2 = nearby[j];
+
+                // Check if this face already exists
+                let face_exists = mesh.faces.iter().any(|f| {
+                    let mut indices = f.vertex_indices.clone();
+                    indices.sort();
+                    let mut new_indices = vec![new_idx, idx1, idx2];
+                    new_indices.sort();
+                    indices == new_indices
+                });
+
+                if !face_exists {
+                    // Check if the three vertices are not collinear (form a valid triangle)
+                    let v1 = &mesh.vertices[idx1];
+                    let v2 = &mesh.vertices[idx2];
+
+                    // Simple check: vertices should not be on the same line
+                    let dx1 = v1.x - new_x;
+                    let dy1 = v1.y - new_y;
+                    let dx2 = v2.x - new_x;
+                    let dy2 = v2.y - new_y;
+
+                    let cross = dx1 * dy2 - dy1 * dx2;
+                    if cross.abs() > 0.1 {
+                        // Valid triangle, add face
+                        self.project.active_mesh_mut().faces.push(Face3D {
+                            vertex_indices: vec![new_idx, idx1, idx2],
+                            color,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
     fn handle_canvas_input(&mut self, response: egui::Response, canvas_rect: egui::Rect) {
         let middle_down = response.ctx.input(|i| i.pointer.middle_down());
         let space_held  = response.ctx.input(|i| i.key_down(egui::Key::Space));
@@ -9534,10 +9765,40 @@ print("FAIL")
         let color = self.color_state.foreground;
         match &self.active_tool.clone() {
             ActiveTool::Pencil => {
-                let is_animated_brush = self.active_brush_index
-                    .and_then(|idx| self.brushes.get(idx))
-                    .map(|b| b.frames.is_some())
-                    .unwrap_or(false);
+                // In 3D mode, pencil places vertices instead of pixels
+                if self.project.mode == crate::project::ProjectMode::ThreeD {
+                    // Get 3D coordinates from screen position
+                    let (x3d, y3d) = self.get_canvas_coords_f32(pos, canvas_rect);
+                    let z3d = self.project.active_layer as f32;
+
+                    // Check if vertex already exists at this position (within threshold)
+                    let threshold = 0.5;
+                    let existing = self.project.active_mesh().vertices.iter().position(|v| {
+                        (v.x - x3d).abs() < threshold &&
+                        (v.y - y3d).abs() < threshold &&
+                        (v.z - z3d).abs() < threshold
+                    });
+
+                    if existing.is_none() {
+                        // Add new vertex
+                        self.project.active_mesh_mut().vertices.push(crate::project::Vertex3D {
+                            x: x3d,
+                            y: y3d,
+                            z: z3d,
+                        });
+
+                        // Try to create faces from nearby vertices
+                        self.try_create_faces(x3d, y3d, z3d, color);
+
+                        self.canvas_dirty = true;
+                    }
+                    self.last_pencil_pos = Some((px, py));
+                } else {
+                    // Normal mode pencil behavior
+                    let is_animated_brush = self.active_brush_index
+                        .and_then(|idx| self.brushes.get(idx))
+                        .map(|b| b.frames.is_some())
+                        .unwrap_or(false);
                 if is_animated_brush && self.last_pencil_pos.is_some() {
                     self.last_pencil_pos = Some((px, py));
                 } else {

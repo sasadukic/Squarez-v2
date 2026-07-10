@@ -43,6 +43,28 @@ impl ProjectMode {
     }
 }
 
+/// A 3D vertex in the project
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Vertex3D {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
+/// A face defined by 3 or 4 vertex indices
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Face3D {
+    pub vertex_indices: Vec<usize>,
+    pub color: Rgba,
+}
+
+/// 3D mesh data for ThreeD mode
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Mesh3D {
+    pub vertices: Vec<Vertex3D>,
+    pub faces: Vec<Face3D>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
     pub name: String,
@@ -234,6 +256,14 @@ impl Project {
         let al = self.active_layer;
         self.active_frame_mut().layers.get_mut(al).unwrap()
     }
+
+    pub fn active_mesh(&self) -> &Mesh3D {
+        &self.active_frame_ref().mesh
+    }
+
+    pub fn active_mesh_mut(&mut self) -> &mut Mesh3D {
+        self.active_frame_mut().mesh
+    }
 }
 
 fn default_palette() -> Vec<Rgba> {
@@ -310,6 +340,8 @@ impl Animation {
 pub struct Frame {
     pub duration_ms: u32,
     pub layers: Vec<Layer>,
+    #[serde(default)]
+    pub mesh: Mesh3D,
     #[serde(skip)]
     pub dirty: bool,
 }
