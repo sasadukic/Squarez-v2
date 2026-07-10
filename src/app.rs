@@ -9417,7 +9417,7 @@ print("FAIL")
         let center_hovered = pointer_pos.map(|pos| (pos - gizmo_center).length() <= 8.0).unwrap_or(false);
         let center_color = if center_hovered { self.theme.surface } else { self.theme.panel };
         painter.circle_filled(gizmo_center, 6.0, center_color);
-        painter.circle_stroke(gizmo_center, 6.0, egui::Stroke::new(1.0, self.theme.border), egui::StrokeKind::Inside);
+        painter.circle_stroke(gizmo_center, 6.0, egui::Stroke::new(1.0, self.theme.border));
 
         // Draw Perspective/Orthographic text button below the gizmo
         let persp_text_pos = egui::Pos2::new(gizmo_center.x, gizmo_center.y + 45.0);
