@@ -1272,9 +1272,10 @@ impl App {
 
     fn on_project_changed(&mut self) {
         if self.project.mode == crate::project::ProjectMode::SpriteStack {
-            self.ui_state.show_preview = true;
-            self.ui_state.collapse_preview = false;
-            self.preview_popped_out = true;
+            self.ui_state.collapse_animations = true;
+            self.ui_state.collapse_preview = true;
+            self.ui_state.collapse_brushes = true;
+            self.ui_state.collapse_layers = true;
         }
     }
 
