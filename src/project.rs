@@ -51,7 +51,14 @@ pub struct Vertex3D {
     pub z: f32,
 }
 
-/// A face defined by 3 or 4 vertex indices
+/// An edge connecting two vertices
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Edge3D {
+    pub v1: usize,
+    pub v2: usize,
+}
+
+/// A face defined by 3 or more vertex indices
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Face3D {
     pub vertex_indices: Vec<usize>,
@@ -62,6 +69,7 @@ pub struct Face3D {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Mesh3D {
     pub vertices: Vec<Vertex3D>,
+    pub edges: Vec<Edge3D>,
     pub faces: Vec<Face3D>,
 }
 

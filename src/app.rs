@@ -278,6 +278,8 @@ pub struct App {
     pub sprite_stack_show_grid: bool,
     pub sprite_stack_preview_fixed_cam: bool,
     pub sprite_stack_grid_btn_rect: Option<egui::Rect>,
+    /// Current chain of vertex indices being drawn in 3D mode
+    pub drawing_chain: Vec<usize>,
     /// Track if any menu was open at the start of the current frame
     menu_was_open_at_frame_start: bool,
     brushes: Vec<CustomBrush>,
@@ -978,6 +980,7 @@ impl App {
             sprite_stack_show_grid: true,
             sprite_stack_preview_fixed_cam: false,
             sprite_stack_grid_btn_rect: None,
+            drawing_chain: Vec::new(),
             menu_was_open_at_frame_start: false,
             brushes: {
                 let mut b = layout.as_ref().map(|l| l.brushes.clone()).unwrap_or_default();
@@ -1540,6 +1543,10 @@ impl App {
             if matches!(self.iso_mode, crate::tools::IsoMode::TopDown | crate::tools::IsoMode::TopDownFill) {
                 self.iso_mode = crate::tools::IsoMode::Off;
             }
+        }
+        // Clear drawing chain when switching tools in 3D mode
+        if self.project.mode == crate::project::ProjectMode::ThreeD {
+            self.drawing_chain.clear();
         }
         self.clear_transient_state();
     }
@@ -8698,10 +8705,35 @@ print("FAIL")
             center_pos + egui::Vec2::new(px, py) * self.canvas.zoom
         };
 
-        // Draw vertices
         let mesh = &frame.mesh;
+
+        // Draw edges
+        let edge_color = self.theme.accent;
+        for edge in &mesh.edges {
+            if let (Some(v1), Some(v2)) = (mesh.vertices.get(edge.v1), mesh.vertices.get(edge.v2)) {
+                let p1 = project_3d(v1.x, v1.y, v1.z);
+                let p2 = project_3d(v2.x, v2.y, v2.z);
+                painter.line_segment([p1, p2], egui::Stroke::new(1.5, edge_color));
+            }
+        }
+
+        // Draw preview line from last vertex in chain to mouse position
+        if !self.drawing_chain.is_empty() {
+            if let Some(&last_idx) = self.drawing_chain.last() {
+                if let Some(last_vertex) = mesh.vertices.get(last_idx) {
+                    let p1 = project_3d(last_vertex.x, last_vertex.y, last_vertex.z);
+                    if let Some(mouse_pos) = ui.ctx().input(|i| i.pointer.hover_pos()) {
+                        if canvas_rect.contains(mouse_pos) {
+                            painter.line_segment([p1, mouse_pos], egui::Stroke::new(1.0, edge_color.linear_multiply(0.5)));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Draw vertices (small)
         let vertex_color = self.theme.accent;
-        let vertex_size = 4.0 * self.canvas.zoom;
+        let vertex_size = 2.0 * self.canvas.zoom;
 
         for vertex in &mesh.vertices {
             let pos = project_3d(vertex.x, vertex.y, vertex.z);
@@ -8731,61 +8763,6 @@ print("FAIL")
 
     /// Try to create triangular faces from the newly added vertex and nearby vertices.
     /// Creates faces when 3 vertices are close enough to form a triangle.
-    fn try_create_faces(&mut self, new_x: f32, new_y: f32, new_z: f32, color: crate::project::Rgba) {
-        use crate::project::Face3D;
-
-        // Get nearby vertices first (immutable borrow)
-        let nearby: Vec<(usize, f32, f32, f32)> = {
-            let mesh = self.project.active_mesh();
-            let new_idx = mesh.vertices.len() - 1;
-            let threshold = 2.0;
-            mesh.vertices.iter().enumerate()
-                .filter(|(idx, v)| {
-                    *idx != new_idx &&
-                    (v.x - new_x).abs() < threshold &&
-                    (v.y - new_y).abs() < threshold &&
-                    (v.z - new_z).abs() < threshold
-                })
-                .map(|(idx, v)| (idx, v.x, v.y, v.z))
-                .collect()
-        };
-
-        // Try to form triangles with pairs of nearby vertices
-        for i in 0..nearby.len() {
-            for j in (i + 1)..nearby.len() {
-                let (idx1, x1, y1, z1) = nearby[i];
-                let (idx2, x2, y2, z2) = nearby[j];
-                let new_idx = self.project.active_mesh().vertices.len() - 1;
-
-                // Check if this face already exists
-                let face_exists = self.project.active_mesh().faces.iter().any(|f| {
-                    let mut indices = f.vertex_indices.clone();
-                    indices.sort();
-                    let mut new_indices = vec![new_idx, idx1, idx2];
-                    new_indices.sort();
-                    indices == new_indices
-                });
-
-                if !face_exists {
-                    // Check if the three vertices are not collinear (form a valid triangle)
-                    let dx1 = x1 - new_x;
-                    let dy1 = y1 - new_y;
-                    let dx2 = x2 - new_x;
-                    let dy2 = y2 - new_y;
-
-                    let cross = dx1 * dy2 - dy1 * dx2;
-                    if cross.abs() > 0.1 {
-                        // Valid triangle, add face
-                        self.project.active_mesh_mut().faces.push(Face3D {
-                            vertex_indices: vec![new_idx, idx1, idx2],
-                            color,
-                        });
-                    }
-                }
-            }
-        }
-    }
-
     fn handle_canvas_input(&mut self, response: egui::Response, canvas_rect: egui::Rect) {
         let middle_down = response.ctx.input(|i| i.pointer.middle_down());
         let space_held  = response.ctx.input(|i| i.key_down(egui::Key::Space));
@@ -8805,6 +8782,12 @@ print("FAIL")
                     }
                 }
             }
+        }
+
+        // Clear drawing chain on Escape in 3D mode
+        if self.project.mode == crate::project::ProjectMode::ThreeD && response.ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.drawing_chain.clear();
+            self.canvas_dirty = true;
         }
 
         let w = self.project.canvas_width;
@@ -9654,33 +9637,65 @@ print("FAIL")
         let color = self.color_state.foreground;
         match &self.active_tool.clone() {
             ActiveTool::Pencil => {
-                // In 3D mode, pencil places vertices instead of pixels
+                // In 3D mode, pencil places vertices and creates edges
                 if self.project.mode == crate::project::ProjectMode::ThreeD {
                     // Get 3D coordinates from screen position
                     let (x3d, y3d) = self.get_canvas_coords_f32(pos, canvas_rect);
                     let z3d = self.project.active_layer as f32;
 
-                    // Check if vertex already exists at this position (within threshold)
+                    // Check if clicking on an existing vertex (within threshold)
                     let threshold = 0.5;
-                    let existing = self.project.active_mesh().vertices.iter().position(|v| {
+                    let existing_idx = self.project.active_mesh().vertices.iter().position(|v| {
                         (v.x - x3d).abs() < threshold &&
                         (v.y - y3d).abs() < threshold &&
                         (v.z - z3d).abs() < threshold
                     });
 
-                    if existing.is_none() {
-                        // Add new vertex
+                    if let Some(idx) = existing_idx {
+                        // Clicking on existing vertex
+                        if !self.drawing_chain.is_empty() && idx == self.drawing_chain[0] && self.drawing_chain.len() >= 3 {
+                            // Close the loop - create a face
+                            let face = crate::project::Face3D {
+                                vertex_indices: self.drawing_chain.clone(),
+                                color,
+                            };
+                            self.project.active_mesh_mut().faces.push(face);
+                            self.drawing_chain.clear();
+                        } else if !self.drawing_chain.is_empty() {
+                            // Add edge from last vertex to this one
+                            let last_idx = *self.drawing_chain.last().unwrap();
+                            if last_idx != idx {
+                                let edge = crate::project::Edge3D { v1: last_idx, v2: idx };
+                                // Check if edge already exists
+                                let edge_exists = self.project.active_mesh().edges.iter().any(|e| {
+                                    (e.v1 == last_idx && e.v2 == idx) || (e.v1 == idx && e.v2 == last_idx)
+                                });
+                                if !edge_exists {
+                                    self.project.active_mesh_mut().edges.push(edge);
+                                }
+                                self.drawing_chain.push(idx);
+                            }
+                        }
+                    } else {
+                        // Clicking on empty space - create new vertex
+                        let new_idx = self.project.active_mesh().vertices.len();
                         self.project.active_mesh_mut().vertices.push(crate::project::Vertex3D {
                             x: x3d,
                             y: y3d,
                             z: z3d,
                         });
 
-                        // Try to create faces from nearby vertices
-                        self.try_create_faces(x3d, y3d, z3d, color);
+                        // Add edge from last vertex in chain to new vertex
+                        if !self.drawing_chain.is_empty() {
+                            let last_idx = *self.drawing_chain.last().unwrap();
+                            let edge = crate::project::Edge3D { v1: last_idx, v2: new_idx };
+                            self.project.active_mesh_mut().edges.push(edge);
+                        }
 
-                        self.canvas_dirty = true;
+                        self.drawing_chain.push(new_idx);
                     }
+
+                    self.canvas_dirty = true;
                     self.last_pencil_pos = Some((px, py));
                 } else {
                     // Normal mode pencil behavior
