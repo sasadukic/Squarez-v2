@@ -8143,11 +8143,8 @@ print("FAIL")
 
     fn get_canvas_coords_i32(&self, pos: egui::Pos2, canvas_rect: egui::Rect) -> (i32, i32) {
         if self.project.mode == crate::project::ProjectMode::SpriteStack {
-            if let Some((x, y)) = self.screen_to_voxel_coord(pos, canvas_rect) {
-                (x as i32, y as i32)
-            } else {
-                (0, 0)
-            }
+            let (xf, yf) = self.screen_to_voxel_coord_unconstrained(pos, canvas_rect);
+            (xf.floor() as i32, yf.floor() as i32)
         } else {
             let w = self.project.canvas_width;
             let h = self.project.canvas_height;
@@ -8157,11 +8154,8 @@ print("FAIL")
 
     fn get_canvas_coords_f32(&self, pos: egui::Pos2, canvas_rect: egui::Rect) -> (f32, f32) {
         if self.project.mode == crate::project::ProjectMode::SpriteStack {
-            if let Some((x, y)) = self.screen_to_voxel_coord(pos, canvas_rect) {
-                (x as f32, y as f32)
-            } else {
-                (0.0, 0.0)
-            }
+            let (xf, yf) = self.screen_to_voxel_coord_unconstrained(pos, canvas_rect);
+            (xf, yf)
         } else {
             let w = self.project.canvas_width;
             let h = self.project.canvas_height;
@@ -8169,56 +8163,44 @@ print("FAIL")
         }
     }
 
+    fn screen_to_voxel_coord_unconstrained(&self, pos: egui::Pos2, canvas_rect: egui::Rect) -> (f32, f32) {
+        let w = self.project.canvas_width as f32;
+        let h = self.project.canvas_height as f32;
+        let li = self.project.active_layer as f32;
+        let num_layers = self.project.active_frame_ref().layers.len() as f32;
+
+        let center_pos = canvas_rect.center() + self.canvas.offset;
+        let cz = li - num_layers / 2.0;
+
+        let dx = (pos.x - center_pos.x) / self.canvas.zoom;
+        let dy = (pos.y - center_pos.y) / self.canvas.zoom;
+
+        // Inverse project
+        let ry = (dy + cz) - 0.5 * dx;
+        let rx = (dy + cz) + 0.5 * dx;
+
+        // Rotate back based on rotation_90
+        let (cx, cy) = match self.sprite_stack_rotation_90 % 4 {
+            0 => (rx, ry),
+            1 => (ry, -rx),
+            2 => (-rx, -ry),
+            _ => (-ry, rx),
+        };
+
+        (cx + w / 2.0, cy + h / 2.0)
+    }
+
     fn screen_to_voxel_coord(&self, pos: egui::Pos2, canvas_rect: egui::Rect) -> Option<(u32, u32)> {
         let w = self.project.canvas_width;
         let h = self.project.canvas_height;
-        let li = self.project.active_layer;
-        let num_layers = self.project.active_frame_ref().layers.len();
-
-        let center_pos = canvas_rect.center() + self.canvas.offset;
-
-        let project_3d = |x_val: f32, y_val: f32, z_val: f32| -> egui::Pos2 {
-            let cx = x_val - w as f32 / 2.0;
-            let cy = y_val - h as f32 / 2.0;
-            let cz = z_val - num_layers as f32 / 2.0;
-
-            let (rx, ry) = match self.sprite_stack_rotation_90 % 4 {
-                0 => (cx, cy),
-                1 => (-cy, cx),
-                2 => (-cx, -cy),
-                _ => (cy, -cx),
-            };
-
-            let px = rx - ry;
-            let py = (rx + ry) * 0.5 - cz * 1.0;
-            center_pos + egui::Vec2::new(px, py) * self.canvas.zoom
-        };
-
-        let cross = |a: egui::Pos2, b: egui::Pos2, c: egui::Pos2| -> f32 {
-            (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
-        };
-
-        for y in 0..h {
-            for x in 0..w {
-                let p00 = project_3d(x as f32, y as f32, li as f32);
-                let p10 = project_3d((x + 1) as f32, y as f32, li as f32);
-                let p11 = project_3d((x + 1) as f32, (y + 1) as f32, li as f32);
-                let p01 = project_3d(x as f32, (y + 1) as f32, li as f32);
-
-                let q = [p00, p10, p11, p01];
-                let c0 = cross(q[0], q[1], pos);
-                let c1 = cross(q[1], q[2], pos);
-                let c2 = cross(q[2], q[3], pos);
-                let c3 = cross(q[3], q[0], pos);
-
-                let is_inside = (c0 >= 0.0 && c1 >= 0.0 && c2 >= 0.0 && c3 >= 0.0) ||
-                                (c0 <= 0.0 && c1 <= 0.0 && c2 <= 0.0 && c3 <= 0.0);
-                if is_inside {
-                    return Some((x, y));
-                }
-            }
+        let (xf, yf) = self.screen_to_voxel_coord_unconstrained(pos, canvas_rect);
+        let x = xf.floor();
+        let y = yf.floor();
+        if x >= 0.0 && x < w as f32 && y >= 0.0 && y < h as f32 {
+            Some((x as u32, y as u32))
+        } else {
+            None
         }
-        None
     }
 
     fn draw_3d_voxel_workspace(&mut self, ctx: &egui::Context, painter: &egui::Painter, canvas_rect: egui::Rect) {
