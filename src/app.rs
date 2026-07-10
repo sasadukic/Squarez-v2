@@ -5966,13 +5966,15 @@ impl App {
                     }
                 }
 
-                let art_rect = self.canvas.art_rect(canvas_rect, disp_w, disp_h);
-                painter.rect_stroke(
-                    art_rect,
-                    0.0,
-                    egui::Stroke::new(1.0, self.theme.muted),
-                    egui::StrokeKind::Outside,
-                );
+                if self.project.mode != crate::project::ProjectMode::SpriteStack {
+                    let art_rect = self.canvas.art_rect(canvas_rect, disp_w, disp_h);
+                    painter.rect_stroke(
+                        art_rect,
+                        0.0,
+                        egui::Stroke::new(1.0, self.theme.muted),
+                        egui::StrokeKind::Outside,
+                    );
+                }
 
                 let zoom = self.canvas.zoom;
                 let guide_color = Color32::from_rgba_unmultiplied(
@@ -8317,34 +8319,36 @@ print("FAIL")
                     if color[3] > 0 {
                         let col32 = egui::Color32::from_rgba_unmultiplied(color[0], color[1], color[2], color[3]);
 
-                        // Top face
                         let p00_1 = project_3d(x_val as f32, y_val as f32, (z_val + 1) as f32);
                         let p10_1 = project_3d((x_val + 1) as f32, y_val as f32, (z_val + 1) as f32);
                         let p11_1 = project_3d((x_val + 1) as f32, (y_val + 1) as f32, (z_val + 1) as f32);
                         let p01_1 = project_3d(x_val as f32, (y_val + 1) as f32, (z_val + 1) as f32);
-                        painter.add(egui::Shape::convex_polygon(
-                            vec![p00_1, p10_1, p11_1, p01_1],
-                            col32,
-                            egui::Stroke::new(0.5, col32),
-                        ));
 
-                        // Left face
-                        let p00_0 = project_3d(x_val as f32, y_val as f32, z_val as f32);
+                        let p10_0 = project_3d((x_val + 1) as f32, y_val as f32, z_val as f32);
+                        let p11_0 = project_3d((x_val + 1) as f32, (y_val + 1) as f32, z_val as f32);
                         let p01_0 = project_3d(x_val as f32, (y_val + 1) as f32, z_val as f32);
+
+                        // 1. Front-Left face (faces down-right: y = y + 1)
                         let col_left = shade_color(col32, 0.85);
                         painter.add(egui::Shape::convex_polygon(
-                            vec![p00_0, p01_0, p01_1, p00_1],
+                            vec![p01_0, p11_0, p11_1, p01_1],
                             col_left,
                             egui::Stroke::new(0.5, col_left),
                         ));
 
-                        // Right face
-                        let p10_0 = project_3d((x_val + 1) as f32, y_val as f32, z_val as f32);
+                        // 2. Front-Right face (faces down-left: x = x + 1)
                         let col_right = shade_color(col32, 0.7);
                         painter.add(egui::Shape::convex_polygon(
-                            vec![p00_0, p10_0, p10_1, p00_1],
+                            vec![p10_0, p11_0, p11_1, p10_1],
                             col_right,
                             egui::Stroke::new(0.5, col_right),
+                        ));
+
+                        // 3. Top face (drawn last)
+                        painter.add(egui::Shape::convex_polygon(
+                            vec![p00_1, p10_1, p11_1, p01_1],
+                            col32,
+                            egui::Stroke::new(0.5, col32),
                         ));
                     }
                 }
