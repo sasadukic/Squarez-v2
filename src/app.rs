@@ -5925,81 +5925,25 @@ impl App {
 
                     // Floating controls in the bottom-right corner of workspace panel
                     egui::Area::new(egui::Id::new("sprite_stack_workspace_controls"))
-                        .fixed_pos(canvas_rect.right_bottom() + egui::Vec2::new(-170.0, -45.0))
+                        .fixed_pos(canvas_rect.right_bottom() + egui::Vec2::new(-28.0, -28.0))
                         .show(ctx, |ui| {
-                            let ai = self.project.active_animation;
-                            let fi = self.project.active_frame;
-                            let active_frame = &self.project.animations[ai].frames[fi];
-                            let total_layers = active_frame.layers.len();
-
                             egui::Frame::new()
-                                .fill(self.theme.surface)
-                                .corner_radius(3.0)
-                                .inner_margin(egui::Margin::symmetric(10, 6))
+                                .fill(egui::Color32::TRANSPARENT)
+                                .inner_margin(egui::Margin::ZERO)
                                 .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 8.0;
-
-                                        let mut draw_icon_btn = |ui: &mut egui::Ui, icon_img: egui::ImageSource<'static>, hover_text: &str| -> egui::Response {
-                                            let (rect, resp) = ui.allocate_exact_size(egui::Vec2::splat(20.0), egui::Sense::click());
-                                            let tint = if resp.hovered() { egui::Color32::WHITE } else { self.theme.fg_desc };
-                                            ui.put(rect, egui::Image::new(icon_img).tint(tint).fit_to_exact_size(egui::Vec2::splat(14.0)));
-                                            resp.on_hover_text(hover_text)
-                                        };
-
-                                        // Layer controls
-                                        let up_icon = egui::include_image!("../assets/icons/expand_less.svg");
-                                        let up_resp = draw_icon_btn(ui, up_icon, "Active Layer Up");
-                                        if up_resp.clicked() {
-                                            if self.project.active_layer + 1 < total_layers {
-                                                self.project.active_layer += 1;
-                                                self.canvas_dirty = true;
-                                            }
-                                        }
-
-                                        let down_icon = egui::include_image!("../assets/icons/collapse.svg");
-                                        let down_resp = draw_icon_btn(ui, down_icon, "Active Layer Down");
-                                        if down_resp.clicked() {
-                                            if self.project.active_layer > 0 {
-                                                self.project.active_layer -= 1;
-                                                self.canvas_dirty = true;
-                                            }
-                                        }
-
-                                        // Divider line
-                                        let rect = ui.allocate_space(egui::Vec2::new(1.0, 16.0)).1;
-                                        ui.painter().line_segment(
-                                            [rect.left_top(), rect.left_bottom()],
-                                            egui::Stroke::new(1.0, self.theme.border),
-                                        );
-
-                                        // Visibility toggle
-                                        let vis_icon = if self.sprite_stack_show_grid {
-                                            egui::include_image!("../assets/icons/visibility.svg")
-                                        } else {
-                                            egui::include_image!("../assets/icons/visibility_off.svg")
-                                        };
-                                        let vis_resp = draw_icon_btn(ui, vis_icon, "Toggle Grid Plane Visibility");
-                                        if vis_resp.clicked() {
-                                            self.sprite_stack_show_grid = !self.sprite_stack_show_grid;
-                                            self.canvas_dirty = true;
-                                        }
-
-                                        // Rotation controls
-                                        let ccw_icon = egui::include_image!("../assets/icons/back.svg");
-                                        let ccw_resp = draw_icon_btn(ui, ccw_icon, "Rotate 90° CCW (Q)");
-                                        if ccw_resp.clicked() {
-                                            self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 3) % 4;
-                                            self.canvas_dirty = true;
-                                        }
-
-                                        let cw_icon = egui::include_image!("../assets/icons/forward.svg");
-                                        let cw_resp = draw_icon_btn(ui, cw_icon, "Rotate 90° CW (E)");
-                                        if cw_resp.clicked() {
-                                            self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 1) % 4;
-                                            self.canvas_dirty = true;
-                                        }
-                                    });
+                                    let (rect, resp) = ui.allocate_exact_size(egui::Vec2::splat(20.0), egui::Sense::click());
+                                    let tint = if resp.hovered() { egui::Color32::WHITE } else { self.theme.fg_desc };
+                                    let vis_icon = if self.sprite_stack_show_grid {
+                                        egui::include_image!("../assets/icons/visibility.svg")
+                                    } else {
+                                        egui::include_image!("../assets/icons/visibility_off.svg")
+                                    };
+                                    ui.put(rect, egui::Image::new(vis_icon).tint(tint).fit_to_exact_size(egui::Vec2::splat(14.0)));
+                                    let vis_resp = resp.on_hover_text("Toggle Grid Plane Visibility");
+                                    if vis_resp.clicked() {
+                                        self.sprite_stack_show_grid = !self.sprite_stack_show_grid;
+                                        self.canvas_dirty = true;
+                                    }
                                 });
                         });
                 } else {
@@ -8595,13 +8539,28 @@ print("FAIL")
         }
 
         // Orbit rotation keyboard handlers
-        if ctx.input(|i| i.key_pressed(egui::Key::Q)) {
+        if ctx.input(|i| i.key_pressed(egui::Key::Q)) || ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
             self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 3) % 4;
             self.canvas_dirty = true;
         }
-        if ctx.input(|i| i.key_pressed(egui::Key::E)) {
+        if ctx.input(|i| i.key_pressed(egui::Key::E)) || ctx.input(|i| i.key_pressed(egui::Key::ArrowRight)) {
             self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 1) % 4;
             self.canvas_dirty = true;
+        }
+
+        // Active layer adjustment keyboard handlers
+        let total_layers = self.project.animations[ai].frames[fi].layers.len();
+        if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+            if self.project.active_layer + 1 < total_layers {
+                self.project.active_layer += 1;
+                self.canvas_dirty = true;
+            }
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+            if self.project.active_layer > 0 {
+                self.project.active_layer -= 1;
+                self.canvas_dirty = true;
+            }
         }
     }
 
