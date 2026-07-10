@@ -8862,7 +8862,7 @@ print("FAIL")
         let btn_resp = ui.interact(btn_rect, egui::Id::new("three_d_view_toggle"), egui::Sense::click());
         let btn_bg = if btn_resp.hovered() { self.theme.surface } else { self.theme.panel };
         painter.rect_filled(btn_rect, 4.0, btn_bg);
-        painter.rect_stroke(btn_rect, 4.0, egui::Stroke::new(1.0, self.theme.border));
+        painter.rect_stroke(btn_rect, 4.0, egui::Stroke::new(1.0, self.theme.border), egui::StrokeKind::Inside);
         
         let text_color = if btn_resp.hovered() { self.theme.fg } else { self.theme.fg_desc };
         painter.text(
