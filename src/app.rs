@@ -8849,6 +8849,34 @@ print("FAIL")
                 ));
             }
         }
+
+        // Draw view mode indicator button in top-right corner
+        let view_names = ["Ortho", "Front", "Right", "Back", "Left"];
+        let view_name = view_names[self.three_d_view_mode as usize];
+        let btn_text = format!("View: {}", view_name);
+        
+        let btn_pos = egui::Pos2::new(canvas_rect.max.x - 80.0, canvas_rect.min.y + 10.0);
+        let btn_size = egui::Vec2::new(70.0, 20.0);
+        let btn_rect = egui::Rect::from_min_size(btn_pos, btn_size);
+        
+        let btn_resp = ui.interact(btn_rect, egui::Id::new("three_d_view_toggle"), egui::Sense::click());
+        let btn_bg = if btn_resp.hovered() { self.theme.surface } else { self.theme.panel };
+        painter.rect_filled(btn_rect, 4.0, btn_bg);
+        painter.rect_stroke(btn_rect, 4.0, egui::Stroke::new(1.0, self.theme.border));
+        
+        let text_color = if btn_resp.hovered() { self.theme.fg } else { self.theme.fg_desc };
+        painter.text(
+            btn_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            btn_text,
+            egui::FontId::new(9.0, egui::FontFamily::Proportional),
+            text_color,
+        );
+        
+        if btn_resp.clicked() {
+            self.three_d_view_mode = (self.three_d_view_mode + 1) % 5;
+            self.canvas_dirty = true;
+        }
     }
 
     /// Try to create triangular faces from the newly added vertex and nearby vertices.
@@ -9731,9 +9759,28 @@ print("FAIL")
                 if self.project.mode == crate::project::ProjectMode::ThreeD {
                     // Get 3D coordinates from screen position (already snapped to grid corners)
                     let (x3d, y3d) = self.get_canvas_coords_f32(pos, canvas_rect);
-                    // Clamp to bounding box edges
-                    let x3d = x3d.clamp(0.0, self.project.canvas_width as f32);
-                    let y3d = y3d.clamp(0.0, self.project.canvas_height as f32);
+                    
+                    // Snap to corners and edges when close
+                    let w = self.project.canvas_width as f32;
+                    let h = self.project.canvas_height as f32;
+                    let snap_threshold = 0.3;
+                    
+                    let x3d = if x3d.abs() < snap_threshold {
+                        0.0
+                    } else if (x3d - w).abs() < snap_threshold {
+                        w
+                    } else {
+                        x3d.clamp(0.0, w)
+                    };
+                    
+                    let y3d = if y3d.abs() < snap_threshold {
+                        0.0
+                    } else if (y3d - h).abs() < snap_threshold {
+                        h
+                    } else {
+                        y3d.clamp(0.0, h)
+                    };
+                    
                     let z3d = self.project.active_layer as f32;
 
                     // Check if clicking on an existing vertex (within threshold)
