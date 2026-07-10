@@ -6389,7 +6389,21 @@ impl App {
                     overlay_ui.label(label_text);
                 }
 
-                let response = ui.allocate_rect(canvas_rect, egui::Sense::click_and_drag());
+                // Check if clicking on the visibility button - if so, skip canvas interaction
+                let clicking_on_vis_button = if let Some(btn_rect) = self.sprite_stack_grid_btn_rect {
+                    ui.ctx().input(|i| {
+                        i.pointer.any_click() && i.pointer.interact_pos().map(|p| btn_rect.contains(p)).unwrap_or(false)
+                    })
+                } else {
+                    false
+                };
+
+                let response = if clicking_on_vis_button {
+                    // Don't allocate canvas rect when clicking on button
+                    ui.allocate_rect(canvas_rect, egui::Sense::hover())
+                } else {
+                    ui.allocate_rect(canvas_rect, egui::Sense::click_and_drag())
+                };
                 if self.tile_display_active && self.project.is_tiled() {
                     // No interaction in compact clip-only display mode
                 } else if self.active_tool == ActiveTool::Zoom {
