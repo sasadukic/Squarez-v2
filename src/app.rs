@@ -1478,7 +1478,7 @@ impl App {
             new
         }).collect();
         for _ in 0..frame_count {
-            frames.push(ProjectFrame { duration_ms: 0, layers: layers.clone(), dirty: true });
+            frames.push(ProjectFrame { duration_ms: 0, layers: layers.clone(), mesh: crate::project::Mesh3D::default(), dirty: true });
         }
         let tile_end = if frame_count > 0 { frame_count as usize - 1 } else { 0 };
         Animation { name, fps: 12, frames, tile_start: 0, tile_end, tile_visible: true }
@@ -8768,7 +8768,7 @@ print("FAIL")
                 painter.add(egui::Shape::convex_polygon(
                     points,
                     face_color,
-                    egui::Stroke::new(1.0, face.color),
+                    egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(face.color[0], face.color[1], face.color[2], 255)),
                 ));
             }
         }
@@ -8841,31 +8841,33 @@ print("FAIL")
     /// Try to create triangular faces from the newly added vertex and nearby vertices.
     /// Creates faces when 3 vertices are close enough to form a triangle.
     fn try_create_faces(&mut self, new_x: f32, new_y: f32, new_z: f32, color: crate::project::Rgba) {
-        use crate::project::{Face3D, Vertex3D};
+        use crate::project::Face3D;
 
-        let mesh = self.project.active_mesh();
-        let new_idx = mesh.vertices.len() - 1; // The vertex we just added
-
-        // Find nearby vertices (within threshold distance)
-        let threshold = 2.0;
-        let nearby: Vec<usize> = mesh.vertices.iter().enumerate()
-            .filter(|(idx, v)| {
-                *idx != new_idx &&
-                (v.x - new_x).abs() < threshold &&
-                (v.y - new_y).abs() < threshold &&
-                (v.z - new_z).abs() < threshold
-            })
-            .map(|(idx, _)| idx)
-            .collect();
+        // Get nearby vertices first (immutable borrow)
+        let nearby: Vec<(usize, f32, f32, f32)> = {
+            let mesh = self.project.active_mesh();
+            let new_idx = mesh.vertices.len() - 1;
+            let threshold = 2.0;
+            mesh.vertices.iter().enumerate()
+                .filter(|(idx, v)| {
+                    *idx != new_idx &&
+                    (v.x - new_x).abs() < threshold &&
+                    (v.y - new_y).abs() < threshold &&
+                    (v.z - new_z).abs() < threshold
+                })
+                .map(|(idx, v)| (idx, v.x, v.y, v.z))
+                .collect()
+        };
 
         // Try to form triangles with pairs of nearby vertices
         for i in 0..nearby.len() {
             for j in (i + 1)..nearby.len() {
-                let idx1 = nearby[i];
-                let idx2 = nearby[j];
+                let (idx1, x1, y1, z1) = nearby[i];
+                let (idx2, x2, y2, z2) = nearby[j];
+                let new_idx = self.project.active_mesh().vertices.len() - 1;
 
                 // Check if this face already exists
-                let face_exists = mesh.faces.iter().any(|f| {
+                let face_exists = self.project.active_mesh().faces.iter().any(|f| {
                     let mut indices = f.vertex_indices.clone();
                     indices.sort();
                     let mut new_indices = vec![new_idx, idx1, idx2];
@@ -8875,14 +8877,10 @@ print("FAIL")
 
                 if !face_exists {
                     // Check if the three vertices are not collinear (form a valid triangle)
-                    let v1 = &mesh.vertices[idx1];
-                    let v2 = &mesh.vertices[idx2];
-
-                    // Simple check: vertices should not be on the same line
-                    let dx1 = v1.x - new_x;
-                    let dy1 = v1.y - new_y;
-                    let dx2 = v2.x - new_x;
-                    let dy2 = v2.y - new_y;
+                    let dx1 = x1 - new_x;
+                    let dy1 = y1 - new_y;
+                    let dx2 = x2 - new_x;
+                    let dy2 = y2 - new_y;
 
                     let cross = dx1 * dy2 - dy1 * dx2;
                     if cross.abs() > 0.1 {
@@ -9799,108 +9797,109 @@ print("FAIL")
                         .and_then(|idx| self.brushes.get(idx))
                         .map(|b| b.frames.is_some())
                         .unwrap_or(false);
-                if is_animated_brush && self.last_pencil_pos.is_some() {
-                    self.last_pencil_pos = Some((px, py));
-                } else {
-                    let positions = if let Some((lx, ly)) = self.last_pencil_pos {
-                        bresenham_positions(lx as i32, ly as i32, px as i32, py as i32)
+                    if is_animated_brush && self.last_pencil_pos.is_some() {
+                        self.last_pencil_pos = Some((px, py));
                     } else {
-                        vec![(px, py)]
-                    };
-                    for pos in positions {
-                        let streamed = self.mirror_positions_with_streams(pos.0, pos.1, w, h);
-                        // Track center positions for L-shape removal (only if pen size is 1)
-                        if self.pen_size == 1 {
-                            for &((mx, my), stream) in &streamed {
-                                if !self.stroke_painted.contains(&(mx, my)) {
-                                    match stream {
-                                        MirrorStream::Original => self.stroke_pixel_sequence.push((mx, my)),
-                                        MirrorStream::X => self.mirror_x_sequence.push((mx, my)),
-                                        MirrorStream::Y => self.mirror_y_sequence.push((mx, my)),
-                                        MirrorStream::XY => self.mirror_xy_sequence.push((mx, my)),
+                        let positions = if let Some((lx, ly)) = self.last_pencil_pos {
+                            bresenham_positions(lx as i32, ly as i32, px as i32, py as i32)
+                        } else {
+                            vec![(px, py)]
+                        };
+                        for pos in positions {
+                            let streamed = self.mirror_positions_with_streams(pos.0, pos.1, w, h);
+                            // Track center positions for L-shape removal (only if pen size is 1)
+                            if self.pen_size == 1 {
+                                for &((mx, my), stream) in &streamed {
+                                    if !self.stroke_painted.contains(&(mx, my)) {
+                                        match stream {
+                                            MirrorStream::Original => self.stroke_pixel_sequence.push((mx, my)),
+                                            MirrorStream::X => self.mirror_x_sequence.push((mx, my)),
+                                            MirrorStream::Y => self.mirror_y_sequence.push((mx, my)),
+                                            MirrorStream::XY => self.mirror_xy_sequence.push((mx, my)),
+                                        }
                                     }
                                 }
                             }
-                        }
-                        for &((mx, my), _) in &streamed {
-                            let mut points: Vec<(u32, u32, Rgba)> = if let Some(brush_idx) = self.active_brush_index {
-                                if brush_idx < self.brushes.len() {
-                                    self.brush_stamp(brush_idx, mx, my, w, h, self.active_brush_frame_idx)
+                            for &((mx, my), _) in &streamed {
+                                let mut points: Vec<(u32, u32, Rgba)> = if let Some(brush_idx) = self.active_brush_index {
+                                    if brush_idx < self.brushes.len() {
+                                        self.brush_stamp(brush_idx, mx, my, w, h, self.active_brush_frame_idx)
+                                    } else {
+                                        self.pen_square(mx, my, w, h).into_iter().map(|(x, y)| (x, y, color)).collect()
+                                    }
                                 } else {
                                     self.pen_square(mx, my, w, h).into_iter().map(|(x, y)| (x, y, color)).collect()
+                                };
+                                if self.active_brush_index.is_some() && self.use_swatch_color {
+                                    for p in &mut points {
+                                        p.2 = color;
+                                    }
                                 }
-                            } else {
-                                self.pen_square(mx, my, w, h).into_iter().map(|(x, y)| (x, y, color)).collect()
-                            };
-                            if self.active_brush_index.is_some() && self.use_swatch_color {
-                                for p in &mut points {
-                                    p.2 = color;
-                                }
-                            }
-                            for (sx, sy, mut c) in points {
-                                if self.stroke_painted.contains(&(sx, sy)) { continue; }
-                                let (target_fi, ox, oy) = if self.project.is_tiled() {
-                                    let tile_w = self.project.tile_w;
-                                    let tile_h = self.project.tile_h;
-                                    let tiles_w = self.project.tiles_w;
-                                    let tiles_h = self.project.tiles_h;
-                                    let tx = sx / tile_w;
-                                    let ty = sy / tile_h;
-                                    if tx < tiles_w && ty < tiles_h {
-                                        let t_fi = (ty * tiles_w + tx) as usize;
-                                        if t_fi < self.project.animations[ai].frames.len() {
-                                            (t_fi, sx % tile_w, sy % tile_h)
+                                for (sx, sy, mut c) in points {
+                                    if self.stroke_painted.contains(&(sx, sy)) { continue; }
+                                    let (target_fi, ox, oy) = if self.project.is_tiled() {
+                                        let tile_w = self.project.tile_w;
+                                        let tile_h = self.project.tile_h;
+                                        let tiles_w = self.project.tiles_w;
+                                        let tiles_h = self.project.tiles_h;
+                                        let tx = sx / tile_w;
+                                        let ty = sy / tile_h;
+                                        if tx < tiles_w && ty < tiles_h {
+                                            let t_fi = (ty * tiles_w + tx) as usize;
+                                            if t_fi < self.project.animations[ai].frames.len() {
+                                                (t_fi, sx % tile_w, sy % tile_h)
+                                            } else {
+                                                (fi, sx, sy)
+                                            }
                                         } else {
                                             (fi, sx, sy)
                                         }
                                     } else {
                                         (fi, sx, sy)
-                                    }
-                                } else {
-                                    (fi, sx, sy)
-                                };
+                                    };
 
-                                if self.shading_mode {
-                                    let current_pixel_color = self.project.animations[ai].frames[target_fi].layers[li].get_pixel(ox, oy);
-                                    let mut found_ramp_idx = None;
-                                    if let Some((start, end)) = self.shading_ramp {
-                                        for p_idx in start..=end {
-                                            if p_idx < self.project.palette.len() {
-                                                if self.project.palette[p_idx] == current_pixel_color {
-                                                    found_ramp_idx = Some(p_idx);
-                                                    break;
+                                    if self.shading_mode {
+                                        let current_pixel_color = self.project.animations[ai].frames[target_fi].layers[li].get_pixel(ox, oy);
+                                        let mut found_ramp_idx = None;
+                                        if let Some((start, end)) = self.shading_ramp {
+                                            for p_idx in start..=end {
+                                                if p_idx < self.project.palette.len() {
+                                                    if self.project.palette[p_idx] == current_pixel_color {
+                                                        found_ramp_idx = Some(p_idx);
+                                                        break;
+                                                    }
                                                 }
                                             }
-                                        }
-                                        if let Some(p_idx) = found_ramp_idx {
-                                            let alt_held = response.ctx.input(|inp| inp.modifiers.alt);
-                                            let dir = if alt_held { -self.shading_dir } else { self.shading_dir };
-                                            let next_idx = (p_idx as i32 + dir).clamp(start as i32, end as i32) as usize;
-                                            c = self.project.palette[next_idx];
+                                            if let Some(p_idx) = found_ramp_idx {
+                                                let alt_held = response.ctx.input(|inp| inp.modifiers.alt);
+                                                let dir = if alt_held { -self.shading_dir } else { self.shading_dir };
+                                                let next_idx = (p_idx as i32 + dir).clamp(start as i32, end as i32) as usize;
+                                                c = self.project.palette[next_idx];
+                                            } else {
+                                                continue;
+                                            }
                                         } else {
                                             continue;
                                         }
-                                    } else {
-                                        continue;
                                     }
-                                }
 
-                                let edits = apply_pencil(&self.project.animations[ai].frames[target_fi].layers[li], ox, oy, c);
-                                for &(_x, _y, old, new) in &edits {
-                                    if self.select_state.is_pixel_selected(sx, sy) {
-                                        self.project.animations[ai].frames[target_fi].layers[li].set_pixel(ox, oy, new);
-                                        self.stroke_edits.push((sx, sy, old, new));
-                                        self.project.animations[ai].frames[target_fi].dirty = true;
-                                        if ai < self.thumbnails.len() && target_fi < self.thumbnails[ai].len() {
-                                            self.thumbnails[ai][target_fi].dirty = true;
+                                    let edits = apply_pencil(&self.project.animations[ai].frames[target_fi].layers[li], ox, oy, c);
+                                    for &(_x, _y, old, new) in &edits {
+                                        if self.select_state.is_pixel_selected(sx, sy) {
+                                            self.project.animations[ai].frames[target_fi].layers[li].set_pixel(ox, oy, new);
+                                            self.stroke_edits.push((sx, sy, old, new));
+                                            self.project.animations[ai].frames[target_fi].dirty = true;
+                                            if ai < self.thumbnails.len() && target_fi < self.thumbnails[ai].len() {
+                                                self.thumbnails[ai][target_fi].dirty = true;
+                                            }
                                         }
                                     }
+                                    self.stroke_painted.insert((sx, sy));
                                 }
-                                self.stroke_painted.insert((sx, sy));
                             }
-                        }
-                        if self.pen_size == 1 {
-                            self.check_and_remove_l_shape_all_streams(ai, fi, li);
+                            if self.pen_size == 1 {
+                                self.check_and_remove_l_shape_all_streams(ai, fi, li);
+                            }
                         }
                     }
                 }

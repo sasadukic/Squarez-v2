@@ -109,6 +109,7 @@ impl LegacyFrameV1 {
         Frame {
             duration_ms: self.duration_ms,
             layers: self.layers.into_iter().map(LegacyLayerV1::into_layer).collect(),
+            mesh: crate::project::Mesh3D::default(),
             dirty: true,
         }
     }

@@ -205,6 +205,7 @@ impl Project {
                         Frame {
                             duration_ms: template.duration_ms,
                             layers,
+                            mesh: Mesh3D::default(),
                             dirty: true,
                         }
                     } else {
@@ -262,7 +263,7 @@ impl Project {
     }
 
     pub fn active_mesh_mut(&mut self) -> &mut Mesh3D {
-        self.active_frame_mut().mesh
+        &mut self.active_frame_mut().mesh
     }
 }
 
@@ -351,6 +352,7 @@ impl Frame {
         Self {
             duration_ms: 0,
             layers: vec![Layer::new_with_id("Layer 1".to_string(), width, height, layer_id)],
+            mesh: Mesh3D::default(),
             dirty: true,
         }
     }
