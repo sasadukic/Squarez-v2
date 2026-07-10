@@ -9122,74 +9122,54 @@ print("FAIL")
         if !self.selected_vertices.is_empty() || !self.selected_faces.is_empty() {
             let step = 1.0 / self.canvas.zoom; // Move by 1 pixel at current zoom
             
-            let mut moved = false;
+            let mut dx = 0.0;
+            let mut dy = 0.0;
+            let mut dz = 0.0;
+            let mut key_pressed = false;
+
             if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowUp)) {
-                // Move selected vertices/faces up (decrease Y)
-                for &idx in &self.selected_vertices {
-                    if let Some(vertex) = self.project.active_mesh_mut().vertices.get_mut(idx) {
-                        vertex.y -= step;
-                        moved = true;
-                    }
-                }
-                for &idx in &self.selected_faces {
-                    // Collect vertex indices first to avoid borrow issues
-                    let v_indices: Vec<usize> = self.project.active_mesh().faces.get(idx)
-                        .map(|f| f.vertex_indices.clone())
-                        .unwrap_or_default();
-                    for v_idx in v_indices {
-                        if let Some(vertex) = self.project.active_mesh_mut().vertices.get_mut(v_idx) {
-                            vertex.y -= step;
-                        }
-                    }
-                    moved = true;
+                key_pressed = true;
+                if self.three_d_view_mode == 0 {
+                    dy = step;
+                } else {
+                    dz = step;
                 }
             }
             if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowDown)) {
-                // Move selected vertices/faces down (increase Y)
-                for &idx in &self.selected_vertices {
-                    if let Some(vertex) = self.project.active_mesh_mut().vertices.get_mut(idx) {
-                        vertex.y += step;
-                        moved = true;
-                    }
-                }
-                for &idx in &self.selected_faces {
-                    let v_indices: Vec<usize> = self.project.active_mesh().faces.get(idx)
-                        .map(|f| f.vertex_indices.clone())
-                        .unwrap_or_default();
-                    for v_idx in v_indices {
-                        if let Some(vertex) = self.project.active_mesh_mut().vertices.get_mut(v_idx) {
-                            vertex.y += step;
-                        }
-                    }
-                    moved = true;
+                key_pressed = true;
+                if self.three_d_view_mode == 0 {
+                    dy = -step;
+                } else {
+                    dz = -step;
                 }
             }
             if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
-                // Move selected vertices/faces left (decrease X)
-                for &idx in &self.selected_vertices {
-                    if let Some(vertex) = self.project.active_mesh_mut().vertices.get_mut(idx) {
-                        vertex.x -= step;
-                        moved = true;
-                    }
-                }
-                for &idx in &self.selected_faces {
-                    let v_indices: Vec<usize> = self.project.active_mesh().faces.get(idx)
-                        .map(|f| f.vertex_indices.clone())
-                        .unwrap_or_default();
-                    for v_idx in v_indices {
-                        if let Some(vertex) = self.project.active_mesh_mut().vertices.get_mut(v_idx) {
-                            vertex.x -= step;
-                        }
-                    }
-                    moved = true;
+                key_pressed = true;
+                match self.three_d_view_mode {
+                    0 | 1 => dx = -step,
+                    2 => dy = -step,
+                    3 => dx = step,
+                    4 => dy = step,
+                    _ => {}
                 }
             }
             if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowRight)) {
-                // Move selected vertices/faces right (increase X)
+                key_pressed = true;
+                match self.three_d_view_mode {
+                    0 | 1 => dx = step,
+                    2 => dy = step,
+                    3 => dx = -step,
+                    4 => dy = -step,
+                    _ => {}
+                }
+            }
+
+            if key_pressed {
                 for &idx in &self.selected_vertices {
                     if let Some(vertex) = self.project.active_mesh_mut().vertices.get_mut(idx) {
-                        vertex.x += step;
-                        moved = true;
+                        vertex.x += dx;
+                        vertex.y += dy;
+                        vertex.z += dz;
                     }
                 }
                 for &idx in &self.selected_faces {
@@ -9198,14 +9178,12 @@ print("FAIL")
                         .unwrap_or_default();
                     for v_idx in v_indices {
                         if let Some(vertex) = self.project.active_mesh_mut().vertices.get_mut(v_idx) {
-                            vertex.x += step;
+                            vertex.x += dx;
+                            vertex.y += dy;
+                            vertex.z += dz;
                         }
                     }
-                    moved = true;
                 }
-            }
-            
-            if moved {
                 self.canvas_dirty = true;
             }
         }
