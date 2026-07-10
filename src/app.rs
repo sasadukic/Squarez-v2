@@ -6502,7 +6502,17 @@ impl App {
                     false
                 };
 
-                let response = if hovering_over_vis_button {
+                let hovering_over_3d_controls = if self.project.mode == crate::project::ProjectMode::ThreeD {
+                    ui.ctx().input(|i| {
+                        i.pointer.hover_pos().map(|pos| {
+                            pos.x >= canvas_rect.max.x - 110.0 && pos.y <= canvas_rect.min.y + 120.0
+                        }).unwrap_or(false)
+                    })
+                } else {
+                    false
+                };
+
+                let response = if hovering_over_vis_button || hovering_over_3d_controls {
                     // Don't consume clicks when hovering over button
                     ui.allocate_rect(canvas_rect, egui::Sense::hover())
                 } else {
