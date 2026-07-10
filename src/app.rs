@@ -10066,6 +10066,10 @@ print("FAIL")
             canvas_rect.max.y
         };
 
+        let is_over_3d_controls = self.project.mode == crate::project::ProjectMode::ThreeD
+            && pos.x >= canvas_rect.max.x - 110.0
+            && pos.y <= canvas_rect.min.y + 120.0;
+
         let is_over_ui = pos.x < 38.0 // Left toolbar
             || pos.y < TOP_BAR_HEIGHT // Top bar
             || pos.x > self.sidebar_left_x // Right sidebar
@@ -10073,7 +10077,8 @@ print("FAIL")
             || (self.open_tool_submenu.is_some() && pos.x < 38.0 + 80.0 && pos.y < TOP_BAR_HEIGHT + 200.0) // Tool submenu
             || self.palette_browser.open
             || self.tile_browser.open
-            || self.any_modal_open();
+            || self.any_modal_open()
+            || is_over_3d_controls;
 
         let press_started = (response.drag_started_by(egui::PointerButton::Primary) || (response.ctx.input(|i| i.pointer.primary_pressed()) && response.hovered()))
             && !is_over_ui;
@@ -10247,29 +10252,9 @@ print("FAIL")
                     let num_layers = self.project.active_frame_ref().layers.len() as f32;
                     let snap_threshold = 0.3;
                     
-                    let x3d = if x3d.abs() < snap_threshold {
-                        0.0
-                    } else if (x3d - w).abs() < snap_threshold {
-                        w
-                    } else {
-                        x3d.clamp(0.0, w)
-                    };
-                    
-                    let y3d = if y3d.abs() < snap_threshold {
-                        0.0
-                    } else if (y3d - h).abs() < snap_threshold {
-                        h
-                    } else {
-                        y3d.clamp(0.0, h)
-                    };
-                    
-                    let z3d = if z3d.abs() < snap_threshold {
-                        0.0
-                    } else if (z3d - num_layers).abs() < snap_threshold {
-                        num_layers
-                    } else {
-                        z3d.clamp(0.0, num_layers)
-                    };
+                    let x3d = x3d.round().clamp(0.0, w);
+                    let y3d = y3d.round().clamp(0.0, h);
+                    let z3d = z3d.round().clamp(0.0, num_layers);
 
                     // Check if clicking on an existing vertex (within threshold)
                     let threshold = 0.5;
