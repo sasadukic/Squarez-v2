@@ -277,6 +277,7 @@ pub struct App {
     pub sprite_stack_rotation_90: i32,
     pub sprite_stack_show_grid: bool,
     pub sprite_stack_preview_fixed_cam: bool,
+    pub sprite_stack_grid_btn_rect: Option<egui::Rect>,
     /// Track if any menu was open at the start of the current frame
     menu_was_open_at_frame_start: bool,
     brushes: Vec<CustomBrush>,
@@ -976,6 +977,7 @@ impl App {
             sprite_stack_rotation_90: 0,
             sprite_stack_show_grid: true,
             sprite_stack_preview_fixed_cam: false,
+            sprite_stack_grid_btn_rect: None,
             menu_was_open_at_frame_start: false,
             brushes: {
                 let mut b = layout.as_ref().map(|l| l.brushes.clone()).unwrap_or_default();
@@ -8586,6 +8588,7 @@ print("FAIL")
         let btn_pos = egui::Pos2::new(label_pos.x + text_w + 6.0, line_end.y - 10.0);
 
         let btn_rect = egui::Rect::from_min_size(btn_pos, egui::Vec2::splat(20.0));
+        self.sprite_stack_grid_btn_rect = Some(btn_rect);
         let resp = ui.interact(btn_rect, egui::Id::new("sprite_stack_grid_vis_toggle"), egui::Sense::click());
         let tint = if resp.hovered() { egui::Color32::WHITE } else { self.theme.fg_desc };
         let vis_icon = if self.sprite_stack_show_grid {
@@ -8649,6 +8652,17 @@ print("FAIL")
             self.last_pencil_pos = None;
             self.drag_start = None;
             return;
+        }
+
+        // Skip processing if clicking on the visibility toggle button
+        if let Some(btn_rect) = self.sprite_stack_grid_btn_rect {
+            if response.ctx.input(|i| i.pointer.any_click()) {
+                if let Some(pos) = response.ctx.input(|i| i.pointer.interact_pos()) {
+                    if btn_rect.contains(pos) {
+                        return;
+                    }
+                }
+            }
         }
 
         let w = self.project.canvas_width;
