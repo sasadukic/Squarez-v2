@@ -10452,115 +10452,169 @@ print("FAIL")
 
                         ui.add_space(8.0);
 
-                        // ── Width / Height with lock ──
-                        let total_h = row_h * 2.0 + gap;
+                        // ── Width / Height / Stack Height with lock ──
+                        let is_sprite_stack = self.new_project_mode == crate::project::ProjectMode::SpriteStack;
+                        let num_rows = if is_sprite_stack { 3.0 } else { 2.0 };
+                        let total_h = row_h * num_rows + gap * (num_rows - 1.0);
 
                         let old_w = self.new_width;
                         let old_h = self.new_height;
+                        let old_sh = self.new_sprite_stack_height;
 
                         let wh_outer = ui.allocate_ui_with_layout(
                             Vec2::new(row_w, total_h),
                             egui::Layout::left_to_right(egui::Align::TOP),
                             |ui| {
-                            ui.spacing_mut().item_spacing = Vec2::ZERO;
-                            ui.add_space(col_offset);
-                            // Column 1: Tile Size label (vertically centered)
-                            ui.allocate_ui_with_layout(
-                                Vec2::new(label_w, total_h),
-                                egui::Layout::top_down(egui::Align::Center),
-                                |ui| {
-                                ui.visuals_mut().override_text_color = Some(theme.fg_desc);
-                                let (r, _) = ui.allocate_exact_size(Vec2::new(label_w, total_h), egui::Sense::hover());
-                                ui.put(r, egui::Label::new(self.label_desc("Tile Size")).selectable(false));
-                            });
-
-                            // Column 2: values
+                                ui.spacing_mut().item_spacing = Vec2::ZERO;
+                                ui.add_space(col_offset);
+                                // Column 1: Label (vertically centered)
                                 ui.allocate_ui_with_layout(
-                                Vec2::new(input_w, total_h),
-                                egui::Layout::top_down(egui::Align::LEFT),
-                                |ui| {
-                                ui.visuals_mut().override_text_color = Some(theme.fg_desc);
-                                let (r, _) = ui.allocate_exact_size(Vec2::new(input_w, row_h), egui::Sense::hover());
-                                let resp1 = ui.put(r, egui::TextEdit::singleline(&mut self.new_width_str)
-                                    .frame(false)
-                                    .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
-                                    .text_color(theme.fg)
-                                    .horizontal_align(egui::Align::Center)
-                                    .vertical_align(egui::Align::Center)
-                                    .id_source("new_width"));
-                                if resp1.has_focus() {
-                                    if !self.new_width_focused {
-                                        self.new_width_focused = true;
-                                        let text_len = self.new_width_str.len();
-                                        if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp1.id) {
-                                            let min = egui::text::CCursor::new(0);
-                                            let max = egui::text::CCursor::new(text_len);
-                                            state.cursor.set_char_range(Some(egui::text::CCursorRange::two(min, max)));
-                                            state.store(ui.ctx(), resp1.id);
+                                    Vec2::new(label_w, total_h),
+                                    egui::Layout::top_down(egui::Align::Center),
+                                    |ui| {
+                                        ui.visuals_mut().override_text_color = Some(theme.fg_desc);
+                                        let (r, _) = ui.allocate_exact_size(Vec2::new(label_w, total_h), egui::Sense::hover());
+                                        let label_str = if is_sprite_stack { "Stack Size" } else { "Tile Size" };
+                                        ui.put(r, egui::Label::new(self.label_desc(label_str)).selectable(false));
+                                    }
+                                );
+
+                                // Column 2: values
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(input_w, total_h),
+                                    egui::Layout::top_down(egui::Align::LEFT),
+                                    |ui| {
+                                        ui.visuals_mut().override_text_color = Some(theme.fg_desc);
+
+                                        // Width Input
+                                        let (r, _) = ui.allocate_exact_size(Vec2::new(input_w, row_h), egui::Sense::hover());
+                                        let resp1 = ui.put(r, egui::TextEdit::singleline(&mut self.new_width_str)
+                                            .frame(false)
+                                            .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
+                                            .text_color(theme.fg)
+                                            .horizontal_align(egui::Align::Center)
+                                            .vertical_align(egui::Align::Center)
+                                            .id_source("new_width"));
+                                        if resp1.has_focus() {
+                                            if !self.new_width_focused {
+                                                self.new_width_focused = true;
+                                                let text_len = self.new_width_str.len();
+                                                if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp1.id) {
+                                                    let min = egui::text::CCursor::new(0);
+                                                    let max = egui::text::CCursor::new(text_len);
+                                                    state.cursor.set_char_range(Some(egui::text::CCursorRange::two(min, max)));
+                                                    state.store(ui.ctx(), resp1.id);
+                                                }
+                                            }
+                                        } else {
+                                            self.new_width_focused = false;
+                                        }
+                                        if resp1.changed() {
+                                            if let Ok(val) = self.new_width_str.trim().parse::<u32>() {
+                                                self.new_width = val.clamp(1, 2048);
+                                            }
+                                        } else if !resp1.has_focus() {
+                                            self.new_width_str = self.new_width.to_string();
+                                        }
+
+                                        // Height Input
+                                        ui.add_space(gap);
+                                        let (r, _) = ui.allocate_exact_size(Vec2::new(input_w, row_h), egui::Sense::hover());
+                                        let resp2 = ui.put(r, egui::TextEdit::singleline(&mut self.new_height_str)
+                                            .frame(false)
+                                            .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
+                                            .text_color(theme.fg)
+                                            .horizontal_align(egui::Align::Center)
+                                            .vertical_align(egui::Align::Center)
+                                            .id_source("new_height"));
+                                        if resp2.has_focus() {
+                                            if !self.new_height_focused {
+                                                self.new_height_focused = true;
+                                                let text_len = self.new_height_str.len();
+                                                if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp2.id) {
+                                                    let min = egui::text::CCursor::new(0);
+                                                    let max = egui::text::CCursor::new(text_len);
+                                                    state.cursor.set_char_range(Some(egui::text::CCursorRange::two(min, max)));
+                                                    state.store(ui.ctx(), resp2.id);
+                                                }
+                                            }
+                                        } else {
+                                            self.new_height_focused = false;
+                                        }
+                                        if resp2.changed() {
+                                            if let Ok(val) = self.new_height_str.trim().parse::<u32>() {
+                                                self.new_height = val.clamp(1, 2048);
+                                            }
+                                        } else if !resp2.has_focus() {
+                                            self.new_height_str = self.new_height.to_string();
+                                        }
+
+                                        // Stack Height Input (Z)
+                                        if is_sprite_stack {
+                                            ui.add_space(gap);
+                                            let (r, _) = ui.allocate_exact_size(Vec2::new(input_w, row_h), egui::Sense::hover());
+                                            let resp3 = ui.put(r, egui::TextEdit::singleline(&mut self.new_sprite_stack_height_str)
+                                                .frame(false)
+                                                .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
+                                                .text_color(theme.fg)
+                                                .horizontal_align(egui::Align::Center)
+                                                .vertical_align(egui::Align::Center)
+                                                .id_source("new_sprite_stack_height"));
+                                            if resp3.has_focus() {
+                                                if !self.new_sprite_stack_height_focused {
+                                                    self.new_sprite_stack_height_focused = true;
+                                                    let text_len = self.new_sprite_stack_height_str.len();
+                                                    if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp3.id) {
+                                                        let min = egui::text::CCursor::new(0);
+                                                        let max = egui::text::CCursor::new(text_len);
+                                                        state.cursor.set_char_range(Some(egui::text::CCursorRange::two(min, max)));
+                                                        state.store(ui.ctx(), resp3.id);
+                                                    }
+                                                }
+                                            } else {
+                                                self.new_sprite_stack_height_focused = false;
+                                            }
+                                            if resp3.changed() {
+                                                if let Ok(val) = self.new_sprite_stack_height_str.trim().parse::<u32>() {
+                                                    self.new_sprite_stack_height = val.clamp(1, 128);
+                                                }
+                                            } else if !resp3.has_focus() {
+                                                self.new_sprite_stack_height_str = self.new_sprite_stack_height.to_string();
+                                            }
                                         }
                                     }
-                                } else {
-                                    self.new_width_focused = false;
-                                }
-                                if resp1.changed() {
-                                    if let Ok(val) = self.new_width_str.trim().parse::<u32>() {
-                                        self.new_width = val.clamp(1, 2048);
-                                    }
-                                } else if !resp1.has_focus() {
-                                    self.new_width_str = self.new_width.to_string();
-                                }
+                                );
 
-                                ui.add_space(gap);
-                                let (r, _) = ui.allocate_exact_size(Vec2::new(input_w, row_h), egui::Sense::hover());
-                                let resp2 = ui.put(r, egui::TextEdit::singleline(&mut self.new_height_str)
-                                    .frame(false)
-                                    .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
-                                    .text_color(theme.fg)
-                                    .horizontal_align(egui::Align::Center)
-                                    .vertical_align(egui::Align::Center)
-                                    .id_source("new_height"));
-                                if resp2.has_focus() {
-                                    if !self.new_height_focused {
-                                        self.new_height_focused = true;
-                                        let text_len = self.new_height_str.len();
-                                        if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp2.id) {
-                                            let min = egui::text::CCursor::new(0);
-                                            let max = egui::text::CCursor::new(text_len);
-                                            state.cursor.set_char_range(Some(egui::text::CCursorRange::two(min, max)));
-                                            state.store(ui.ctx(), resp2.id);
+                                // Column 3: lock button interaction
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(lock_w, total_h),
+                                    egui::Layout::top_down(egui::Align::TOP),
+                                    |ui| {
+                                        let alloc_rect = ui.max_rect();
+                                        let is_sprite_stack = self.new_project_mode == crate::project::ProjectMode::SpriteStack;
+                                        let lock_cy = if is_sprite_stack {
+                                            alloc_rect.top() + row_h + gap + row_h / 2.0
+                                        } else {
+                                            alloc_rect.top() + row_h / 2.0 + (row_h + gap) / 2.0 + 1.0
+                                        };
+                                        let center = egui::Pos2::new(alloc_rect.center().x, lock_cy);
+                                        let bg_rect = egui::Rect::from_center_size(center, Vec2::splat(20.0));
+                                        let response = ui.interact(bg_rect, "lock_btn".into(), egui::Sense::click());
+                                        if response.clicked() {
+                                            self.new_aspect_locked = !self.new_aspect_locked;
+                                            if self.new_aspect_locked {
+                                                self.new_height = self.new_width;
+                                                self.new_height_str = self.new_height.to_string();
+                                                if is_sprite_stack {
+                                                    self.new_sprite_stack_height = self.new_width.min(128);
+                                                    self.new_sprite_stack_height_str = self.new_sprite_stack_height.to_string();
+                                                }
+                                            }
                                         }
                                     }
-                                } else {
-                                    self.new_height_focused = false;
-                                }
-                                if resp2.changed() {
-                                    if let Ok(val) = self.new_height_str.trim().parse::<u32>() {
-                                        self.new_height = val.clamp(1, 2048);
-                                    }
-                                } else if !resp2.has_focus() {
-                                    self.new_height_str = self.new_height.to_string();
-                                }
-                            });
-
-                            // Column 3: lock interaction
-                            ui.allocate_ui_with_layout(
-                                Vec2::new(lock_w, total_h),
-                                egui::Layout::top_down(egui::Align::TOP),
-                                |ui| {
-                                let alloc_rect = ui.max_rect();
-                                let center = egui::Pos2::new(alloc_rect.center().x, alloc_rect.center().y + 1.0);
-                                let bg_rect = egui::Rect::from_center_size(center, Vec2::splat(20.0));
-                                let response = ui.interact(bg_rect, "lock_btn".into(), egui::Sense::click());
-                                if response.clicked() {
-                                    self.new_aspect_locked = !self.new_aspect_locked;
-                                    if self.new_aspect_locked {
-                                        // Snap height to match width when locking
-                                        self.new_height = self.new_width;
-                                        self.new_height_str = self.new_height.to_string();
-                                    }
-                                }
-                            });
-                        });
+                                );
+                            }
+                        );
 
                         // Draw lines, fill, and lock icon after child UI so painter draws on top
                         let r = wh_outer.response.rect;
@@ -10569,13 +10623,23 @@ print("FAIL")
                         let lock_cx = r.left() + col_offset + label_w + input_w + lock_w / 2.0;
                         let w_cy = r.top() + row_h / 2.0;
                         let h_cy = r.top() + row_h + gap + row_h / 2.0;
+                        let sh_cy = r.top() + (row_h + gap) * 2.0 + row_h / 2.0;
+                        let lock_cy = if is_sprite_stack { h_cy } else { w_cy + (h_cy - w_cy) / 2.0 + 1.0 };
+
                         let stroke = egui::Stroke::new(1.0, theme.fg_desc);
                         if self.new_aspect_locked {
-                            ui.painter().line_segment([egui::Pos2::new(input_right, w_cy), egui::Pos2::new(lock_cx, w_cy)], stroke);
-                            ui.painter().line_segment([egui::Pos2::new(input_right, h_cy), egui::Pos2::new(lock_cx, h_cy)], stroke);
-                            ui.painter().line_segment([egui::Pos2::new(lock_cx, w_cy), egui::Pos2::new(lock_cx, h_cy)], stroke);
+                            if is_sprite_stack {
+                                ui.painter().line_segment([egui::Pos2::new(input_right, w_cy), egui::Pos2::new(lock_cx, w_cy)], stroke);
+                                ui.painter().line_segment([egui::Pos2::new(input_right, h_cy), egui::Pos2::new(lock_cx, h_cy)], stroke);
+                                ui.painter().line_segment([egui::Pos2::new(input_right, sh_cy), egui::Pos2::new(lock_cx, sh_cy)], stroke);
+                                ui.painter().line_segment([egui::Pos2::new(lock_cx, w_cy), egui::Pos2::new(lock_cx, sh_cy)], stroke);
+                            } else {
+                                ui.painter().line_segment([egui::Pos2::new(input_right, w_cy), egui::Pos2::new(lock_cx, w_cy)], stroke);
+                                ui.painter().line_segment([egui::Pos2::new(input_right, h_cy), egui::Pos2::new(lock_cx, h_cy)], stroke);
+                                ui.painter().line_segment([egui::Pos2::new(lock_cx, w_cy), egui::Pos2::new(lock_cx, h_cy)], stroke);
+                            }
                         }
-                        let bg_rect = egui::Rect::from_center_size(egui::Pos2::new(lock_cx, w_cy + (h_cy - w_cy) / 2.0 + 1.0), Vec2::splat(20.0));
+                        let bg_rect = egui::Rect::from_center_size(egui::Pos2::new(lock_cx, lock_cy), Vec2::splat(20.0));
                         ui.painter().rect_filled(bg_rect, 4.0, theme.panel);
                         let lock_tint = if self.new_aspect_locked { theme.fg_desc } else { theme.accent };
                         let lock_icon = if self.new_aspect_locked {
@@ -10586,90 +10650,43 @@ print("FAIL")
                         let icon_rect = egui::Rect::from_center_size(bg_rect.center(), Vec2::splat(16.0));
                         ui.put(icon_rect, Image::new(lock_icon).tint(lock_tint).fit_to_exact_size(Vec2::splat(16.0)));
 
-                        // Lock: copy changed value to the other field
+                        // Lock sync copy logic
                         if self.new_aspect_locked {
                             if self.new_width != old_w {
                                 self.new_height = self.new_width;
                                 self.new_height_str = self.new_height.to_string();
+                                if is_sprite_stack {
+                                    self.new_sprite_stack_height = self.new_width.min(128);
+                                    self.new_sprite_stack_height_str = self.new_sprite_stack_height.to_string();
+                                }
                             } else if self.new_height != old_h {
                                 self.new_width = self.new_height;
                                 self.new_width_str = self.new_width.to_string();
+                                if is_sprite_stack {
+                                    self.new_sprite_stack_height = self.new_height.min(128);
+                                    self.new_sprite_stack_height_str = self.new_sprite_stack_height.to_string();
+                                }
+                            } else if is_sprite_stack && self.new_sprite_stack_height != old_sh {
+                                self.new_width = self.new_sprite_stack_height;
+                                self.new_width_str = self.new_width.to_string();
+                                self.new_height = self.new_sprite_stack_height;
+                                self.new_height_str = self.new_height.to_string();
                             }
                         }
 
-                        // Input outlines (tile size section)
+                        // Input outline rects
                         let input_stroke = egui::Stroke::new(1.0, theme.accent);
                         let input_x = r.left() + col_offset + label_w;
                         let in1 = egui::Rect::from_min_size(egui::Pos2::new(input_x, r.top()), Vec2::new(input_w, row_h));
                         let in2 = egui::Rect::from_min_size(egui::Pos2::new(input_x, r.top() + row_h + gap), Vec2::new(input_w, row_h));
                         ui.painter().rect_stroke(in1, 2.0, input_stroke, egui::StrokeKind::Inside);
                         ui.painter().rect_stroke(in2, 2.0, input_stroke, egui::StrokeKind::Inside);
+                        if is_sprite_stack {
+                            let in3 = egui::Rect::from_min_size(egui::Pos2::new(input_x, r.top() + (row_h + gap) * 2.0), Vec2::new(input_w, row_h));
+                            ui.painter().rect_stroke(in3, 2.0, input_stroke, egui::StrokeKind::Inside);
+                        }
 
-                        let (cw, ch) = if self.new_project_mode == crate::project::ProjectMode::SpriteStack {
-                            ui.add_space(20.0);
-
-                            // ── Height of the Sprite Stack ──
-                            let height_outer = ui.allocate_ui_with_layout(
-                                Vec2::new(row_w, row_h),
-                                egui::Layout::left_to_right(egui::Align::TOP),
-                                |ui| {
-                                    ui.spacing_mut().item_spacing = Vec2::ZERO;
-                                    ui.add_space(col_offset);
-                                    // Column 1: Height label
-                                    ui.allocate_ui_with_layout(
-                                        Vec2::new(label_w, row_h),
-                                        egui::Layout::top_down(egui::Align::Center),
-                                        |ui| {
-                                            ui.visuals_mut().override_text_color = Some(theme.fg_desc);
-                                            let (r, _) = ui.allocate_exact_size(Vec2::new(label_w, row_h), egui::Sense::hover());
-                                            ui.put(r, egui::Label::new(self.label_desc("Height")).selectable(false));
-                                        }
-                                    );
-                                    // Column 2: Height value input
-                                    ui.allocate_ui_with_layout(
-                                        Vec2::new(input_w, row_h),
-                                        egui::Layout::top_down(egui::Align::LEFT),
-                                        |ui| {
-                                            ui.visuals_mut().override_text_color = Some(theme.fg_desc);
-                                            let (r, _) = ui.allocate_exact_size(Vec2::new(input_w, row_h), egui::Sense::hover());
-                                            let resp = ui.put(r, egui::TextEdit::singleline(&mut self.new_sprite_stack_height_str)
-                                                .frame(false)
-                                                .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
-                                                .text_color(theme.fg)
-                                                .horizontal_align(egui::Align::Center)
-                                                .vertical_align(egui::Align::Center)
-                                                .id_source("new_sprite_stack_height"));
-                                            if resp.has_focus() {
-                                                if !self.new_sprite_stack_height_focused {
-                                                    self.new_sprite_stack_height_focused = true;
-                                                    let text_len = self.new_sprite_stack_height_str.len();
-                                                    if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp.id) {
-                                                        let min = egui::text::CCursor::new(0);
-                                                        let max = egui::text::CCursor::new(text_len);
-                                                        state.cursor.set_char_range(Some(egui::text::CCursorRange::two(min, max)));
-                                                        state.store(ui.ctx(), resp.id);
-                                                    }
-                                                }
-                                            } else {
-                                                self.new_sprite_stack_height_focused = false;
-                                            }
-                                            if resp.changed() {
-                                                if let Ok(val) = self.new_sprite_stack_height_str.trim().parse::<u32>() {
-                                                    self.new_sprite_stack_height = val.clamp(1, 128);
-                                                }
-                                            } else if !resp.has_focus() {
-                                                self.new_sprite_stack_height_str = self.new_sprite_stack_height.to_string();
-                                            }
-                                        }
-                                    );
-                                }
-                            );
-
-                            // Input outline (Height section)
-                            let h_input_x = height_outer.response.rect.left() + col_offset + label_w;
-                            let hin1 = egui::Rect::from_min_size(egui::Pos2::new(h_input_x, height_outer.response.rect.top()), Vec2::new(input_w, row_h));
-                            ui.painter().rect_stroke(hin1, 2.0, input_stroke, egui::StrokeKind::Inside);
-
+                        let (cw, ch) = if is_sprite_stack {
                             (self.new_width.max(1), self.new_height.max(1))
                         } else {
                             ui.add_space(20.0);
