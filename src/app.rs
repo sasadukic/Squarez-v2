@@ -7759,6 +7759,7 @@ print("FAIL")
                         btn_rect,
                         egui::Image::new(img)
                             .tint(tint)
+                            .rotate(std::f32::consts::FRAC_PI_2)
                             .fit_to_exact_size(btn_size),
                     );
 
@@ -7904,6 +7905,7 @@ print("FAIL")
                             btn_rect,
                             egui::Image::new(img)
                                 .tint(tint)
+                                .rotate(std::f32::consts::FRAC_PI_2)
                                 .fit_to_exact_size(btn_size),
                         );
 
