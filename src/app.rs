@@ -10840,14 +10840,22 @@ print("FAIL")
                             (self.new_width.max(1) * self.new_tiles_w.max(1), self.new_height.max(1) * self.new_tiles_h.max(1))
                         };
 
-                        ui.add_space(28.0);
+                        if is_sprite_stack {
+                            ui.add_space(68.0);
+                        } else {
+                            ui.add_space(28.0);
+                        }
+
                         ui.allocate_ui_with_layout(
                             Vec2::new(row_w, 18.0),
                             egui::Layout::top_down(egui::Align::Center),
                             |ui| {
-                            ui.colored_label(theme.accent, format!(
-                                "Total: {} × {} px", cw, ch
-                            ));
+                            let total_str = if is_sprite_stack {
+                                format!("Total: {} × {} × {} px", cw, ch, self.new_sprite_stack_height)
+                            } else {
+                                format!("Total: {} × {} px", cw, ch)
+                            };
+                            ui.colored_label(theme.accent, total_str);
                         });
 
                         // ── Buttons ──
