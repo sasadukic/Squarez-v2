@@ -10755,24 +10755,29 @@ print("FAIL")
                                                  .selected_text(self.new_project_mode.label())
                                                  .width(select_w)
                                                  .show_ui(ui, |ui| {
-                                                     ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::Normal, "Normal");
-                                                     ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::SpriteStack, "Sprite Stack");
-                                                     ui.add_enabled_ui(false, |ui| {
-                                                         ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::ThreeD, "3D");
-                                                         ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::Blob, "Blob");
-                                                         ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::Wang, "Wang");
-                                                     });
+                                                      ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::Normal, "Normal");
+                                                      ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::SpriteStack, "Sprite Stack");
+                                                      ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::ThreeD, "3D");
+                                                      ui.add_enabled_ui(false, |ui| {
+                                                          ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::Blob, "Blob");
+                                                          ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::Wang, "Wang");
+                                                      });
                                                  }).response;
-                                             if self.new_project_mode != prev_mode {
-                                                 if self.new_project_mode == crate::project::ProjectMode::SpriteStack {
-                                                     self.new_width = 8;
-                                                     self.new_width_str = "8".to_string();
-                                                     self.new_height = 8;
-                                                     self.new_height_str = "8".to_string();
-                                                     self.new_sprite_stack_height = 8;
-                                                     self.new_sprite_stack_height_str = "8".to_string();
-                                                 }
-                                             }
+                                              if self.new_project_mode != prev_mode {
+                                                  if self.new_project_mode == crate::project::ProjectMode::SpriteStack {
+                                                      self.new_width = 8;
+                                                      self.new_width_str = "8".to_string();
+                                                      self.new_height = 8;
+                                                      self.new_height_str = "8".to_string();
+                                                      self.new_sprite_stack_height = 8;
+                                                      self.new_sprite_stack_height_str = "8".to_string();
+                                                  } else if self.new_project_mode == crate::project::ProjectMode::ThreeD {
+                                                      self.new_width = 16;
+                                                      self.new_width_str = "16".to_string();
+                                                      self.new_height = 16;
+                                                      self.new_height_str = "16".to_string();
+                                                  }
+                                              }
                                              resp
                                          });
                                     }
@@ -11226,15 +11231,15 @@ print("FAIL")
                                  if create_resp.clicked() {
                                      let tile_w = self.new_width;
                                      let tile_h = self.new_height;
-                                     let (tiles_w, tiles_h) = if self.new_project_mode == crate::project::ProjectMode::SpriteStack {
-                                         (1, 1)
-                                     } else {
-                                         (self.new_tiles_w, self.new_tiles_h)
-                                     };
-                                     let cw = tile_w * tiles_w;
-                                     let ch = tile_h * tiles_h;
-                                     let mut new_proj = Project::new_tiled_with_mode(cw, ch, self.new_name.clone(), tiles_w, tiles_h, tile_w, tile_h, self.new_project_mode);
-                                     if self.new_project_mode == crate::project::ProjectMode::SpriteStack {
+                                      let (tiles_w, tiles_h) = if self.new_project_mode == crate::project::ProjectMode::SpriteStack || self.new_project_mode == crate::project::ProjectMode::ThreeD {
+                                          (1, 1)
+                                      } else {
+                                          (self.new_tiles_w, self.new_tiles_h)
+                                      };
+                                      let cw = tile_w * tiles_w;
+                                      let ch = tile_h * tiles_h;
+                                      let mut new_proj = Project::new_tiled_with_mode(cw, ch, self.new_name.clone(), tiles_w, tiles_h, tile_w, tile_h, self.new_project_mode);
+                                      if self.new_project_mode == crate::project::ProjectMode::SpriteStack {
                                          let stack_h = self.new_sprite_stack_height.max(1);
                                          new_proj.sprite_stack_max_layers = Some(stack_h);
                                          for anim in &mut new_proj.animations {
