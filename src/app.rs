@@ -7640,6 +7640,13 @@ print("FAIL")
 
             let painter = ui.painter();
 
+            // Draw white background for the drawing area only
+            let bg_rect = egui::Rect::from_center_size(
+                center_pos,
+                egui::Vec2::new(bounding_w * zoom, bounding_h * zoom),
+            );
+            painter.rect_filled(bg_rect, 0.0, Color32::WHITE);
+
             // Depth sorting for rendering the flat pixels
             let x_range: Vec<u32> = if self.sprite_stack_preview_fixed_cam {
                 (0..w).collect()
@@ -7838,7 +7845,7 @@ print("FAIL")
         if collapsed { return; }
 
         let theme = self.theme.clone();
-        Frame::new().fill(Color32::WHITE).inner_margin(Margin::symmetric(10, 8)).show(ui, |ui| {
+        Frame::new().fill(theme.panel).inner_margin(Margin::symmetric(10, 8)).show(ui, |ui| {
             self.draw_preview_content(ui);
         });
     }
@@ -7983,7 +7990,7 @@ print("FAIL")
 
                 // 2. Content
                 Frame::new()
-                    .fill(Color32::WHITE)
+                    .fill(theme.panel)
                     .inner_margin(Margin { left: 10, right: 10, top: 0, bottom: 8 })
                     .show(ui, |ui| {
                         self.draw_preview_content(ui);
