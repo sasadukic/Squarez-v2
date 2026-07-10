@@ -10239,21 +10239,32 @@ print("FAIL")
                                     |ui| {
                                         ui.spacing_mut().item_spacing = Vec2::ZERO;
                                         let (r, _) = ui.allocate_exact_size(Vec2::new(select_w, row_h), egui::Sense::hover());
-                                        ui.put(r, |ui: &mut egui::Ui| {
-                                            let prev_mode = self.new_project_mode.clone();
-                                            let resp = egui::ComboBox::from_id_salt("new_project_mode")
-                                                .selected_text(self.new_project_mode.label())
-                                                .width(select_w)
-                                                .show_ui(ui, |ui| {
-                                                    ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::Normal, "Normal");
-                                                    ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::SpriteStack, "Sprite Stack");
-                                                    ui.add_enabled_ui(false, |ui| {
-                                                        ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::ThreeD, "3D");
-                                                        ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::Blob, "Blob");
-                                                        ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::Wang, "Wang");
-                                                    });
-                                                }).response
-                                        });
+                                         ui.put(r, |ui: &mut egui::Ui| {
+                                             let prev_mode = self.new_project_mode.clone();
+                                             let resp = egui::ComboBox::from_id_salt("new_project_mode")
+                                                 .selected_text(self.new_project_mode.label())
+                                                 .width(select_w)
+                                                 .show_ui(ui, |ui| {
+                                                     ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::Normal, "Normal");
+                                                     ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::SpriteStack, "Sprite Stack");
+                                                     ui.add_enabled_ui(false, |ui| {
+                                                         ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::ThreeD, "3D");
+                                                         ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::Blob, "Blob");
+                                                         ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::Wang, "Wang");
+                                                     });
+                                                 }).response;
+                                             if self.new_project_mode != prev_mode {
+                                                 if self.new_project_mode == crate::project::ProjectMode::SpriteStack {
+                                                     self.new_width = 8;
+                                                     self.new_width_str = "8".to_string();
+                                                     self.new_height = 8;
+                                                     self.new_height_str = "8".to_string();
+                                                     self.new_sprite_stack_height = 8;
+                                                     self.new_sprite_stack_height_str = "8".to_string();
+                                                 }
+                                             }
+                                             resp
+                                         });
                                     }
                                 );
                             }
