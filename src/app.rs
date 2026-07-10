@@ -8228,7 +8228,12 @@ print("FAIL")
     fn get_canvas_coords_i32(&self, pos: egui::Pos2, canvas_rect: egui::Rect) -> (i32, i32) {
         if self.project.mode == crate::project::ProjectMode::SpriteStack || self.project.mode == crate::project::ProjectMode::ThreeD {
             let (xf, yf) = self.screen_to_voxel_coord_unconstrained(pos, canvas_rect);
-            (xf.floor() as i32, yf.floor() as i32)
+            // In 3D mode, snap to grid corners (round to nearest integer)
+            if self.project.mode == crate::project::ProjectMode::ThreeD {
+                (xf.round() as i32, yf.round() as i32)
+            } else {
+                (xf.floor() as i32, yf.floor() as i32)
+            }
         } else {
             let w = self.project.canvas_width;
             let h = self.project.canvas_height;
@@ -8239,7 +8244,12 @@ print("FAIL")
     fn get_canvas_coords_f32(&self, pos: egui::Pos2, canvas_rect: egui::Rect) -> (f32, f32) {
         if self.project.mode == crate::project::ProjectMode::SpriteStack || self.project.mode == crate::project::ProjectMode::ThreeD {
             let (xf, yf) = self.screen_to_voxel_coord_unconstrained(pos, canvas_rect);
-            (xf, yf)
+            // In 3D mode, snap to grid corners (round to nearest integer)
+            if self.project.mode == crate::project::ProjectMode::ThreeD {
+                (xf.round(), yf.round())
+            } else {
+                (xf, yf)
+            }
         } else {
             let w = self.project.canvas_width;
             let h = self.project.canvas_height;
@@ -8464,108 +8474,118 @@ print("FAIL")
 
         // Draw hover preview of tool drawing as 3D voxels with proper face culling
         // Only draw side faces for boundary pixels (no neighbor in that direction)
-        let no_stroke = egui::Stroke::new(0.0, egui::Color32::TRANSPARENT);
-        let preview_set: std::collections::HashSet<(i32, i32)> = self.shape_preview.iter()
-            .map(|&(px, py, _)| (px as i32, py as i32))
-            .collect();
-
-        for &(px, py, color) in &self.shape_preview {
-            let col32 = egui::Color32::from_rgba_unmultiplied(color[0], color[1], color[2], 160);
-            let p00_1 = project_3d(px as f32, py as f32, (li + 1) as f32);
-            let p10_1 = project_3d((px + 1) as f32, py as f32, (li + 1) as f32);
-            let p11_1 = project_3d((px + 1) as f32, (py + 1) as f32, (li + 1) as f32);
-            let p01_1 = project_3d(px as f32, (py + 1) as f32, (li + 1) as f32);
-
-            let p00_0 = project_3d(px as f32, py as f32, li as f32);
-            let p10_0 = project_3d((px + 1) as f32, py as f32, li as f32);
-            let p11_0 = project_3d((px + 1) as f32, (py + 1) as f32, li as f32);
-            let p01_0 = project_3d(px as f32, (py + 1) as f32, li as f32);
-
-            let mut max_y = p00_0.y;
-            let mut front_idx = 0;
-            if p10_0.y > max_y { max_y = p10_0.y; front_idx = 1; }
-            if p11_0.y > max_y { max_y = p11_0.y; front_idx = 2; }
-            if p01_0.y > max_y { front_idx = 3; }
-
-            // Check neighbors for face culling
-            let has_north = preview_set.contains(&(px as i32, py as i32 - 1));
-            let has_south = preview_set.contains(&(px as i32, py as i32 + 1));
-            let has_east = preview_set.contains(&(px as i32 + 1, py as i32));
-            let has_west = preview_set.contains(&(px as i32 - 1, py as i32));
-
-            // Draw visible side faces only if exposed (no neighbor)
-            match front_idx {
-                0 => {
-                    // South face (at py) - exposed if no neighbor at (px, py-1)
-                    if !has_north {
-                        painter.add(egui::Shape::convex_polygon(
-                            vec![p00_0, p10_0, p10_1, p00_1],
-                            col32, no_stroke,
-                        ));
-                    }
-                    // West face (at px) - exposed if no neighbor at (px-1, py)
-                    if !has_west {
-                        painter.add(egui::Shape::convex_polygon(
-                            vec![p00_0, p01_0, p01_1, p00_1],
-                            col32, no_stroke,
-                        ));
-                    }
-                }
-                1 => {
-                    // East face (at px+1) - exposed if no neighbor at (px+1, py)
-                    if !has_east {
-                        painter.add(egui::Shape::convex_polygon(
-                            vec![p10_0, p11_0, p11_1, p10_1],
-                            col32, no_stroke,
-                        ));
-                    }
-                    // South face (at py) - exposed if no neighbor at (px, py-1)
-                    if !has_north {
-                        painter.add(egui::Shape::convex_polygon(
-                            vec![p00_0, p10_0, p10_1, p00_1],
-                            col32, no_stroke,
-                        ));
-                    }
-                }
-                2 => {
-                    // North face (at py+1) - exposed if no neighbor at (px, py+1)
-                    if !has_south {
-                        painter.add(egui::Shape::convex_polygon(
-                            vec![p01_0, p11_0, p11_1, p01_1],
-                            col32, no_stroke,
-                        ));
-                    }
-                    // East face (at px+1) - exposed if no neighbor at (px+1, py)
-                    if !has_east {
-                        painter.add(egui::Shape::convex_polygon(
-                            vec![p10_0, p11_0, p11_1, p10_1],
-                            col32, no_stroke,
-                        ));
-                    }
-                }
-                _ => {
-                    // West face (at px) - exposed if no neighbor at (px-1, py)
-                    if !has_west {
-                        painter.add(egui::Shape::convex_polygon(
-                            vec![p00_0, p01_0, p01_1, p00_1],
-                            col32, no_stroke,
-                        ));
-                    }
-                    // North face (at py+1) - exposed if no neighbor at (px, py+1)
-                    if !has_south {
-                        painter.add(egui::Shape::convex_polygon(
-                            vec![p01_0, p11_0, p11_1, p01_1],
-                            col32, no_stroke,
-                        ));
-                    }
-                }
+        // In 3D mode, render as vertex dots instead of voxel cubes
+        if self.project.mode == crate::project::ProjectMode::ThreeD {
+            let vertex_color = self.theme.accent;
+            let vertex_size = 0.5 * self.canvas.zoom;
+            for &(px, py, _color) in &self.shape_preview {
+                let pos = project_3d(px as f32 + 0.5, py as f32 + 0.5, li as f32);
+                painter.circle_filled(pos, vertex_size / 2.0, vertex_color);
             }
+        } else {
+            let no_stroke = egui::Stroke::new(0.0, egui::Color32::TRANSPARENT);
+            let preview_set: std::collections::HashSet<(i32, i32)> = self.shape_preview.iter()
+                .map(|&(px, py, _)| (px as i32, py as i32))
+                .collect();
 
-            // Always draw top face
-            painter.add(egui::Shape::convex_polygon(
-                vec![p00_1, p10_1, p11_1, p01_1],
-                col32, no_stroke,
-            ));
+            for &(px, py, color) in &self.shape_preview {
+                let col32 = egui::Color32::from_rgba_unmultiplied(color[0], color[1], color[2], 160);
+                let p00_1 = project_3d(px as f32, py as f32, (li + 1) as f32);
+                let p10_1 = project_3d((px + 1) as f32, py as f32, (li + 1) as f32);
+                let p11_1 = project_3d((px + 1) as f32, (py + 1) as f32, (li + 1) as f32);
+                let p01_1 = project_3d(px as f32, (py + 1) as f32, (li + 1) as f32);
+
+                let p00_0 = project_3d(px as f32, py as f32, li as f32);
+                let p10_0 = project_3d((px + 1) as f32, py as f32, li as f32);
+                let p11_0 = project_3d((px + 1) as f32, (py + 1) as f32, li as f32);
+                let p01_0 = project_3d(px as f32, (py + 1) as f32, li as f32);
+
+                let mut max_y = p00_0.y;
+                let mut front_idx = 0;
+                if p10_0.y > max_y { max_y = p10_0.y; front_idx = 1; }
+                if p11_0.y > max_y { max_y = p11_0.y; front_idx = 2; }
+                if p01_0.y > max_y { front_idx = 3; }
+
+                // Check neighbors for face culling
+                let has_north = preview_set.contains(&(px as i32, py as i32 - 1));
+                let has_south = preview_set.contains(&(px as i32, py as i32 + 1));
+                let has_east = preview_set.contains(&(px as i32 + 1, py as i32));
+                let has_west = preview_set.contains(&(px as i32 - 1, py as i32));
+
+                // Draw visible side faces only if exposed (no neighbor)
+                match front_idx {
+                    0 => {
+                        // South face (at py) - exposed if no neighbor at (px, py-1)
+                        if !has_north {
+                            painter.add(egui::Shape::convex_polygon(
+                                vec![p00_0, p10_0, p10_1, p00_1],
+                                col32, no_stroke,
+                            ));
+                        }
+                        // West face (at px) - exposed if no neighbor at (px-1, py)
+                        if !has_west {
+                            painter.add(egui::Shape::convex_polygon(
+                                vec![p00_0, p01_0, p01_1, p00_1],
+                                col32, no_stroke,
+                            ));
+                        }
+                    }
+                    1 => {
+                        // East face (at px+1) - exposed if no neighbor at (px+1, py)
+                        if !has_east {
+                            painter.add(egui::Shape::convex_polygon(
+                                vec![p10_0, p11_0, p11_1, p10_1],
+                                col32, no_stroke,
+                            ));
+                        }
+                        // South face (at py) - exposed if no neighbor at (px, py-1)
+                        if !has_north {
+                            painter.add(egui::Shape::convex_polygon(
+                                vec![p00_0, p10_0, p10_1, p00_1],
+                                col32, no_stroke,
+                            ));
+                        }
+                    }
+                    2 => {
+                        // North face (at py+1) - exposed if no neighbor at (px, py+1)
+                        if !has_south {
+                            painter.add(egui::Shape::convex_polygon(
+                                vec![p01_0, p11_0, p11_1, p01_1],
+                                col32, no_stroke,
+                            ));
+                        }
+                        // East face (at px+1) - exposed if no neighbor at (px+1, py)
+                        if !has_east {
+                            painter.add(egui::Shape::convex_polygon(
+                                vec![p10_0, p11_0, p11_1, p10_1],
+                                col32, no_stroke,
+                            ));
+                        }
+                    }
+                    _ => {
+                        // West face (at px) - exposed if no neighbor at (px-1, py)
+                        if !has_west {
+                            painter.add(egui::Shape::convex_polygon(
+                                vec![p00_0, p01_0, p01_1, p00_1],
+                                col32, no_stroke,
+                            ));
+                        }
+                        // North face (at py+1) - exposed if no neighbor at (px, py+1)
+                        if !has_south {
+                            painter.add(egui::Shape::convex_polygon(
+                                vec![p01_0, p11_0, p11_1, p01_1],
+                                col32, no_stroke,
+                            ));
+                        }
+                    }
+                }
+
+                // Always draw top face
+                painter.add(egui::Shape::convex_polygon(
+                    vec![p00_1, p10_1, p11_1, p01_1],
+                    col32, no_stroke,
+                ));
+            }
         }
 
         // Draw front/boundary wireframe edges on top of the voxels so they are always visible
@@ -8733,7 +8753,7 @@ print("FAIL")
 
         // Draw vertices (small)
         let vertex_color = self.theme.accent;
-        let vertex_size = 2.0 * self.canvas.zoom;
+        let vertex_size = 0.5 * self.canvas.zoom;
 
         for vertex in &mesh.vertices {
             let pos = project_3d(vertex.x, vertex.y, vertex.z);
@@ -9639,7 +9659,7 @@ print("FAIL")
             ActiveTool::Pencil => {
                 // In 3D mode, pencil places vertices and creates edges
                 if self.project.mode == crate::project::ProjectMode::ThreeD {
-                    // Get 3D coordinates from screen position
+                    // Get 3D coordinates from screen position (already snapped to grid corners)
                     let (x3d, y3d) = self.get_canvas_coords_f32(pos, canvas_rect);
                     let z3d = self.project.active_layer as f32;
 
@@ -9659,7 +9679,12 @@ print("FAIL")
                                 vertex_indices: self.drawing_chain.clone(),
                                 color,
                             };
-                            self.project.active_mesh_mut().faces.push(face);
+                            self.project.active_mesh_mut().faces.push(face.clone());
+                            self.undo_stack.push(crate::history::Command::AddFace3D {
+                                animation_id: ai,
+                                frame_id: fi,
+                                face,
+                            });
                             self.drawing_chain.clear();
                         } else if !self.drawing_chain.is_empty() {
                             // Add edge from last vertex to this one
@@ -9672,6 +9697,11 @@ print("FAIL")
                                 });
                                 if !edge_exists {
                                     self.project.active_mesh_mut().edges.push(edge);
+                                    self.undo_stack.push(crate::history::Command::AddEdge3D {
+                                        animation_id: ai,
+                                        frame_id: fi,
+                                        edge,
+                                    });
                                 }
                                 self.drawing_chain.push(idx);
                             }
@@ -9679,10 +9709,16 @@ print("FAIL")
                     } else {
                         // Clicking on empty space - create new vertex
                         let new_idx = self.project.active_mesh().vertices.len();
-                        self.project.active_mesh_mut().vertices.push(crate::project::Vertex3D {
+                        let vertex = crate::project::Vertex3D {
                             x: x3d,
                             y: y3d,
                             z: z3d,
+                        };
+                        self.project.active_mesh_mut().vertices.push(vertex);
+                        self.undo_stack.push(crate::history::Command::AddVertex3D {
+                            animation_id: ai,
+                            frame_id: fi,
+                            vertex,
                         });
 
                         // Add edge from last vertex in chain to new vertex
@@ -9690,6 +9726,11 @@ print("FAIL")
                             let last_idx = *self.drawing_chain.last().unwrap();
                             let edge = crate::project::Edge3D { v1: last_idx, v2: new_idx };
                             self.project.active_mesh_mut().edges.push(edge);
+                            self.undo_stack.push(crate::history::Command::AddEdge3D {
+                                animation_id: ai,
+                                frame_id: fi,
+                                edge,
+                            });
                         }
 
                         self.drawing_chain.push(new_idx);

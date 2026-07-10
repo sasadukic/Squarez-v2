@@ -48,6 +48,22 @@ pub enum Command {
         color_a: Rgba,
         color_b: Rgba,
     },
+    /// 3D mesh operations for ThreeD mode
+    AddVertex3D {
+        animation_id: usize,
+        frame_id: usize,
+        vertex: crate::project::Vertex3D,
+    },
+    AddEdge3D {
+        animation_id: usize,
+        frame_id: usize,
+        edge: crate::project::Edge3D,
+    },
+    AddFace3D {
+        animation_id: usize,
+        frame_id: usize,
+        face: crate::project::Face3D,
+    },
 }
 
 pub struct UndoStack {
@@ -215,6 +231,27 @@ fn apply_command(project: &mut Project, color_state: Option<&mut ColorState>, cm
                     }
                     frame.dirty = true;
                 }
+            }
+        }
+        Command::AddVertex3D { animation_id, frame_id, vertex } => {
+            let frame = &mut project.animations[*animation_id].frames[*frame_id];
+            match dir {
+                Direction::Forward => frame.mesh.vertices.push(*vertex),
+                Direction::Backward => { if !frame.mesh.vertices.is_empty() { frame.mesh.vertices.pop(); } }
+            }
+        }
+        Command::AddEdge3D { animation_id, frame_id, edge } => {
+            let frame = &mut project.animations[*animation_id].frames[*frame_id];
+            match dir {
+                Direction::Forward => frame.mesh.edges.push(*edge),
+                Direction::Backward => { if !frame.mesh.edges.is_empty() { frame.mesh.edges.pop(); } }
+            }
+        }
+        Command::AddFace3D { animation_id, frame_id, face } => {
+            let frame = &mut project.animations[*animation_id].frames[*frame_id];
+            match dir {
+                Direction::Forward => frame.mesh.faces.push(face.clone()),
+                Direction::Backward => { if !frame.mesh.faces.is_empty() { frame.mesh.faces.pop(); } }
             }
         }
 
