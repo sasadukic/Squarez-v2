@@ -5905,23 +5905,21 @@ impl App {
                 if self.project.mode == crate::project::ProjectMode::SpriteStack {
                     self.draw_3d_voxel_workspace(ctx, &painter, canvas_rect);
 
-                    // Floating CCW/CW rotate buttons in the top-right corner of workspace panel
-                    let btn_rect = egui::Rect::from_min_size(
-                        egui::Pos2::new(canvas_rect.max.x - 90.0, canvas_rect.min.y + TOP_BAR_HEIGHT + 10.0),
-                        egui::Vec2::new(80.0, 32.0),
-                    );
-                    ui.put(btn_rect, |ui: &mut egui::Ui| {
-                        ui.horizontal(|ui| {
-                            if ui.button("⟲").on_hover_text("Rotate 90° CCW (Q)").clicked() {
-                                self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 3) % 4;
-                                self.canvas_dirty = true;
-                            }
-                            if ui.button("⟳").on_hover_text("Rotate 90° CW (E)").clicked() {
-                                self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 1) % 4;
-                                self.canvas_dirty = true;
-                            }
-                        }).response
-                    });
+                    // Floating CCW/CW rotate buttons in the top-right corner of workspace panel using Area to overlay correctly
+                    egui::Area::new(egui::Id::new("sprite_stack_rotate_buttons"))
+                        .fixed_pos(canvas_rect.right_top() + egui::Vec2::new(-95.0, TOP_BAR_HEIGHT + 10.0))
+                        .show(ctx, |ui| {
+                            ui.horizontal(|ui| {
+                                if ui.button("⟲").on_hover_text("Rotate 90° CCW (Q)").clicked() {
+                                    self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 3) % 4;
+                                    self.canvas_dirty = true;
+                                }
+                                if ui.button("⟳").on_hover_text("Rotate 90° CW (E)").clicked() {
+                                    self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 1) % 4;
+                                    self.canvas_dirty = true;
+                                }
+                            });
+                        });
                 } else {
                     self.canvas.draw(
                         ctx,
@@ -7506,7 +7504,7 @@ print("FAIL")
             let ch = self.project.canvas_height as f32;
             let num_layers = frame.layers.len();
 
-            let angle_rad = self.sprite_stack_angle;
+            let angle_rad = self.sprite_stack_angle - (self.sprite_stack_rotation_90 as f32) * std::f32::consts::FRAC_PI_2;
             let tilt_rad = self.sprite_stack_tilt.to_radians();
 
             let sin_t = tilt_rad.sin();
@@ -8358,12 +8356,12 @@ print("FAIL")
         // Draw hover preview outlines of tool drawing
         for &(px, py, color) in &self.shape_preview {
             let col32 = egui::Color32::from_rgba_unmultiplied(color[0], color[1], color[2], 128);
-            let p00_1 = project_3d(px as f32, py as f32, (li + 1) as f32);
-            let p10_1 = project_3d((px + 1) as f32, py as f32, (li + 1) as f32);
-            let p11_1 = project_3d((px + 1) as f32, (py + 1) as f32, (li + 1) as f32);
-            let p01_1 = project_3d(px as f32, (py + 1) as f32, (li + 1) as f32);
+            let p00_0 = project_3d(px as f32, py as f32, li as f32);
+            let p10_0 = project_3d((px + 1) as f32, py as f32, li as f32);
+            let p11_0 = project_3d((px + 1) as f32, (py + 1) as f32, li as f32);
+            let p01_0 = project_3d(px as f32, (py + 1) as f32, li as f32);
             painter.add(egui::Shape::convex_polygon(
-                vec![p00_1, p10_1, p11_1, p01_1],
+                vec![p00_0, p10_0, p11_0, p01_0],
                 col32,
                 egui::Stroke::new(1.0, egui::Color32::WHITE),
             ));
