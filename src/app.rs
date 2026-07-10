@@ -275,6 +275,7 @@ pub struct App {
     pub sprite_stack_spacing: f32,
     pub sprite_stack_drag_mode: SpriteStackDragMode,
     pub sprite_stack_rotation_90: i32,
+    pub sprite_stack_show_grid: bool,
     /// Track if any menu was open at the start of the current frame
     menu_was_open_at_frame_start: bool,
     brushes: Vec<CustomBrush>,
@@ -972,6 +973,7 @@ impl App {
             sprite_stack_spacing: 1.0,
             sprite_stack_drag_mode: SpriteStackDragMode::None,
             sprite_stack_rotation_90: 0,
+            sprite_stack_show_grid: true,
             menu_was_open_at_frame_start: false,
             brushes: {
                 let mut b = layout.as_ref().map(|l| l.brushes.clone()).unwrap_or_default();
@@ -1225,6 +1227,7 @@ impl App {
         self.new_sprite_stack_height_str = "8".to_string();
         self.new_sprite_stack_height_focused = false;
         self.sprite_stack_rotation_90 = 0;
+        self.sprite_stack_show_grid = true;
     }
 
     /// Open `project` / `path` in a new tab to the right of the current active tab.
@@ -5920,7 +5923,7 @@ impl App {
 
                     // Floating controls in the bottom-right corner of workspace panel
                     egui::Area::new(egui::Id::new("sprite_stack_workspace_controls"))
-                        .fixed_pos(canvas_rect.right_bottom() + egui::Vec2::new(-165.0, -45.0))
+                        .fixed_pos(canvas_rect.right_bottom() + egui::Vec2::new(-170.0, -45.0))
                         .show(ctx, |ui| {
                             let ai = self.project.active_animation;
                             let fi = self.project.active_frame;
@@ -5930,12 +5933,6 @@ impl App {
                             egui::Frame::none()
                                 .fill(self.theme.surface)
                                 .corner_radius(6.0)
-                                .shadow(egui::Shadow {
-                                    offset: [0, 14],
-                                    blur: 36,
-                                    spread: 0,
-                                    color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
-                                })
                                 .inner_margin(egui::Margin::symmetric(10, 6))
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
@@ -5962,6 +5959,13 @@ impl App {
                                             [rect.left_top(), rect.left_bottom()],
                                             egui::Stroke::new(1.0, self.theme.border),
                                         );
+
+                                        // Visibility toggle
+                                        let vis_text = if self.sprite_stack_show_grid { "👁" } else { "👁⃠" };
+                                        if ui.button(vis_text).on_hover_text("Toggle Grid Plane Visibility").clicked() {
+                                            self.sprite_stack_show_grid = !self.sprite_stack_show_grid;
+                                            self.canvas_dirty = true;
+                                        }
 
                                         // Rotation controls
                                         if ui.button("⟲").on_hover_text("Rotate 90° CCW (Q)").clicked() {
@@ -8315,18 +8319,7 @@ print("FAIL")
         painter.line_segment([ct[back_idx], ct[b3]], back_stroke);
         painter.line_segment([cb[back_idx], ct[back_idx]], back_stroke);
 
-        // Draw active layer grid plane
-        let grid_stroke = egui::Stroke::new(0.5, self.theme.accent.gamma_multiply(0.4));
-        for y_val in 0..=h {
-            let p1 = project_3d(0.0, y_val as f32, li as f32);
-            let p2 = project_3d(w as f32, y_val as f32, li as f32);
-            painter.line_segment([p1, p2], grid_stroke);
-        }
-        for x_val in 0..=w {
-            let p1 = project_3d(x_val as f32, 0.0, li as f32);
-            let p2 = project_3d(x_val as f32, h as f32, li as f32);
-            painter.line_segment([p1, p2], grid_stroke);
-        }
+
 
         // Draw voxels in back-to-front order (depth sorting)
         let x_range: Vec<u32> = match self.sprite_stack_rotation_90 % 4 {
@@ -8439,17 +8432,84 @@ print("FAIL")
             }
         }
 
-        // Draw hover preview outlines of tool drawing
+        // Draw hover preview outlines of tool drawing (as 3D cubes)
         for &(px, py, color) in &self.shape_preview {
             let col32 = egui::Color32::from_rgba_unmultiplied(color[0], color[1], color[2], 128);
+            let p00_1 = project_3d(px as f32, py as f32, (li + 1) as f32);
+            let p10_1 = project_3d((px + 1) as f32, py as f32, (li + 1) as f32);
+            let p11_1 = project_3d((px + 1) as f32, (py + 1) as f32, (li + 1) as f32);
+            let p01_1 = project_3d(px as f32, (py + 1) as f32, (li + 1) as f32);
+
             let p00_0 = project_3d(px as f32, py as f32, li as f32);
             let p10_0 = project_3d((px + 1) as f32, py as f32, li as f32);
             let p11_0 = project_3d((px + 1) as f32, (py + 1) as f32, li as f32);
             let p01_0 = project_3d(px as f32, (py + 1) as f32, li as f32);
+
+            let mut max_y = p00_0.y;
+            let mut front_idx = 0;
+            if p10_0.y > max_y { max_y = p10_0.y; front_idx = 1; }
+            if p11_0.y > max_y { max_y = p11_0.y; front_idx = 2; }
+            if p01_0.y > max_y { front_idx = 3; }
+
+            let col_side1 = shade_color(col32, 0.85);
+            let col_side2 = shade_color(col32, 0.7);
+
+            match front_idx {
+                0 => {
+                    painter.add(egui::Shape::convex_polygon(
+                        vec![p00_0, p10_0, p10_1, p00_1],
+                        col_side1,
+                        egui::Stroke::new(0.5, col_side1),
+                    ));
+                    painter.add(egui::Shape::convex_polygon(
+                        vec![p00_0, p01_0, p01_1, p00_1],
+                        col_side2,
+                        egui::Stroke::new(0.5, col_side2),
+                    ));
+                }
+                1 => {
+                    painter.add(egui::Shape::convex_polygon(
+                        vec![p10_0, p11_0, p11_1, p10_1],
+                        col_side1,
+                        egui::Stroke::new(0.5, col_side1),
+                    ));
+                    painter.add(egui::Shape::convex_polygon(
+                        vec![p00_0, p10_0, p10_1, p00_1],
+                        col_side2,
+                        egui::Stroke::new(0.5, col_side2),
+                    ));
+                }
+                2 => {
+                    painter.add(egui::Shape::convex_polygon(
+                        vec![p01_0, p11_0, p11_1, p01_1],
+                        col_side1,
+                        egui::Stroke::new(0.5, col_side1),
+                    ));
+                    painter.add(egui::Shape::convex_polygon(
+                        vec![p10_0, p11_0, p11_1, p10_1],
+                        col_side2,
+                        egui::Stroke::new(0.5, col_side2),
+                    ));
+                }
+                _ => {
+                    painter.add(egui::Shape::convex_polygon(
+                        vec![p00_0, p01_0, p01_1, p00_1],
+                        col_side1,
+                        egui::Stroke::new(0.5, col_side1),
+                    ));
+                    painter.add(egui::Shape::convex_polygon(
+                        vec![p01_0, p11_0, p11_1, p01_1],
+                        col_side2,
+                        egui::Stroke::new(0.5, col_side2),
+                    ));
+                }
+            }
+
+            // Top face
             painter.add(egui::Shape::convex_polygon(
-                vec![p00_0, p10_0, p11_0, p01_0],
+                vec![p00_1, p10_1, p11_1, p01_1],
                 col32,
-                egui::Stroke::new(1.0, egui::Color32::WHITE),
+                egui::Stroke::new(0.5, col32),
             ));
         }
 
@@ -8495,6 +8555,21 @@ print("FAIL")
             egui::FontId::new(10.0, egui::FontFamily::Proportional),
             indicator_color,
         );
+
+        // Draw active layer grid plane on top of voxels so it remains visible
+        if self.sprite_stack_show_grid {
+            let grid_stroke = egui::Stroke::new(0.5, self.theme.accent.gamma_multiply(0.4));
+            for y_val in 0..=h {
+                let p1 = project_3d(0.0, y_val as f32, li as f32);
+                let p2 = project_3d(w as f32, y_val as f32, li as f32);
+                painter.line_segment([p1, p2], grid_stroke);
+            }
+            for x_val in 0..=w {
+                let p1 = project_3d(x_val as f32, 0.0, li as f32);
+                let p2 = project_3d(x_val as f32, h as f32, li as f32);
+                painter.line_segment([p1, p2], grid_stroke);
+            }
+        }
 
         // Orbit rotation keyboard handlers
         if ctx.input(|i| i.key_pressed(egui::Key::Q)) {
