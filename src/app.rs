@@ -8439,7 +8439,7 @@ print("FAIL")
             painter.add(egui::Shape::convex_polygon(
                 vec![p00_1, p10_1, p11_1, p01_1],
                 col32,
-                egui::Stroke::none(),
+                egui::Stroke::new(0.0, egui::Color32::TRANSPARENT),
             ));
         }
 
