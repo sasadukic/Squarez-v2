@@ -1296,6 +1296,14 @@ impl App {
 
             self.pending_zoom_fit = true;
         } else {
+            self.ui_state.collapse_palette = false;
+            self.ui_state.collapse_color = false;
+            self.ui_state.collapse_preview = false;
+            self.ui_state.collapse_brushes = false;
+            self.ui_state.collapse_layers = false;
+            self.ui_state.collapse_animations = false;
+            self.ui_state.collapse_tiles = false;
+
             self.sidebar_order = vec![
                 Panel::Palette,
                 Panel::Color,
@@ -1305,6 +1313,7 @@ impl App {
                 Panel::Preview,
                 Panel::Tiles,
             ];
+            self.pending_zoom_fit = true;
         }
     }
 
@@ -12240,14 +12249,7 @@ impl eframe::App for App {
             self.was_in_startup = true;
         } else if self.was_in_startup {
             self.was_in_startup = false;
-            self.ui_state.collapse_color = false;
-            self.ui_state.collapse_palette = false;
-            self.ui_state.collapse_preview = false;
-            self.ui_state.collapse_layers = false;
-            self.ui_state.collapse_animations = false;
-            self.ui_state.collapse_tiles = false;
-            self.ui_state.collapse_brushes = false;
-            self.pending_zoom_fit = true;
+            self.on_project_changed();
         }
 
         // Autosave check (every 5 minutes = 300 seconds)
