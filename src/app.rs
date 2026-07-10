@@ -8485,17 +8485,46 @@ print("FAIL")
             let cy = y_val - h as f32 / 2.0;
             let cz = z_val - num_layers as f32 / 2.0;
 
-            if self.project.mode == crate::project::ProjectMode::ThreeD && self.three_d_view_mode > 0 {
-                // Side view projection
-                let (sx, sy, _sz) = match self.three_d_view_mode {
-                    1 => (cx, cz, cy),         // Front view: look along Y
-                    2 => (cy, cz, -cx),        // Right view: look along X
-                    3 => (-cx, cz, -cy),       // Back view: look along -Y
-                    4 => (-cy, cz, cx),        // Left view: look along -X
-                    _ => (cx, cz, cy),
-                };
-                // sx = horizontal, sy = vertical (inverted for screen coords)
-                center_pos + egui::Vec2::new(sx, -sy) * self.canvas.zoom
+            if self.project.mode == crate::project::ProjectMode::ThreeD {
+                if self.three_d_view_mode > 0 {
+                    // Side view projection
+                    let (sx, sy, sz) = match self.three_d_view_mode {
+                        1 => (cx, cz, cy),         // Front view: look along Y
+                        2 => (cy, cz, -cx),        // Right view: look along X
+                        3 => (-cx, cz, -cy),       // Back view: look along -Y
+                        4 => (-cy, cz, cx),        // Left view: look along -X
+                        _ => (cx, cz, cy),
+                    };
+                    
+                    if self.three_d_perspective {
+                        // Apply perspective rotation
+                        let cos_x = self.three_d_rotation_x.cos();
+                        let sin_x = self.three_d_rotation_x.sin();
+                        let cos_y = self.three_d_rotation_y.cos();
+                        let sin_y = self.three_d_rotation_y.sin();
+                        
+                        // Rotate around Y axis (yaw)
+                        let rx = sx * cos_y - sz * sin_y;
+                        let rz = sx * sin_y + sz * cos_y;
+                        
+                        // Rotate around X axis (pitch)
+                        let ry = sy * cos_x - rz * sin_x;
+                        let rz2 = sy * sin_x + rz * cos_x;
+                        
+                        // Apply perspective division
+                        let perspective_distance = 1000.0;
+                        let scale = perspective_distance / (perspective_distance + rz2);
+                        
+                        center_pos + egui::Vec2::new(rx * scale, -ry * scale) * self.canvas.zoom
+                    } else {
+                        // sx = horizontal, sy = vertical (inverted for screen coords)
+                        center_pos + egui::Vec2::new(sx, -sy) * self.canvas.zoom
+                    }
+                } else {
+                    // Orthographic view (mode 0): simple 2D projection
+                    // x maps to screen x, y maps to screen y (inverted)
+                    center_pos + egui::Vec2::new(cx, -cy) * self.canvas.zoom
+                }
             } else {
                 let (rx, ry) = match self.sprite_stack_rotation_90 % 4 {
                     0 => (cx, cy),
