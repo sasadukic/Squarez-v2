@@ -5902,7 +5902,16 @@ impl App {
                         Pos2::new(canvas_rect.min.x + 38.0, canvas_rect.min.y + TOP_BAR_HEIGHT),
                         Pos2::new(canvas_rect.max.x, canvas_rect.max.y),
                     );
-                    self.canvas.zoom_to_fit(fit_rect, disp_w, disp_h);
+                    if self.project.mode == crate::project::ProjectMode::SpriteStack {
+                        let w = self.project.canvas_width as f32;
+                        let h = self.project.canvas_height as f32;
+                        let num_layers = self.project.active_frame_ref().layers.len() as f32;
+                        let projected_w = w + h;
+                        let projected_h = (w + h) * 0.5 + num_layers;
+                        self.canvas.zoom_to_fit(fit_rect, projected_w.ceil() as u32, projected_h.ceil() as u32);
+                    } else {
+                        self.canvas.zoom_to_fit(fit_rect, disp_w, disp_h);
+                    }
                     self.pending_zoom_fit = false;
                 }
                 let painter = ui.painter_at(canvas_rect);
