@@ -1247,6 +1247,7 @@ impl App {
             self.canvas_dirty = true;
             self.pending_zoom_fit = true;
             self.project_created = true;
+            self.on_project_changed();
             return;
         }
         // Pack the currently active tab into other_tabs at active_tab_idx.
