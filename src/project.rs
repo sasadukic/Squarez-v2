@@ -67,6 +67,8 @@ pub struct Project {
     pub tile_h: u32,
     #[serde(default)]
     pub mode: ProjectMode,
+    #[serde(default)]
+    pub sprite_stack_max_layers: Option<u32>,
 }
 
 fn default_id_counter() -> u64 { 1 }

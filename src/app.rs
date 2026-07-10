@@ -116,6 +116,9 @@ pub struct App {
     new_aspect_locked: bool,
     new_tiles_aspect_locked: bool,
     new_project_mode: crate::project::ProjectMode,
+    new_sprite_stack_height: u32,
+    new_sprite_stack_height_str: String,
+    new_sprite_stack_height_focused: bool,
     // Compact clip-only display for multi-tile (hides non-clip tiles, rearranges clip tiles)
     tile_display_active: bool,
     tile_display_cols: u32,
@@ -834,6 +837,9 @@ impl App {
             new_aspect_locked: false,
             new_tiles_aspect_locked: false,
             new_project_mode: crate::project::ProjectMode::Normal,
+            new_sprite_stack_height: 8,
+            new_sprite_stack_height_str: "8".to_string(),
+            new_sprite_stack_height_focused: false,
             tile_display_active: false,
             tile_display_cols: 0,
             tile_display_rows: 0,
@@ -1213,6 +1219,9 @@ impl App {
         self.new_height_str = self.new_height.to_string();
         self.new_tiles_w_str = self.new_tiles_w.to_string();
         self.new_tiles_h_str = self.new_tiles_h.to_string();
+        self.new_sprite_stack_height = 8;
+        self.new_sprite_stack_height_str = "8".to_string();
+        self.new_sprite_stack_height_focused = false;
     }
 
     /// Open `project` / `path` in a new tab to the right of the current active tab.
@@ -2342,8 +2351,12 @@ impl App {
                             }
                             TopMenu::Layer => {
                                 let ai = self.project.active_animation;
-        let mut fi = self.project.active_frame;
-                                if dropdown_row(ui, &theme, "Add layer", None, true).clicked() {
+                                let mut fi = self.project.active_frame;
+                                let reached_limit = self.project.mode == crate::project::ProjectMode::SpriteStack
+                                    && self.project.sprite_stack_max_layers.map_or(false, |max| {
+                                        self.project.animations[ai].frames[fi].layers.len() >= max as usize
+                                    });
+                                if dropdown_row(ui, &theme, "Add layer", None, !reached_limit).clicked() && !reached_limit {
                                     let idx = self.project.animations[ai].frames[fi].layers.len();
                                     let new_id = self.project.next_layer_id();
                                     let name = format!("Layer {}", idx + 1);
@@ -3974,7 +3987,12 @@ impl App {
         let ai = self.project.active_animation;
         let fi = self.project.active_frame;
 
-        if add_clicked {
+        let reached_limit = self.project.mode == crate::project::ProjectMode::SpriteStack
+            && self.project.sprite_stack_max_layers.map_or(false, |max| {
+                self.project.animations[ai].frames[fi].layers.len() >= max as usize
+            });
+
+        if add_clicked && !reached_limit {
             let idx = self.project.animations[ai].frames[fi].layers.len();
             let new_id = self.project.next_layer_id();
             let name = format!("Layer {}", idx + 1);
@@ -3991,7 +4009,7 @@ impl App {
             self.project.active_layer = idx;
         }
 
-        if group_clicked {
+        if group_clicked && !reached_limit {
             let idx = self.project.animations[ai].frames[fi].layers.len();
             let new_id = self.project.next_layer_id();
             let n = self.project.animations[ai].frames[fi].layers.iter().filter(|l| l.is_group).count() + 1;
@@ -5192,13 +5210,18 @@ impl App {
 
                     ui.horizontal(|ui| {
                         ui.style_mut().spacing.item_spacing = Vec2::ZERO;
+                            let reached_limit = self.project.mode == crate::project::ProjectMode::SpriteStack
+                                && self.project.sprite_stack_max_layers.map_or(false, |max| {
+                                    layer_count >= max as usize
+                                });
+
                             // Duplicate
-                            let (r, resp) = ui.allocate_exact_size(Vec2::splat(BTN), egui::Sense::click());
-                            if resp.hovered() { ui.painter().rect_filled(r, 0.0, theme.accent); }
+                            let (r, resp) = ui.allocate_exact_size(Vec2::splat(BTN), if reached_limit { egui::Sense::hover() } else { egui::Sense::click() });
+                            if !reached_limit && resp.hovered() { ui.painter().rect_filled(r, 0.0, theme.accent); }
                             let icon_rect = egui::Rect::from_center_size(r.center(), Vec2::splat(20.0));
-                            let tint = if resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                            let tint = if reached_limit { theme.fg_muted } else if resp.hovered() { Color32::WHITE } else { theme.fg_desc };
                             ui.put(icon_rect, Image::new(egui::include_image!("../assets/icons/duplicate.svg")).tint(tint).fit_to_exact_size(Vec2::splat(20.0)));
-                            if resp.clicked() { action = Some(0); }
+                            if !reached_limit && resp.clicked() { action = Some(0); }
 
                             ui.add_space(PAD);
 
@@ -10068,6 +10091,70 @@ print("FAIL")
                         ui.painter().rect_stroke(in2, 2.0, input_stroke, egui::StrokeKind::Inside);
 
                         let (cw, ch) = if self.new_project_mode == crate::project::ProjectMode::SpriteStack {
+                            ui.add_space(20.0);
+
+                            // ── Height of the Sprite Stack ──
+                            let height_outer = ui.allocate_ui_with_layout(
+                                Vec2::new(row_w, row_h),
+                                egui::Layout::left_to_right(egui::Align::TOP),
+                                |ui| {
+                                    ui.spacing_mut().item_spacing = Vec2::ZERO;
+                                    ui.add_space(col_offset);
+                                    // Column 1: Height label
+                                    ui.allocate_ui_with_layout(
+                                        Vec2::new(label_w, row_h),
+                                        egui::Layout::top_down(egui::Align::Center),
+                                        |ui| {
+                                            ui.visuals_mut().override_text_color = Some(theme.fg_desc);
+                                            let (r, _) = ui.allocate_exact_size(Vec2::new(label_w, row_h), egui::Sense::hover());
+                                            ui.put(r, egui::Label::new(self.label_desc("Height")).selectable(false));
+                                        }
+                                    );
+                                    // Column 2: Height value input
+                                    ui.allocate_ui_with_layout(
+                                        Vec2::new(input_w, row_h),
+                                        egui::Layout::top_down(egui::Align::LEFT),
+                                        |ui| {
+                                            ui.visuals_mut().override_text_color = Some(theme.fg_desc);
+                                            let (r, _) = ui.allocate_exact_size(Vec2::new(input_w, row_h), egui::Sense::hover());
+                                            let resp = ui.put(r, egui::TextEdit::singleline(&mut self.new_sprite_stack_height_str)
+                                                .frame(false)
+                                                .font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional))
+                                                .text_color(theme.fg)
+                                                .horizontal_align(egui::Align::Center)
+                                                .vertical_align(egui::Align::Center)
+                                                .id_source("new_sprite_stack_height"));
+                                            if resp.has_focus() {
+                                                if !self.new_sprite_stack_height_focused {
+                                                    self.new_sprite_stack_height_focused = true;
+                                                    let text_len = self.new_sprite_stack_height_str.len();
+                                                    if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp.id) {
+                                                        let min = egui::text::CCursor::new(0);
+                                                        let max = egui::text::CCursor::new(text_len);
+                                                        state.cursor.set_char_range(Some(egui::text::CCursorRange::two(min, max)));
+                                                        state.store(ui.ctx(), resp.id);
+                                                    }
+                                                }
+                                            } else {
+                                                self.new_sprite_stack_height_focused = false;
+                                            }
+                                            if resp.changed() {
+                                                if let Ok(val) = self.new_sprite_stack_height_str.trim().parse::<u32>() {
+                                                    self.new_sprite_stack_height = val.clamp(1, 128);
+                                                }
+                                            } else if !resp.has_focus() {
+                                                self.new_sprite_stack_height_str = self.new_sprite_stack_height.to_string();
+                                            }
+                                        }
+                                    );
+                                }
+                            );
+
+                            // Input outline (Height section)
+                            let h_input_x = height_outer.response.rect.left() + col_offset + label_w;
+                            let hin1 = egui::Rect::from_min_size(egui::Pos2::new(h_input_x, height_outer.response.rect.top()), Vec2::new(input_w, row_h));
+                            ui.painter().rect_stroke(hin1, 2.0, input_stroke, egui::StrokeKind::Inside);
+
                             (self.new_width.max(1), self.new_height.max(1))
                         } else {
                             ui.add_space(20.0);
@@ -10266,36 +10353,56 @@ print("FAIL")
                                     FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
                                     create_col,
                                 );
-                                if create_resp.clicked() {
-                                    let tile_w = self.new_width;
-                                    let tile_h = self.new_height;
-                                    let (tiles_w, tiles_h) = if self.new_project_mode == crate::project::ProjectMode::SpriteStack {
-                                        (1, 1)
-                                    } else {
-                                        (self.new_tiles_w, self.new_tiles_h)
-                                    };
-                                    let cw = tile_w * tiles_w;
-                                    let ch = tile_h * tiles_h;
-                                    let new_proj = Project::new_tiled_with_mode(cw, ch, self.new_name.clone(), tiles_w, tiles_h, tile_w, tile_h, self.new_project_mode);
-                                    self.grid_size = tile_w;
-                                    self.grid_visible = true;
-                                    if self.replace_project_pending {
-                                        self.replace_project_pending = false;
-                                        self.project = new_proj;
-                                        self.current_path = None;
-                                        self.undo_stack = UndoStack::new();
-                                        self.thumbnails = Self::thumbnails_for(&self.project);
-                                        self.active_modified = false;
-                                        self.clear_transient_state();
-                                        self.canvas_dirty = true;
-                                        self.pending_zoom_fit = true;
-                                        self.project_created = true;
-                                        self.on_project_changed();
-                                    } else {
-                                        self.open_in_new_tab(new_proj, None);
-                                    }
-                                    self.show_new_dialog = false;
-                                }
+                                 if create_resp.clicked() {
+                                     let tile_w = self.new_width;
+                                     let tile_h = self.new_height;
+                                     let (tiles_w, tiles_h) = if self.new_project_mode == crate::project::ProjectMode::SpriteStack {
+                                         (1, 1)
+                                     } else {
+                                         (self.new_tiles_w, self.new_tiles_h)
+                                     };
+                                     let cw = tile_w * tiles_w;
+                                     let ch = tile_h * tiles_h;
+                                     let mut new_proj = Project::new_tiled_with_mode(cw, ch, self.new_name.clone(), tiles_w, tiles_h, tile_w, tile_h, self.new_project_mode);
+                                     if self.new_project_mode == crate::project::ProjectMode::SpriteStack {
+                                         let stack_h = self.new_sprite_stack_height.max(1);
+                                         new_proj.sprite_stack_max_layers = Some(stack_h);
+                                         for anim in &mut new_proj.animations {
+                                             for frame in &mut anim.frames {
+                                                 frame.layers.clear();
+                                                 for layer_idx in 0..stack_h {
+                                                     let name = if layer_idx == 0 {
+                                                         "Bottom".to_string()
+                                                     } else {
+                                                         format!("Layer {}", layer_idx + 1)
+                                                     };
+                                                     let layer_id = (layer_idx + 1) as u64;
+                                                     frame.layers.push(Layer::new_with_id(name, tile_w, tile_h, layer_id));
+                                                 }
+                                             }
+                                         }
+                                         new_proj.layer_id_counter = (stack_h + 1) as u64;
+                                         new_proj.active_layer = 0; // set bottom layer active by default
+                                     }
+                                     self.grid_size = tile_w;
+                                     self.grid_visible = true;
+                                     if self.replace_project_pending {
+                                         self.replace_project_pending = false;
+                                         self.project = new_proj;
+                                         self.current_path = None;
+                                         self.undo_stack = UndoStack::new();
+                                         self.thumbnails = Self::thumbnails_for(&self.project);
+                                         self.active_modified = false;
+                                         self.clear_transient_state();
+                                         self.canvas_dirty = true;
+                                         self.pending_zoom_fit = true;
+                                         self.project_created = true;
+                                         self.on_project_changed();
+                                     } else {
+                                         self.open_in_new_tab(new_proj, None);
+                                     }
+                                     self.show_new_dialog = false;
+                                 }
 
                                 // Cancel
                                 let (cancel_rect, cancel_resp) = ui.allocate_exact_size(
