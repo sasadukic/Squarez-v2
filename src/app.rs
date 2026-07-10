@@ -10771,12 +10771,14 @@ print("FAIL")
                                                       self.new_height_str = "8".to_string();
                                                       self.new_sprite_stack_height = 8;
                                                       self.new_sprite_stack_height_str = "8".to_string();
-                                                  } else if self.new_project_mode == crate::project::ProjectMode::ThreeD {
-                                                      self.new_width = 16;
-                                                      self.new_width_str = "16".to_string();
-                                                      self.new_height = 16;
-                                                      self.new_height_str = "16".to_string();
-                                                  }
+                                                   } else if self.new_project_mode == crate::project::ProjectMode::ThreeD {
+                                                       self.new_width = 16;
+                                                       self.new_width_str = "16".to_string();
+                                                       self.new_height = 16;
+                                                       self.new_height_str = "16".to_string();
+                                                       self.new_sprite_stack_height = 16;
+                                                       self.new_sprite_stack_height_str = "16".to_string();
+                                                   }
                                               }
                                              resp
                                          });
@@ -10788,7 +10790,7 @@ print("FAIL")
                         ui.add_space(8.0);
 
                         // ── Width / Height / Stack Height with lock ──
-                        let is_sprite_stack = self.new_project_mode == crate::project::ProjectMode::SpriteStack;
+                        let is_sprite_stack = self.new_project_mode == crate::project::ProjectMode::SpriteStack || self.new_project_mode == crate::project::ProjectMode::ThreeD;
                         let num_rows = if is_sprite_stack { 3.0 } else { 2.0 };
                         let total_h = row_h * num_rows + gap * (num_rows - 1.0);
 
@@ -10926,7 +10928,7 @@ print("FAIL")
                                     egui::Layout::top_down(egui::Align::TOP),
                                     |ui| {
                                         let alloc_rect = ui.max_rect();
-                                        let is_sprite_stack = self.new_project_mode == crate::project::ProjectMode::SpriteStack;
+                                        let is_sprite_stack = self.new_project_mode == crate::project::ProjectMode::SpriteStack || self.new_project_mode == crate::project::ProjectMode::ThreeD;
                                         let lock_cy = if is_sprite_stack {
                                             alloc_rect.top() + row_h + gap + row_h / 2.0
                                         } else {
@@ -11238,8 +11240,8 @@ print("FAIL")
                                       };
                                       let cw = tile_w * tiles_w;
                                       let ch = tile_h * tiles_h;
-                                      let mut new_proj = Project::new_tiled_with_mode(cw, ch, self.new_name.clone(), tiles_w, tiles_h, tile_w, tile_h, self.new_project_mode);
-                                      if self.new_project_mode == crate::project::ProjectMode::SpriteStack {
+                                       let mut new_proj = Project::new_tiled_with_mode(cw, ch, self.new_name.clone(), tiles_w, tiles_h, tile_w, tile_h, self.new_project_mode);
+                                       if self.new_project_mode == crate::project::ProjectMode::SpriteStack || self.new_project_mode == crate::project::ProjectMode::ThreeD {
                                          let stack_h = self.new_sprite_stack_height.max(1);
                                          new_proj.sprite_stack_max_layers = Some(stack_h);
                                          for anim in &mut new_proj.animations {
