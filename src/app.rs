@@ -8474,12 +8474,13 @@ print("FAIL")
 
         // Draw hover preview of tool drawing as 3D voxels with proper face culling
         // Only draw side faces for boundary pixels (no neighbor in that direction)
-        // In 3D mode, render as vertex dots instead of voxel cubes
+        // In 3D mode, render as vertex dots on grid corners instead of voxel cubes
         if self.project.mode == crate::project::ProjectMode::ThreeD {
             let vertex_color = self.theme.accent;
             let vertex_size = 0.5 * self.canvas.zoom;
             for &(px, py, _color) in &self.shape_preview {
-                let pos = project_3d(px as f32 + 0.5, py as f32 + 0.5, li as f32);
+                // Snap to grid corners (integer coordinates)
+                let pos = project_3d(px as f32, py as f32, li as f32);
                 painter.circle_filled(pos, vertex_size / 2.0, vertex_color);
             }
         } else {
