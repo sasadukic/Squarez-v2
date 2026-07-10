@@ -5918,20 +5918,62 @@ impl App {
                 if self.project.mode == crate::project::ProjectMode::SpriteStack {
                     self.draw_3d_voxel_workspace(ctx, &painter, canvas_rect);
 
-                    // Floating CCW/CW rotate buttons in the top-right corner of workspace panel using Area to overlay correctly
-                    egui::Area::new(egui::Id::new("sprite_stack_rotate_buttons"))
-                        .fixed_pos(canvas_rect.right_top() + egui::Vec2::new(-95.0, TOP_BAR_HEIGHT + 10.0))
+                    // Floating controls in the bottom-right corner of workspace panel
+                    egui::Area::new(egui::Id::new("sprite_stack_workspace_controls"))
+                        .fixed_pos(canvas_rect.right_bottom() + egui::Vec2::new(-165.0, -45.0))
                         .show(ctx, |ui| {
-                            ui.horizontal(|ui| {
-                                if ui.button("⟲").on_hover_text("Rotate 90° CCW (Q)").clicked() {
-                                    self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 3) % 4;
-                                    self.canvas_dirty = true;
-                                }
-                                if ui.button("⟳").on_hover_text("Rotate 90° CW (E)").clicked() {
-                                    self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 1) % 4;
-                                    self.canvas_dirty = true;
-                                }
-                            });
+                            let ai = self.project.active_animation;
+                            let fi = self.project.active_frame;
+                            let active_frame = &self.project.animations[ai].frames[fi];
+                            let total_layers = active_frame.layers.len();
+
+                            egui::Frame::none()
+                                .fill(self.theme.surface)
+                                .corner_radius(6.0)
+                                .shadow(egui::Shadow {
+                                    offset: [0, 14],
+                                    blur: 36,
+                                    spread: 0,
+                                    color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
+                                })
+                                .inner_margin(egui::Margin::symmetric(10, 6))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 8.0;
+
+                                        // Layer controls
+                                        if ui.button("⏶").on_hover_text("Active Layer Up").clicked() {
+                                            if self.project.active_layer + 1 < total_layers {
+                                                self.project.active_layer += 1;
+                                                self.canvas_dirty = true;
+                                            }
+                                        }
+
+                                        if ui.button("⏷").on_hover_text("Active Layer Down").clicked() {
+                                            if self.project.active_layer > 0 {
+                                                self.project.active_layer -= 1;
+                                                self.canvas_dirty = true;
+                                            }
+                                        }
+
+                                        // Divider line
+                                        let rect = ui.allocate_space(egui::Vec2::new(1.0, 16.0)).1;
+                                        ui.painter().line_segment(
+                                            [rect.left_top(), rect.left_bottom()],
+                                            egui::Stroke::new(1.0, self.theme.border),
+                                        );
+
+                                        // Rotation controls
+                                        if ui.button("⟲").on_hover_text("Rotate 90° CCW (Q)").clicked() {
+                                            self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 3) % 4;
+                                            self.canvas_dirty = true;
+                                        }
+                                        if ui.button("⟳").on_hover_text("Rotate 90° CW (E)").clicked() {
+                                            self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 1) % 4;
+                                            self.canvas_dirty = true;
+                                        }
+                                    });
+                                });
                         });
                 } else {
                     self.canvas.draw(
@@ -6322,7 +6364,7 @@ impl App {
                 }
 
                 // Render info overlay box in the top-left corner of the canvas (under logo, next to tools)
-                {
+                if self.project.mode != crate::project::ProjectMode::SpriteStack {
                     let hover_canvas = ctx.pointer_hover_pos()
                         .and_then(|p| self.get_canvas_coords(p, canvas_rect))
                         .filter(|&(hx, hy)| hx < disp_w && hy < disp_h);
@@ -8425,6 +8467,34 @@ print("FAIL")
         painter.line_segment([cb[front_idx], ct[front_idx]], front_stroke);
         painter.line_segment([cb[f1], ct[f1]], front_stroke);
         painter.line_segment([cb[f3], ct[f3]], front_stroke);
+
+        // Draw horizontal line showing what layer is currently being drawn on
+        let pl_corners = [
+            project_3d(0.0, 0.0, li as f32),
+            project_3d(w as f32, 0.0, li as f32),
+            project_3d(w as f32, h as f32, li as f32),
+            project_3d(0.0, h as f32, li as f32),
+        ];
+        let mut right_most_p = pl_corners[0];
+        for &p in &pl_corners {
+            if p.x > right_most_p.x {
+                right_most_p = p;
+            }
+        }
+        let line_start = right_most_p;
+        let line_end = egui::Pos2::new(right_most_p.x + 25.0, right_most_p.y);
+        let indicator_color = self.theme.accent;
+        painter.line_segment([line_start, line_end], egui::Stroke::new(1.5, indicator_color));
+
+        let active_layer_name = &self.project.animations[ai].frames[fi].layers[li].name;
+        let label_pos = egui::Pos2::new(line_end.x + 4.0, line_end.y - 6.0);
+        painter.text(
+            label_pos,
+            egui::Align2::LEFT_TOP,
+            active_layer_name,
+            egui::FontId::new(10.0, egui::FontFamily::Proportional),
+            indicator_color,
+        );
 
         // Orbit rotation keyboard handlers
         if ctx.input(|i| i.key_pressed(egui::Key::Q)) {
