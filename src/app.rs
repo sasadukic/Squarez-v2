@@ -8322,30 +8322,30 @@ print("FAIL")
                         let p10_1 = project_3d((x_val + 1) as f32, y_val as f32, (z_val + 1) as f32);
                         let p11_1 = project_3d((x_val + 1) as f32, (y_val + 1) as f32, (z_val + 1) as f32);
                         let p01_1 = project_3d(x_val as f32, (y_val + 1) as f32, (z_val + 1) as f32);
-                        painter.convex_polygon(
-                            &[p00_1, p10_1, p11_1, p01_1],
+                        painter.add(egui::Shape::convex_polygon(
+                            vec![p00_1, p10_1, p11_1, p01_1],
                             col32,
                             egui::Stroke::new(0.5, col32),
-                        );
+                        ));
 
                         // Left face
                         let p00_0 = project_3d(x_val as f32, y_val as f32, z_val as f32);
                         let p01_0 = project_3d(x_val as f32, (y_val + 1) as f32, z_val as f32);
                         let col_left = shade_color(col32, 0.85);
-                        painter.convex_polygon(
-                            &[p00_0, p01_0, p01_1, p00_1],
+                        painter.add(egui::Shape::convex_polygon(
+                            vec![p00_0, p01_0, p01_1, p00_1],
                             col_left,
                             egui::Stroke::new(0.5, col_left),
-                        );
+                        ));
 
                         // Right face
                         let p10_0 = project_3d((x_val + 1) as f32, y_val as f32, z_val as f32);
                         let col_right = shade_color(col32, 0.7);
-                        painter.convex_polygon(
-                            &[p00_0, p10_0, p10_1, p00_1],
+                        painter.add(egui::Shape::convex_polygon(
+                            vec![p00_0, p10_0, p10_1, p00_1],
                             col_right,
                             egui::Stroke::new(0.5, col_right),
-                        );
+                        ));
                     }
                 }
             }
@@ -8358,11 +8358,11 @@ print("FAIL")
             let p10_1 = project_3d((px + 1) as f32, py as f32, (li + 1) as f32);
             let p11_1 = project_3d((px + 1) as f32, (py + 1) as f32, (li + 1) as f32);
             let p01_1 = project_3d(px as f32, (py + 1) as f32, (li + 1) as f32);
-            painter.convex_polygon(
-                &[p00_1, p10_1, p11_1, p01_1],
+            painter.add(egui::Shape::convex_polygon(
+                vec![p00_1, p10_1, p11_1, p01_1],
                 col32,
                 egui::Stroke::new(1.0, egui::Color32::WHITE),
-            );
+            ));
         }
 
         // Orbit rotation keyboard handlers
