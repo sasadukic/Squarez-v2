@@ -276,6 +276,7 @@ pub struct App {
     pub sprite_stack_drag_mode: SpriteStackDragMode,
     pub sprite_stack_rotation_90: i32,
     pub sprite_stack_show_grid: bool,
+    pub sprite_stack_preview_fixed_cam: bool,
     /// Track if any menu was open at the start of the current frame
     menu_was_open_at_frame_start: bool,
     brushes: Vec<CustomBrush>,
@@ -974,6 +975,7 @@ impl App {
             sprite_stack_drag_mode: SpriteStackDragMode::None,
             sprite_stack_rotation_90: 0,
             sprite_stack_show_grid: true,
+            sprite_stack_preview_fixed_cam: false,
             menu_was_open_at_frame_start: false,
             brushes: {
                 let mut b = layout.as_ref().map(|l| l.brushes.clone()).unwrap_or_default();
@@ -1228,6 +1230,7 @@ impl App {
         self.new_sprite_stack_height_focused = false;
         self.sprite_stack_rotation_90 = 0;
         self.sprite_stack_show_grid = true;
+        self.sprite_stack_preview_fixed_cam = false;
     }
 
     /// Open `project` / `path` in a new tab to the right of the current active tab.
@@ -7516,16 +7519,32 @@ print("FAIL")
                 let cy = y_val - h as f32 / 2.0;
                 let cz = z_val - num_layers as f32 / 2.0;
 
-                let (rx, ry) = match self.sprite_stack_rotation_90 % 4 {
-                    0 => (cx, cy),
-                    1 => (-cy, cx),
-                    2 => (-cx, -cy),
-                    _ => (cy, -cx),
-                };
+                if self.sprite_stack_preview_fixed_cam {
+                    let yaw_rad = 45.0f32.to_radians();
+                    let cos_y = yaw_rad.cos();
+                    let sin_y = yaw_rad.sin();
+                    let rx = cx * cos_y - cy * sin_y;
+                    let ry = cx * sin_y + cy * cos_y;
 
-                let px = rx - ry;
-                let py = (rx + ry) * 0.5 - cz * 1.0;
-                egui::Vec2::new(px, py)
+                    let pitch_rad = 30.0f32.to_radians();
+                    let cos_p = pitch_rad.cos();
+                    let sin_p = pitch_rad.sin();
+
+                    let px = rx;
+                    let py = ry * cos_p - cz * sin_p;
+                    egui::Vec2::new(px, py)
+                } else {
+                    let (rx, ry) = match self.sprite_stack_rotation_90 % 4 {
+                        0 => (cx, cy),
+                        1 => (-cy, cx),
+                        2 => (-cx, -cy),
+                        _ => (cy, -cx),
+                    };
+
+                    let px = rx - ry;
+                    let py = (rx + ry) * 0.5 - cz * 1.0;
+                    egui::Vec2::new(px, py)
+                }
             };
 
             // Calculate bounding box of the whole project under zoom = 1.0 to fit it in preview panel
@@ -7572,13 +7591,21 @@ print("FAIL")
             let painter = ui.painter();
 
             // Depth sorting for rendering the flat pixels
-            let x_range: Vec<u32> = match self.sprite_stack_rotation_90 % 4 {
-                0 | 1 => (0..w).collect(),
-                _ => (0..w).rev().collect(),
+            let x_range: Vec<u32> = if self.sprite_stack_preview_fixed_cam {
+                (0..w).collect()
+            } else {
+                match self.sprite_stack_rotation_90 % 4 {
+                    0 | 1 => (0..w).collect(),
+                    _ => (0..w).rev().collect(),
+                }
             };
-            let y_range: Vec<u32> = match self.sprite_stack_rotation_90 % 4 {
-                0 | 3 => (0..h).collect(),
-                _ => (0..h).rev().collect(),
+            let y_range: Vec<u32> = if self.sprite_stack_preview_fixed_cam {
+                (0..h).collect()
+            } else {
+                match self.sprite_stack_rotation_90 % 4 {
+                    0 | 3 => (0..h).collect(),
+                    _ => (0..h).rev().collect(),
+                }
             };
 
             for z_val in 0..num_layers {
@@ -7679,29 +7706,62 @@ print("FAIL")
             // Draw pin icon on the right side if the sidebar is not collapsed and section is not collapsed
             let fade_t = 1.0 - t;
             if rect.width() > 50.0 && fade_t > 0.0 {
-                // 2:1 view button
-                let btn_size = Vec2::new(30.0, 16.0);
-                let btn_rect = egui::Rect::from_center_size(
-                    egui::Pos2::new(rect.right() - 32.0, rect.center().y),
-                    btn_size,
-                );
-                let btn_resp = ui.interact(btn_rect, egui::Id::new("hdr_2to1_preview"), egui::Sense::click());
-                let btn_bg = if btn_resp.hovered() { theme.accent.linear_multiply(0.2) } else { Color32::TRANSPARENT };
-                let btn_text_color = if btn_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
-                
-                ui.painter().rect_filled(btn_rect, egui::CornerRadius::same(3), btn_bg);
-                ui.put(
-                    btn_rect,
-                    egui::Label::new(
-                        egui::RichText::new("2:1")
-                            .font(egui::FontId::proportional(10.0))
-                            .color(btn_text_color)
-                    )
-                );
-                if btn_resp.clicked() {
-                    self.sprite_stack_angle = 45.0f32.to_radians();
-                    self.sprite_stack_tilt = 60.0;
-                    self.sprite_stack_spacing = 1.0;
+                if self.project.mode == crate::project::ProjectMode::SpriteStack {
+                    let btn_size = Vec2::new(30.0, 15.0);
+                    let btn_rect = egui::Rect::from_center_size(
+                        egui::Pos2::new(rect.right() - 32.0, rect.center().y),
+                        btn_size,
+                    );
+                    let btn_resp = ui.interact(btn_rect, egui::Id::new("hdr_cam_toggle_preview"), egui::Sense::click());
+                    let tint = if btn_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+
+                    let img = if self.sprite_stack_preview_fixed_cam {
+                        egui::include_image!("../assets/icons/toggle_on.png")
+                    } else {
+                        egui::include_image!("../assets/icons/toggle_off.png")
+                    };
+
+                    ui.put(
+                        btn_rect,
+                        egui::Image::new(img)
+                            .tint(tint)
+                            .fit_to_exact_size(btn_size),
+                    );
+
+                    let btn_resp = btn_resp.on_hover_text(if self.sprite_stack_preview_fixed_cam {
+                        "Switch to Canvas Camera view"
+                    } else {
+                        "Switch to Fixed Camera view (30° pitch, 45° yaw)"
+                    });
+
+                    if btn_resp.clicked() {
+                        self.sprite_stack_preview_fixed_cam = !self.sprite_stack_preview_fixed_cam;
+                        self.canvas_dirty = true;
+                    }
+                } else {
+                    let btn_size = Vec2::new(30.0, 16.0);
+                    let btn_rect = egui::Rect::from_center_size(
+                        egui::Pos2::new(rect.right() - 32.0, rect.center().y),
+                        btn_size,
+                    );
+                    let btn_resp = ui.interact(btn_rect, egui::Id::new("hdr_2to1_preview"), egui::Sense::click());
+                    let btn_bg = if btn_resp.hovered() { theme.accent.linear_multiply(0.2) } else { Color32::TRANSPARENT };
+                    let btn_text_color = if btn_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                    
+                    ui.painter().rect_filled(btn_rect, egui::CornerRadius::same(3), btn_bg);
+                    ui.put(
+                        btn_rect,
+                        egui::Label::new(
+                            egui::RichText::new("2:1")
+                                .font(egui::FontId::proportional(10.0))
+                                .color(btn_text_color)
+                        )
+                    );
+                    if btn_resp.clicked() {
+                        self.sprite_stack_angle = 45.0f32.to_radians();
+                        self.sprite_stack_tilt = 60.0;
+                        self.sprite_stack_spacing = 1.0;
+                    }
                 }
 
                 let pin_size = Vec2::splat(14.0);
@@ -7791,30 +7851,63 @@ print("FAIL")
                             .fit_to_exact_size(icon_size),
                     );
 
-                    // Right: 2:1 view button
-                    let btn_size = Vec2::new(30.0, 16.0);
-                    let btn_rect = egui::Rect::from_center_size(
-                        egui::Pos2::new(rect.right() - 32.0, rect.center().y),
-                        btn_size,
-                    );
-                    let btn_resp = ui.interact(btn_rect, ui.id().with("floating_preview_2to1"), egui::Sense::click());
-                    let btn_bg = if btn_resp.hovered() { theme.accent.linear_multiply(0.2) } else { Color32::TRANSPARENT };
-                    let btn_text_color = if btn_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
-                    
-                    ui.painter().rect_filled(btn_rect, egui::CornerRadius::same(3), btn_bg);
-                    ui.put(
-                        btn_rect,
-                        egui::Label::new(
-                            egui::RichText::new("2:1")
-                                .font(egui::FontId::proportional(10.0))
-                                .color(btn_text_color)
-                        )
-                    );
-                    
-                    if btn_resp.clicked() {
-                        self.sprite_stack_angle = 45.0f32.to_radians();
-                        self.sprite_stack_tilt = 60.0;
-                        self.sprite_stack_spacing = 1.0;
+                    if self.project.mode == crate::project::ProjectMode::SpriteStack {
+                        let btn_size = Vec2::new(30.0, 15.0);
+                        let btn_rect = egui::Rect::from_center_size(
+                            egui::Pos2::new(rect.right() - 32.0, rect.center().y),
+                            btn_size,
+                        );
+                        let btn_resp = ui.interact(btn_rect, ui.id().with("floating_preview_cam_toggle"), egui::Sense::click());
+                        let tint = if btn_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+
+                        let img = if self.sprite_stack_preview_fixed_cam {
+                            egui::include_image!("../assets/icons/toggle_on.png")
+                        } else {
+                            egui::include_image!("../assets/icons/toggle_off.png")
+                        };
+
+                        ui.put(
+                            btn_rect,
+                            egui::Image::new(img)
+                                .tint(tint)
+                                .fit_to_exact_size(btn_size),
+                        );
+
+                        let btn_resp = btn_resp.on_hover_text(if self.sprite_stack_preview_fixed_cam {
+                            "Switch to Canvas Camera view"
+                        } else {
+                            "Switch to Fixed Camera view (30° pitch, 45° yaw)"
+                        });
+
+                        if btn_resp.clicked() {
+                            self.sprite_stack_preview_fixed_cam = !self.sprite_stack_preview_fixed_cam;
+                            self.canvas_dirty = true;
+                        }
+                    } else {
+                        let btn_size = Vec2::new(30.0, 16.0);
+                        let btn_rect = egui::Rect::from_center_size(
+                            egui::Pos2::new(rect.right() - 32.0, rect.center().y),
+                            btn_size,
+                        );
+                        let btn_resp = ui.interact(btn_rect, ui.id().with("floating_preview_2to1"), egui::Sense::click());
+                        let btn_bg = if btn_resp.hovered() { theme.accent.linear_multiply(0.2) } else { Color32::TRANSPARENT };
+                        let btn_text_color = if btn_resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+                        
+                        ui.painter().rect_filled(btn_rect, egui::CornerRadius::same(3), btn_bg);
+                        ui.put(
+                            btn_rect,
+                            egui::Label::new(
+                                egui::RichText::new("2:1")
+                                    .font(egui::FontId::proportional(10.0))
+                                    .color(btn_text_color)
+                            )
+                        );
+                        
+                        if btn_resp.clicked() {
+                            self.sprite_stack_angle = 45.0f32.to_radians();
+                            self.sprite_stack_tilt = 60.0;
+                            self.sprite_stack_spacing = 1.0;
+                        }
                     }
 
                     // Right: Pin button (to dock it back)
