@@ -8750,6 +8750,7 @@ print("FAIL")
         let h = self.project.canvas_height;
         let ai = self.project.active_animation;
         let fi = self.project.active_frame;
+        let li = self.project.active_layer;
         let frame = &self.project.animations[ai].frames[fi];
         let num_layers = frame.layers.len();
 
