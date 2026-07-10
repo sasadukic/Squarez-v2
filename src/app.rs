@@ -5886,7 +5886,11 @@ impl App {
                 if self.canvas_dirty {
                     self.rebuild_canvas_texture(ctx);
                 }
-                let canvas_rect = ui.available_rect_before_wrap();
+                let mut canvas_rect = ui.available_rect_before_wrap();
+                let timeline_visible = self.ui_state.is_visible(Panel::Timeline);
+                if timeline_visible && !self.ui_state.collapse_animations {
+                    canvas_rect.max.y -= 104.0;
+                }
 
                 if self.startup_frames < 15 {
                     self.pending_zoom_fit = true;
@@ -5896,7 +5900,7 @@ impl App {
                 if self.pending_zoom_fit {
                     let fit_rect = egui::Rect::from_min_max(
                         Pos2::new(canvas_rect.min.x + 38.0, canvas_rect.min.y + TOP_BAR_HEIGHT),
-                        Pos2::new(canvas_rect.max.x, canvas_rect.max.y - 104.0),
+                        Pos2::new(canvas_rect.max.x, canvas_rect.max.y),
                     );
                     self.canvas.zoom_to_fit(fit_rect, disp_w, disp_h);
                     self.pending_zoom_fit = false;
