@@ -8251,25 +8251,27 @@ print("FAIL")
         let c111 = project_3d(w as f32, h as f32, num_layers as f32);
         let c011 = project_3d(0.0, h as f32, num_layers as f32);
 
-        let wire_stroke = egui::Stroke::new(1.0, self.theme.muted);
+        // Determine which bottom corner is front-most to classify front/back edges
+        let mut max_y = c000.y;
+        let mut front_idx = 0;
+        if c100.y > max_y { max_y = c100.y; front_idx = 1; }
+        if c110.y > max_y { max_y = c110.y; front_idx = 2; }
+        if c010.y > max_y { front_idx = 3; }
 
-        // Draw bottom wireframe loop
-        painter.line_segment([c000, c100], wire_stroke);
-        painter.line_segment([c100, c110], wire_stroke);
-        painter.line_segment([c110, c010], wire_stroke);
-        painter.line_segment([c010, c000], wire_stroke);
+        let back_idx = (front_idx + 2) % 4;
 
-        // Draw top wireframe loop
-        painter.line_segment([c001, c101], wire_stroke);
-        painter.line_segment([c101, c111], wire_stroke);
-        painter.line_segment([c111, c011], wire_stroke);
-        painter.line_segment([c011, c001], wire_stroke);
+        let cb = [c000, c100, c110, c010];
+        let ct = [c001, c101, c111, c011];
 
-        // Draw vertical wireframe edges
-        painter.line_segment([c000, c001], wire_stroke);
-        painter.line_segment([c100, c101], wire_stroke);
-        painter.line_segment([c110, c111], wire_stroke);
-        painter.line_segment([c010, c011], wire_stroke);
+        // Draw back edges first with a lighter stroke (so they are naturally occluded by voxels)
+        let back_stroke = egui::Stroke::new(1.0, self.theme.muted.gamma_multiply(0.35));
+        let b1 = (back_idx + 1) % 4;
+        let b3 = (back_idx + 3) % 4;
+        painter.line_segment([cb[back_idx], cb[b1]], back_stroke);
+        painter.line_segment([cb[back_idx], cb[b3]], back_stroke);
+        painter.line_segment([ct[back_idx], ct[b1]], back_stroke);
+        painter.line_segment([ct[back_idx], ct[b3]], back_stroke);
+        painter.line_segment([cb[back_idx], ct[back_idx]], back_stroke);
 
         // Draw active layer grid plane
         let grid_stroke = egui::Stroke::new(0.5, self.theme.accent.gamma_multiply(0.4));
@@ -8408,6 +8410,21 @@ print("FAIL")
                 egui::Stroke::new(1.0, egui::Color32::WHITE),
             ));
         }
+
+        // Draw front/boundary wireframe edges on top of the voxels so they are always visible
+        let front_stroke = egui::Stroke::new(1.0, self.theme.muted);
+        let f1 = (front_idx + 1) % 4;
+        let f3 = (front_idx + 3) % 4;
+        // Bottom loop front edges
+        painter.line_segment([cb[front_idx], cb[f1]], front_stroke);
+        painter.line_segment([cb[front_idx], cb[f3]], front_stroke);
+        // Top loop front edges
+        painter.line_segment([ct[front_idx], ct[f1]], front_stroke);
+        painter.line_segment([ct[front_idx], ct[f3]], front_stroke);
+        // Vertical front/boundary edges
+        painter.line_segment([cb[front_idx], ct[front_idx]], front_stroke);
+        painter.line_segment([cb[f1], ct[f1]], front_stroke);
+        painter.line_segment([cb[f3], ct[f3]], front_stroke);
 
         // Orbit rotation keyboard handlers
         if ctx.input(|i| i.key_pressed(egui::Key::Q)) {
