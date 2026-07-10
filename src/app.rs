@@ -8428,8 +8428,13 @@ print("FAIL")
             }
         }
 
-        // Draw hover preview of tool drawing as 3D voxels with uniform color (no shading) for seamless blending
+        // Draw hover preview of tool drawing as 3D voxels with proper face culling
+        // Only draw side faces for boundary pixels (no neighbor in that direction)
         let no_stroke = egui::Stroke::new(0.0, egui::Color32::TRANSPARENT);
+        let preview_set: std::collections::HashSet<(i32, i32)> = self.shape_preview.iter()
+            .map(|&(px, py, _)| (px as i32, py as i32))
+            .collect();
+
         for &(px, py, color) in &self.shape_preview {
             let col32 = egui::Color32::from_rgba_unmultiplied(color[0], color[1], color[2], 160);
             let p00_1 = project_3d(px as f32, py as f32, (li + 1) as f32);
@@ -8448,50 +8453,81 @@ print("FAIL")
             if p11_0.y > max_y { max_y = p11_0.y; front_idx = 2; }
             if p01_0.y > max_y { front_idx = 3; }
 
-            // Use the same color for all faces so adjacent voxels blend seamlessly
+            // Check neighbors for face culling
+            let has_north = preview_set.contains(&(px as i32, py as i32 - 1));
+            let has_south = preview_set.contains(&(px as i32, py as i32 + 1));
+            let has_east = preview_set.contains(&(px as i32 + 1, py as i32));
+            let has_west = preview_set.contains(&(px as i32 - 1, py as i32));
+
+            // Draw visible side faces only if exposed (no neighbor)
             match front_idx {
                 0 => {
-                    painter.add(egui::Shape::convex_polygon(
-                        vec![p00_0, p10_0, p10_1, p00_1],
-                        col32, no_stroke,
-                    ));
-                    painter.add(egui::Shape::convex_polygon(
-                        vec![p00_0, p01_0, p01_1, p00_1],
-                        col32, no_stroke,
-                    ));
+                    // South face (at py) - exposed if no neighbor at (px, py-1)
+                    if !has_north {
+                        painter.add(egui::Shape::convex_polygon(
+                            vec![p00_0, p10_0, p10_1, p00_1],
+                            col32, no_stroke,
+                        ));
+                    }
+                    // West face (at px) - exposed if no neighbor at (px-1, py)
+                    if !has_west {
+                        painter.add(egui::Shape::convex_polygon(
+                            vec![p00_0, p01_0, p01_1, p00_1],
+                            col32, no_stroke,
+                        ));
+                    }
                 }
                 1 => {
-                    painter.add(egui::Shape::convex_polygon(
-                        vec![p10_0, p11_0, p11_1, p10_1],
-                        col32, no_stroke,
-                    ));
-                    painter.add(egui::Shape::convex_polygon(
-                        vec![p00_0, p10_0, p10_1, p00_1],
-                        col32, no_stroke,
-                    ));
+                    // East face (at px+1) - exposed if no neighbor at (px+1, py)
+                    if !has_east {
+                        painter.add(egui::Shape::convex_polygon(
+                            vec![p10_0, p11_0, p11_1, p10_1],
+                            col32, no_stroke,
+                        ));
+                    }
+                    // South face (at py) - exposed if no neighbor at (px, py-1)
+                    if !has_north {
+                        painter.add(egui::Shape::convex_polygon(
+                            vec![p00_0, p10_0, p10_1, p00_1],
+                            col32, no_stroke,
+                        ));
+                    }
                 }
                 2 => {
-                    painter.add(egui::Shape::convex_polygon(
-                        vec![p01_0, p11_0, p11_1, p01_1],
-                        col32, no_stroke,
-                    ));
-                    painter.add(egui::Shape::convex_polygon(
-                        vec![p10_0, p11_0, p11_1, p10_1],
-                        col32, no_stroke,
-                    ));
+                    // North face (at py+1) - exposed if no neighbor at (px, py+1)
+                    if !has_south {
+                        painter.add(egui::Shape::convex_polygon(
+                            vec![p01_0, p11_0, p11_1, p01_1],
+                            col32, no_stroke,
+                        ));
+                    }
+                    // East face (at px+1) - exposed if no neighbor at (px+1, py)
+                    if !has_east {
+                        painter.add(egui::Shape::convex_polygon(
+                            vec![p10_0, p11_0, p11_1, p10_1],
+                            col32, no_stroke,
+                        ));
+                    }
                 }
                 _ => {
-                    painter.add(egui::Shape::convex_polygon(
-                        vec![p00_0, p01_0, p01_1, p00_1],
-                        col32, no_stroke,
-                    ));
-                    painter.add(egui::Shape::convex_polygon(
-                        vec![p01_0, p11_0, p11_1, p01_1],
-                        col32, no_stroke,
-                    ));
+                    // West face (at px) - exposed if no neighbor at (px-1, py)
+                    if !has_west {
+                        painter.add(egui::Shape::convex_polygon(
+                            vec![p00_0, p01_0, p01_1, p00_1],
+                            col32, no_stroke,
+                        ));
+                    }
+                    // North face (at py+1) - exposed if no neighbor at (px, py+1)
+                    if !has_south {
+                        painter.add(egui::Shape::convex_polygon(
+                            vec![p01_0, p11_0, p11_1, p01_1],
+                            col32, no_stroke,
+                        ));
+                    }
                 }
             }
 
+            // Always draw top face
             painter.add(egui::Shape::convex_polygon(
                 vec![p00_1, p10_1, p11_1, p01_1],
                 col32, no_stroke,
