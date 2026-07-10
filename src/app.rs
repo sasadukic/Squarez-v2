@@ -292,6 +292,7 @@ pub struct App {
     pub three_d_perspective: bool, // true = perspective, false = orthographic
     pub three_d_rotation_x: f32, // rotation around X axis (pitch)
     pub three_d_rotation_y: f32, // rotation around Y axis (yaw)
+    pub three_d_lock_rotation: bool, // lock camera rotation
     // 3D selection state
     pub selected_vertices: Vec<usize>, // indices of selected vertices
     pub selected_faces: Vec<usize>, // indices of selected faces
@@ -1001,6 +1002,7 @@ impl App {
             three_d_perspective: false,
             three_d_rotation_x: 0.0,
             three_d_rotation_y: 0.0,
+            three_d_lock_rotation: false,
             selected_vertices: Vec::new(),
             selected_faces: Vec::new(),
             three_d_select_mode: None,
@@ -6107,6 +6109,26 @@ impl App {
                     if !any_menu_open {
                         self.pen_size_scroll_accum = 0.0;
                         self.canvas.handle_input(ui, canvas_rect);
+
+                        // Handle Right-click drag to rotate 3D camera
+                        if self.project.mode == crate::project::ProjectMode::ThreeD && !self.three_d_lock_rotation {
+                            let is_hovered = ui.input(|i| i.pointer.hover_pos().map(|pos| canvas_rect.contains(pos)).unwrap_or(false));
+                            let over_gizmo = ui.input(|i| i.pointer.hover_pos().map(|pos| {
+                                pos.x >= canvas_rect.max.x - 120.0 && pos.y <= canvas_rect.min.y + 160.0
+                            }).unwrap_or(false));
+                            
+                            if is_hovered && !over_gizmo && ui.input(|i| i.pointer.secondary_down()) {
+                                let delta = ui.input(|i| i.pointer.delta());
+                                if delta != egui::Vec2::ZERO {
+                                    self.three_d_rotation_y += delta.x * 0.005;
+                                    self.three_d_rotation_x = (self.three_d_rotation_x + delta.y * 0.005).clamp(-std::f32::consts::FRAC_PI_2 + 0.01, std::f32::consts::FRAC_PI_2 - 0.01);
+                                    if self.three_d_view_mode == 0 {
+                                        self.three_d_view_mode = 1;
+                                    }
+                                    self.canvas_dirty = true;
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -6505,7 +6527,7 @@ impl App {
                 let hovering_over_3d_controls = if self.project.mode == crate::project::ProjectMode::ThreeD {
                     ui.ctx().input(|i| {
                         i.pointer.hover_pos().map(|pos| {
-                            pos.x >= canvas_rect.max.x - 110.0 && pos.y <= canvas_rect.min.y + 120.0
+                            pos.x >= canvas_rect.max.x - 120.0 && pos.y <= canvas_rect.min.y + 130.0
                         }).unwrap_or(false)
                     })
                 } else {
@@ -8506,30 +8528,28 @@ print("FAIL")
                         _ => (cx, cz, cy),
                     };
                     
-                    if self.three_d_perspective {
-                        // Apply perspective rotation
-                        let cos_x = self.three_d_rotation_x.cos();
-                        let sin_x = self.three_d_rotation_x.sin();
-                        let cos_y = self.three_d_rotation_y.cos();
-                        let sin_y = self.three_d_rotation_y.sin();
-                        
-                        // Rotate around Y axis (yaw)
-                        let rx = sx * cos_y - sz * sin_y;
-                        let rz = sx * sin_y + sz * cos_y;
-                        
-                        // Rotate around X axis (pitch)
-                        let ry = sy * cos_x - rz * sin_x;
-                        let rz2 = sy * sin_x + rz * cos_x;
-                        
-                        // Apply perspective division
+                    // Apply camera rotation
+                    let cos_x = self.three_d_rotation_x.cos();
+                    let sin_x = self.three_d_rotation_x.sin();
+                    let cos_y = self.three_d_rotation_y.cos();
+                    let sin_y = self.three_d_rotation_y.sin();
+                    
+                    // Rotate around Y axis (yaw)
+                    let rx = sx * cos_y - sz * sin_y;
+                    let rz = sx * sin_y + sz * cos_y;
+                    
+                    // Rotate around X axis (pitch)
+                    let ry = sy * cos_x - rz * sin_x;
+                    let rz2 = sy * sin_x + rz * cos_x;
+                    
+                    let scale = if self.three_d_perspective {
                         let perspective_distance = 1000.0;
-                        let scale = perspective_distance / (perspective_distance + rz2);
-                        
-                        center_pos + egui::Vec2::new(rx * scale, -ry * scale) * self.canvas.zoom
+                        perspective_distance / (perspective_distance + rz2)
                     } else {
-                        // sx = horizontal, sy = vertical (inverted for screen coords)
-                        center_pos + egui::Vec2::new(sx, -sy) * self.canvas.zoom
-                    }
+                        1.0
+                    };
+                    
+                    center_pos + egui::Vec2::new(rx * scale, -ry * scale) * self.canvas.zoom
                 } else {
                     // Orthographic view (mode 0): simple 2D projection
                     // x maps to screen x, y maps to screen y (inverted)
@@ -8959,30 +8979,28 @@ print("FAIL")
                         _ => (cx, cz, cy),
                     };
                     
-                    if self.three_d_perspective {
-                        // Apply perspective rotation
-                        let cos_x = self.three_d_rotation_x.cos();
-                        let sin_x = self.three_d_rotation_x.sin();
-                        let cos_y = self.three_d_rotation_y.cos();
-                        let sin_y = self.three_d_rotation_y.sin();
-                        
-                        // Rotate around Y axis (yaw)
-                        let rx = sx * cos_y - sz * sin_y;
-                        let rz = sx * sin_y + sz * cos_y;
-                        
-                        // Rotate around X axis (pitch)
-                        let ry = sy * cos_x - rz * sin_x;
-                        let rz2 = sy * sin_x + rz * cos_x;
-                        
-                        // Apply perspective division
+                    // Apply camera rotation
+                    let cos_x = self.three_d_rotation_x.cos();
+                    let sin_x = self.three_d_rotation_x.sin();
+                    let cos_y = self.three_d_rotation_y.cos();
+                    let sin_y = self.three_d_rotation_y.sin();
+                    
+                    // Rotate around Y axis (yaw)
+                    let rx = sx * cos_y - sz * sin_y;
+                    let rz = sx * sin_y + sz * cos_y;
+                    
+                    // Rotate around X axis (pitch)
+                    let ry = sy * cos_x - rz * sin_x;
+                    let rz2 = sy * sin_x + rz * cos_x;
+                    
+                    let scale = if self.three_d_perspective {
                         let perspective_distance = 1000.0;
-                        let scale = perspective_distance / (perspective_distance + rz2);
-                        
-                        center_pos + egui::Vec2::new(rx * scale, -ry * scale) * self.canvas.zoom
+                        perspective_distance / (perspective_distance + rz2)
                     } else {
-                        // sx = horizontal, sy = vertical (inverted for screen coords)
-                        center_pos + egui::Vec2::new(sx, -sy) * self.canvas.zoom
-                    }
+                        1.0
+                    };
+                    
+                    center_pos + egui::Vec2::new(rx * scale, -ry * scale) * self.canvas.zoom
                 } else {
                     // Orthographic view (mode 0): simple 2D projection
                     // x maps to screen x, y maps to screen y (inverted)
@@ -9236,131 +9254,200 @@ print("FAIL")
             }
         }
 
-        // Draw view mode indicator button in top-right corner
-        let view_names = ["Ortho", "Front", "Right", "Back", "Left"];
-        let view_name = view_names[self.three_d_view_mode as usize];
-        let btn_text = if self.three_d_perspective {
-            format!("Persp: {}", view_name)
-        } else {
-            format!("Ortho: {}", view_name)
+        // Draw Unity-style 3D navigation view gizmo in the top-right corner
+        let gizmo_center = egui::Pos2::new(canvas_rect.max.x - 65.0, canvas_rect.min.y + 65.0);
+        let gizmo_rect = egui::Rect::from_center_size(gizmo_center, egui::Vec2::splat(100.0));
+
+        // Draw lock icon next to the gizmo
+        let lock_btn_rect = egui::Rect::from_min_size(
+            egui::Pos2::new(canvas_rect.max.x - 30.0, canvas_rect.min.y + 15.0),
+            egui::Vec2::splat(16.0),
+        );
+        let lock_resp = ui.interact(lock_btn_rect, egui::Id::new("three_d_lock_toggle"), egui::Sense::click());
+        let lock_color = if lock_resp.hovered() { self.theme.fg } else { self.theme.fg_desc };
+        
+        {
+            let rect = lock_btn_rect;
+            let body_w = rect.width();
+            let body_h = rect.height() * 0.55;
+            let body_rect = egui::Rect::from_min_size(
+                egui::Pos2::new(rect.min.x, rect.max.y - body_h),
+                egui::Vec2::new(body_w, body_h),
+            );
+            painter.rect_filled(body_rect, 1.5, lock_color);
+            
+            let stroke = egui::Stroke::new(1.2, lock_color);
+            let shackle_center_x = rect.center().x;
+            let shackle_radius = body_w * 0.28;
+            let shackle_y = rect.min.y + body_h * 0.65;
+            
+            if self.three_d_lock_rotation {
+                painter.circle_stroke(
+                    egui::Pos2::new(shackle_center_x, shackle_y),
+                    shackle_radius,
+                    stroke,
+                );
+            } else {
+                painter.circle_stroke(
+                    egui::Pos2::new(shackle_center_x - 1.5, shackle_y - 1.0),
+                    shackle_radius,
+                    stroke,
+                );
+            }
+        }
+        
+        if lock_resp.clicked() {
+            self.three_d_lock_rotation = !self.three_d_lock_rotation;
+            self.canvas_dirty = true;
+        }
+
+        // Drag on the gizmo area to rotate camera
+        let gizmo_drag_resp = ui.interact(gizmo_rect, egui::Id::new("three_d_gizmo_drag"), egui::Sense::drag());
+        if gizmo_drag_resp.dragged() && !self.three_d_lock_rotation {
+            let delta = gizmo_drag_resp.drag_delta();
+            if delta != egui::Vec2::ZERO {
+                self.three_d_rotation_y += delta.x * 0.01;
+                self.three_d_rotation_x = (self.three_d_rotation_x + delta.y * 0.01).clamp(-std::f32::consts::FRAC_PI_2 + 0.01, std::f32::consts::FRAC_PI_2 - 0.01);
+                if self.three_d_view_mode == 0 {
+                    self.three_d_view_mode = 1;
+                }
+                self.canvas_dirty = true;
+            }
+        }
+
+        let project_gizmo_axis = |gx: f32, gy: f32, gz: f32| -> (f32, f32, f32) {
+            let (sx, sy, sz) = match self.three_d_view_mode {
+                1 => (gx, gz, gy),
+                2 => (gy, gz, -gx),
+                3 => (-gx, gz, -gy),
+                4 => (-gy, gz, gx),
+                _ => (gx, gz, gy),
+            };
+
+            let cos_x = self.three_d_rotation_x.cos();
+            let sin_x = self.three_d_rotation_x.sin();
+            let cos_y = self.three_d_rotation_y.cos();
+            let sin_y = self.three_d_rotation_y.sin();
+
+            let rx = sx * cos_y - sz * sin_y;
+            let rz = sx * sin_y + sz * cos_y;
+
+            let ry = sy * cos_x - rz * sin_x;
+            let rz2 = sy * sin_x + rz * cos_x;
+
+            (rx, -ry, rz2)
         };
-        
-        let btn_pos = egui::Pos2::new(canvas_rect.max.x - 100.0, canvas_rect.min.y + 10.0);
-        let btn_size = egui::Vec2::new(90.0, 20.0);
-        let btn_rect = egui::Rect::from_min_size(btn_pos, btn_size);
-        
-        let btn_resp = ui.interact(btn_rect, egui::Id::new("three_d_view_toggle"), egui::Sense::click());
-        let btn_bg = if btn_resp.hovered() { self.theme.surface } else { self.theme.panel };
-        painter.rect_filled(btn_rect, 4.0, btn_bg);
-        painter.rect_stroke(btn_rect, 4.0, egui::Stroke::new(1.0, self.theme.border), egui::StrokeKind::Inside);
-        
-        let text_color = if btn_resp.hovered() { self.theme.fg } else { self.theme.fg_desc };
-        painter.text(
-            btn_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            btn_text,
-            egui::FontId::new(9.0, egui::FontFamily::Proportional),
-            text_color,
-        );
-        
-        if btn_resp.clicked() {
-            self.three_d_view_mode = (self.three_d_view_mode + 1) % 5;
-            self.canvas_dirty = true;
+
+        struct GizmoAxis {
+            name: &'static str,
+            dir: (f32, f32, f32),
+            color: egui::Color32,
+            target_view_mode: u8,
+            target_rot: (f32, f32),
+            screen_pos: egui::Pos2,
+            depth: f32,
+            is_positive: bool,
         }
 
-        // Add orth/perspective toggle button
-        let persp_btn_pos = egui::Pos2::new(canvas_rect.max.x - 100.0, canvas_rect.min.y + 35.0);
-        let persp_btn_size = egui::Vec2::new(90.0, 20.0);
-        let persp_btn_rect = egui::Rect::from_min_size(persp_btn_pos, persp_btn_size);
-        
-        let persp_btn_resp = ui.interact(persp_btn_rect, egui::Id::new("three_d_persp_toggle"), egui::Sense::click());
-        let persp_btn_bg = if persp_btn_resp.hovered() { self.theme.surface } else { self.theme.panel };
-        painter.rect_filled(persp_btn_rect, 4.0, persp_btn_bg);
-        painter.rect_stroke(persp_btn_rect, 4.0, egui::Stroke::new(1.0, self.theme.border), egui::StrokeKind::Inside);
-        
-        let persp_text = if self.three_d_perspective { "Perspective" } else { "Orthographic" };
-        let persp_text_color = if persp_btn_resp.hovered() { self.theme.fg } else { self.theme.fg_desc };
-        painter.text(
-            persp_btn_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            persp_text,
-            egui::FontId::new(9.0, egui::FontFamily::Proportional),
-            persp_text_color,
-        );
-        
-        if persp_btn_resp.clicked() {
-            self.three_d_perspective = !self.three_d_perspective;
-            self.canvas_dirty = true;
+        let mut axes = vec![
+            GizmoAxis { name: "X", dir: (1.0, 0.0, 0.0), color: egui::Color32::from_rgb(235, 64, 52), target_view_mode: 2, target_rot: (0.0, -std::f32::consts::FRAC_PI_2), screen_pos: egui::Pos2::ZERO, depth: 0.0, is_positive: true },
+            GizmoAxis { name: "-X", dir: (-1.0, 0.0, 0.0), color: egui::Color32::from_rgb(200, 200, 200), target_view_mode: 4, target_rot: (0.0, std::f32::consts::FRAC_PI_2), screen_pos: egui::Pos2::ZERO, depth: 0.0, is_positive: false },
+            GizmoAxis { name: "Y", dir: (0.0, 1.0, 0.0), color: egui::Color32::from_rgb(52, 235, 82), target_view_mode: 0, target_rot: (std::f32::consts::FRAC_PI_2, 0.0), screen_pos: egui::Pos2::ZERO, depth: 0.0, is_positive: true },
+            GizmoAxis { name: "-Y", dir: (0.0, -1.0, 0.0), color: egui::Color32::from_rgb(200, 200, 200), target_view_mode: 0, target_rot: (-std::f32::consts::FRAC_PI_2, 0.0), screen_pos: egui::Pos2::ZERO, depth: 0.0, is_positive: false },
+            GizmoAxis { name: "Z", dir: (0.0, 0.0, 1.0), color: egui::Color32::from_rgb(52, 156, 235), target_view_mode: 1, target_rot: (0.0, 0.0), screen_pos: egui::Pos2::ZERO, depth: 0.0, is_positive: true },
+            GizmoAxis { name: "-Z", dir: (0.0, 0.0, -1.0), color: egui::Color32::from_rgb(200, 200, 200), target_view_mode: 3, target_rot: (0.0, std::f32::consts::PI), screen_pos: egui::Pos2::ZERO, depth: 0.0, is_positive: false },
+        ];
+
+        for axis in &mut axes {
+            let (rx, ry, rz) = project_gizmo_axis(axis.dir.0, axis.dir.1, axis.dir.2);
+            axis.screen_pos = gizmo_center + egui::Vec2::new(rx, ry) * 30.0;
+            axis.depth = rz;
         }
 
-        // Add rotation buttons for perspective mode
-        if self.three_d_perspective {
-            let rot_btn_size = egui::Vec2::splat(20.0);
-            let rot_btn_spacing = 5.0;
-            let rot_start_x = canvas_rect.max.x - 100.0;
-            let rot_start_y = canvas_rect.min.y + 60.0;
-            
-            // Up button (rotate pitch up)
-            let up_btn_rect = egui::Rect::from_min_size(
-                egui::Pos2::new(rot_start_x + rot_btn_size.x + rot_btn_spacing, rot_start_y),
-                rot_btn_size,
-            );
-            let up_btn_resp = ui.interact(up_btn_rect, egui::Id::new("rot_up"), egui::Sense::click());
-            let up_btn_bg = if up_btn_resp.hovered() { self.theme.surface } else { self.theme.panel };
-            painter.rect_filled(up_btn_rect, 4.0, up_btn_bg);
-            painter.text(up_btn_rect.center(), egui::Align2::CENTER_CENTER, "↑",
-                egui::FontId::new(12.0, egui::FontFamily::Proportional),
-                if up_btn_resp.hovered() { self.theme.fg } else { self.theme.fg_desc });
-            if up_btn_resp.clicked() {
-                self.three_d_rotation_x -= 0.1;
-                self.canvas_dirty = true;
+        // Sort axes back-to-front
+        axes.sort_by(|a, b| b.depth.partial_cmp(&a.depth).unwrap_or(std::cmp::Ordering::Equal));
+
+        let pointer_pos = ui.input(|i| i.pointer.interact_pos());
+        let mut hovered_axis_idx: Option<usize> = None;
+        if let Some(pos) = pointer_pos {
+            if gizmo_rect.contains(pos) {
+                for (idx, axis) in axes.iter().enumerate() {
+                    let dist = (pos - axis.screen_pos).length();
+                    let radius = if axis.is_positive { 8.0 } else { 5.0 };
+                    if dist <= radius {
+                        hovered_axis_idx = Some(idx);
+                        break;
+                    }
+                }
             }
+        }
+
+        // Draw axes
+        for (idx, axis) in axes.iter().enumerate() {
+            let is_hovered = hovered_axis_idx == Some(idx);
+            let line_color = if axis.is_positive {
+                axis.color.gamma_multiply(0.8)
+            } else {
+                axis.color.gamma_multiply(0.4)
+            };
             
-            // Down button (rotate pitch down)
-            let down_btn_rect = egui::Rect::from_min_size(
-                egui::Pos2::new(rot_start_x + rot_btn_size.x + rot_btn_spacing, rot_start_y + rot_btn_size.y + rot_btn_spacing),
-                rot_btn_size,
-            );
-            let down_btn_resp = ui.interact(down_btn_rect, egui::Id::new("rot_down"), egui::Sense::click());
-            let down_btn_bg = if down_btn_resp.hovered() { self.theme.surface } else { self.theme.panel };
-            painter.rect_filled(down_btn_rect, 4.0, down_btn_bg);
-            painter.text(down_btn_rect.center(), egui::Align2::CENTER_CENTER, "↓",
-                egui::FontId::new(12.0, egui::FontFamily::Proportional),
-                if down_btn_resp.hovered() { self.theme.fg } else { self.theme.fg_desc });
-            if down_btn_resp.clicked() {
-                self.three_d_rotation_x += 0.1;
-                self.canvas_dirty = true;
+            let stroke_width = if is_hovered { 2.5 } else { 1.5 };
+            painter.line_segment([gizmo_center, axis.screen_pos], egui::Stroke::new(stroke_width, line_color));
+
+            let tip_radius = if axis.is_positive {
+                if is_hovered { 9.0 } else { 7.0 }
+            } else {
+                if is_hovered { 6.0 } else { 4.5 }
+            };
+            
+            painter.circle_filled(axis.screen_pos, tip_radius, axis.color);
+            
+            if axis.is_positive {
+                painter.text(
+                    axis.screen_pos,
+                    egui::Align2::CENTER_CENTER,
+                    axis.name,
+                    egui::FontId::new(8.0, egui::FontFamily::Proportional),
+                    self.theme.bg,
+                );
             }
-            
-            // Left button (rotate yaw left)
-            let left_btn_rect = egui::Rect::from_min_size(
-                egui::Pos2::new(rot_start_x, rot_start_y + rot_btn_size.y + rot_btn_spacing),
-                rot_btn_size,
-            );
-            let left_btn_resp = ui.interact(left_btn_rect, egui::Id::new("rot_left"), egui::Sense::click());
-            let left_btn_bg = if left_btn_resp.hovered() { self.theme.surface } else { self.theme.panel };
-            painter.rect_filled(left_btn_rect, 4.0, left_btn_bg);
-            painter.text(left_btn_rect.center(), egui::Align2::CENTER_CENTER, "←",
-                egui::FontId::new(12.0, egui::FontFamily::Proportional),
-                if left_btn_resp.hovered() { self.theme.fg } else { self.theme.fg_desc });
-            if left_btn_resp.clicked() {
-                self.three_d_rotation_y -= 0.1;
+        }
+
+        // Draw center button (cube representation)
+        let center_hovered = pointer_pos.map(|pos| (pos - gizmo_center).length() <= 8.0).unwrap_or(false);
+        let center_color = if center_hovered { self.theme.surface } else { self.theme.panel };
+        painter.circle_filled(gizmo_center, 6.0, center_color);
+        painter.circle_stroke(gizmo_center, 6.0, egui::Stroke::new(1.0, self.theme.border), egui::StrokeKind::Inside);
+
+        // Draw Perspective/Orthographic text button below the gizmo
+        let persp_text_pos = egui::Pos2::new(gizmo_center.x, gizmo_center.y + 45.0);
+        let persp_text_rect = egui::Rect::from_center_size(persp_text_pos, egui::Vec2::new(80.0, 16.0));
+        let persp_text_resp = ui.interact(persp_text_rect, egui::Id::new("three_d_persp_text_btn"), egui::Sense::click());
+        
+        let label_text = if self.three_d_perspective { "<- Persp" } else { "<- Ortho" };
+        let label_color = if persp_text_resp.hovered() { self.theme.fg } else { self.theme.fg_desc };
+        painter.text(
+            persp_text_pos,
+            egui::Align2::CENTER_CENTER,
+            label_text,
+            egui::FontId::new(9.0, egui::FontFamily::Proportional),
+            label_color,
+        );
+
+        // Handle clicking on an axis tip or controls
+        if ui.input(|i| i.pointer.primary_clicked()) {
+            if let Some(idx) = hovered_axis_idx {
+                let axis = &axes[idx];
+                self.three_d_rotation_x = axis.target_rot.0;
+                self.three_d_rotation_y = axis.target_rot.1;
+                self.three_d_view_mode = axis.target_view_mode;
+                self.three_d_perspective = false; // Snap to orthographic
                 self.canvas_dirty = true;
-            }
-            
-            // Right button (rotate yaw right)
-            let right_btn_rect = egui::Rect::from_min_size(
-                egui::Pos2::new(rot_start_x + (rot_btn_size.x + rot_btn_spacing) * 2.0, rot_start_y + rot_btn_size.y + rot_btn_spacing),
-                rot_btn_size,
-            );
-            let right_btn_resp = ui.interact(right_btn_rect, egui::Id::new("rot_right"), egui::Sense::click());
-            let right_btn_bg = if right_btn_resp.hovered() { self.theme.surface } else { self.theme.panel };
-            painter.rect_filled(right_btn_rect, 4.0, right_btn_bg);
-            painter.text(right_btn_rect.center(), egui::Align2::CENTER_CENTER, "→",
-                egui::FontId::new(12.0, egui::FontFamily::Proportional),
-                if right_btn_resp.hovered() { self.theme.fg } else { self.theme.fg_desc });
-            if right_btn_resp.clicked() {
-                self.three_d_rotation_y += 0.1;
+            } else if center_hovered {
+                self.three_d_perspective = !self.three_d_perspective;
+                self.canvas_dirty = true;
+            } else if persp_text_resp.clicked() {
+                self.three_d_perspective = !self.three_d_perspective;
                 self.canvas_dirty = true;
             }
         }
@@ -10077,8 +10164,8 @@ print("FAIL")
         };
 
         let is_over_3d_controls = self.project.mode == crate::project::ProjectMode::ThreeD
-            && pos.x >= canvas_rect.max.x - 110.0
-            && pos.y <= canvas_rect.min.y + 120.0;
+            && pos.x >= canvas_rect.max.x - 120.0
+            && pos.y <= canvas_rect.min.y + 130.0;
 
         let is_over_ui = pos.x < 38.0 // Left toolbar
             || pos.y < TOP_BAR_HEIGHT // Top bar
