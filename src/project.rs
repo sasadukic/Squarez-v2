@@ -106,6 +106,7 @@ impl Project {
             tile_w,
             tile_h,
             mode: ProjectMode::Normal,
+            sprite_stack_max_layers: None,
         }
     }
 

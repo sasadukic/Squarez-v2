@@ -73,6 +73,7 @@ impl LegacyProjectV1 {
             tile_w: 0,
             tile_h: 0,
             mode: crate::project::ProjectMode::Normal,
+            sprite_stack_max_layers: None,
         }
     }
 }

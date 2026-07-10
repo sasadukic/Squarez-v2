@@ -61,6 +61,8 @@ pub struct ProjectMeta {
     pub tile_h: u32,
     #[serde(default)]
     pub mode: crate::project::ProjectMode,
+    #[serde(default)]
+    pub sprite_stack_max_layers: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,6 +163,7 @@ pub fn prepare_entries(project: &Project, snapshots: &[UndoSnapshotV2], _work_di
         tile_w: project.tile_w,
         tile_h: project.tile_h,
         mode: project.mode,
+        sprite_stack_max_layers: project.sprite_stack_max_layers,
     };
     let proj_bytes = serde_json::to_vec(&proj_meta)?;
     entries.push(PreparedEntry {
@@ -531,6 +534,7 @@ pub fn load_v2(path: &Path) -> Result<Project, LoadError> {
         tile_w: proj_meta.tile_w,
         tile_h: proj_meta.tile_h,
         mode: proj_meta.mode,
+        sprite_stack_max_layers: proj_meta.sprite_stack_max_layers,
     })
 }
 
