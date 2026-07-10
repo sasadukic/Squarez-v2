@@ -1276,10 +1276,35 @@ impl App {
 
     fn on_project_changed(&mut self) {
         if self.project.mode == crate::project::ProjectMode::SpriteStack {
-            self.ui_state.collapse_animations = true;
-            self.ui_state.collapse_preview = true;
+            self.ui_state.collapse_palette = false;
+            self.ui_state.collapse_color = false;
+            self.ui_state.collapse_preview = false;
             self.ui_state.collapse_brushes = true;
             self.ui_state.collapse_layers = true;
+            self.ui_state.collapse_animations = true;
+            self.ui_state.collapse_tiles = true;
+
+            self.sidebar_order = vec![
+                Panel::Palette,
+                Panel::Color,
+                Panel::Preview,
+                Panel::Brushes,
+                Panel::Layers,
+                Panel::Animations,
+                Panel::Tiles,
+            ];
+
+            self.pending_zoom_fit = true;
+        } else {
+            self.sidebar_order = vec![
+                Panel::Palette,
+                Panel::Color,
+                Panel::Brushes,
+                Panel::Layers,
+                Panel::Animations,
+                Panel::Preview,
+                Panel::Tiles,
+            ];
         }
     }
 
