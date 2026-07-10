@@ -7724,6 +7724,7 @@ print("FAIL")
                 (avail * aspect, avail)
             };
             let (rect, _) = ui.allocate_exact_size(Vec2::new(pw, ph), egui::Sense::hover());
+            ui.painter().rect_filled(rect, 0.0, Color32::WHITE);
             ui.painter().image(
                 tex.id(),
                 rect,
