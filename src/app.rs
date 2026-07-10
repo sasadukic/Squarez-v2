@@ -274,6 +274,7 @@ pub struct App {
     pub sprite_stack_tilt: f32,
     pub sprite_stack_spacing: f32,
     pub sprite_stack_drag_mode: SpriteStackDragMode,
+    pub sprite_stack_rotation_90: i32,
     /// Track if any menu was open at the start of the current frame
     menu_was_open_at_frame_start: bool,
     brushes: Vec<CustomBrush>,
@@ -970,6 +971,7 @@ impl App {
             sprite_stack_tilt: 45.0,
             sprite_stack_spacing: 1.0,
             sprite_stack_drag_mode: SpriteStackDragMode::None,
+            sprite_stack_rotation_90: 0,
             menu_was_open_at_frame_start: false,
             brushes: {
                 let mut b = layout.as_ref().map(|l| l.brushes.clone()).unwrap_or_default();
@@ -1222,6 +1224,7 @@ impl App {
         self.new_sprite_stack_height = 8;
         self.new_sprite_stack_height_str = "8".to_string();
         self.new_sprite_stack_height_focused = false;
+        self.sprite_stack_rotation_90 = 0;
     }
 
     /// Open `project` / `path` in a new tab to the right of the current active tab.
@@ -5899,14 +5902,36 @@ impl App {
                     self.pending_zoom_fit = false;
                 }
                 let painter = ui.painter_at(canvas_rect);
-                self.canvas.draw(
-                    ctx,
-                    &painter,
-                    canvas_rect,
-                    disp_w,
-                    disp_h,
-                    &self.theme,
-                );
+                if self.project.mode == crate::project::ProjectMode::SpriteStack {
+                    self.draw_3d_voxel_workspace(ctx, &painter, canvas_rect);
+
+                    // Floating CCW/CW rotate buttons in the top-right corner of workspace panel
+                    let btn_rect = egui::Rect::from_min_size(
+                        egui::Pos2::new(canvas_rect.max.x - 90.0, canvas_rect.min.y + TOP_BAR_HEIGHT + 10.0),
+                        egui::Vec2::new(80.0, 32.0),
+                    );
+                    ui.put(btn_rect, |ui: &mut egui::Ui| {
+                        ui.horizontal(|ui| {
+                            if ui.button("⟲").on_hover_text("Rotate 90° CCW (Q)").clicked() {
+                                self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 3) % 4;
+                                self.canvas_dirty = true;
+                            }
+                            if ui.button("⟳").on_hover_text("Rotate 90° CW (E)").clicked() {
+                                self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 1) % 4;
+                                self.canvas_dirty = true;
+                            }
+                        }).response
+                    });
+                } else {
+                    self.canvas.draw(
+                        ctx,
+                        &painter,
+                        canvas_rect,
+                        disp_w,
+                        disp_h,
+                        &self.theme,
+                    );
+                }
                 // Ctrl + scroll on Pencil/Eraser → adjust pen size (accumulated, finer control)
                 let is_brush = matches!(self.active_tool, ActiveTool::Pencil | ActiveTool::Eraser);
                 let ctrl_held = ui.input(|i| i.modifiers.ctrl);
@@ -6286,7 +6311,7 @@ impl App {
                 // Render info overlay box in the top-left corner of the canvas (under logo, next to tools)
                 {
                     let hover_canvas = ctx.pointer_hover_pos()
-                        .and_then(|p| self.canvas.screen_to_canvas(p, canvas_rect, disp_w, disp_h))
+                        .and_then(|p| self.get_canvas_coords(p, canvas_rect))
                         .filter(|&(hx, hy)| hx < disp_w && hy < disp_h);
                     let coord_str = if let Some((hx, hy)) = hover_canvas {
                         format!("X: {}, Y: {}", hx, hy)
@@ -8102,6 +8127,255 @@ print("FAIL")
         }
     }
 
+    fn get_canvas_coords(&self, pos: egui::Pos2, canvas_rect: egui::Rect) -> Option<(u32, u32)> {
+        let w = self.project.canvas_width;
+        let h = self.project.canvas_height;
+        if self.project.mode == crate::project::ProjectMode::SpriteStack {
+            self.screen_to_voxel_coord(pos, canvas_rect)
+        } else {
+            self.canvas.screen_to_canvas(pos, canvas_rect, w, h)
+        }
+    }
+
+    fn get_canvas_coords_i32(&self, pos: egui::Pos2, canvas_rect: egui::Rect) -> (i32, i32) {
+        if self.project.mode == crate::project::ProjectMode::SpriteStack {
+            if let Some((x, y)) = self.screen_to_voxel_coord(pos, canvas_rect) {
+                (x as i32, y as i32)
+            } else {
+                (0, 0)
+            }
+        } else {
+            let w = self.project.canvas_width;
+            let h = self.project.canvas_height;
+            self.canvas.screen_to_canvas_i32(pos, canvas_rect, w, h)
+        }
+    }
+
+    fn get_canvas_coords_f32(&self, pos: egui::Pos2, canvas_rect: egui::Rect) -> (f32, f32) {
+        if self.project.mode == crate::project::ProjectMode::SpriteStack {
+            if let Some((x, y)) = self.screen_to_voxel_coord(pos, canvas_rect) {
+                (x as f32, y as f32)
+            } else {
+                (0.0, 0.0)
+            }
+        } else {
+            let w = self.project.canvas_width;
+            let h = self.project.canvas_height;
+            self.canvas.screen_to_canvas_f32(pos, canvas_rect, w, h)
+        }
+    }
+
+    fn screen_to_voxel_coord(&self, pos: egui::Pos2, canvas_rect: egui::Rect) -> Option<(u32, u32)> {
+        let w = self.project.canvas_width;
+        let h = self.project.canvas_height;
+        let li = self.project.active_layer;
+        let num_layers = self.project.active_frame_ref().layers.len();
+
+        let center_pos = canvas_rect.center() + self.canvas.offset;
+
+        let project_3d = |x_val: f32, y_val: f32, z_val: f32| -> egui::Pos2 {
+            let cx = x_val - w as f32 / 2.0;
+            let cy = y_val - h as f32 / 2.0;
+            let cz = z_val - num_layers as f32 / 2.0;
+
+            let (rx, ry) = match self.sprite_stack_rotation_90 % 4 {
+                0 => (cx, cy),
+                1 => (-cy, cx),
+                2 => (-cx, -cy),
+                _ => (cy, -cx),
+            };
+
+            let px = rx - ry;
+            let py = (rx + ry) * 0.5 - cz * 1.0;
+            center_pos + egui::Vec2::new(px, py) * self.canvas.zoom
+        };
+
+        let cross = |a: egui::Pos2, b: egui::Pos2, c: egui::Pos2| -> f32 {
+            (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+        };
+
+        for y in 0..h {
+            for x in 0..w {
+                let p00 = project_3d(x as f32, y as f32, li as f32);
+                let p10 = project_3d((x + 1) as f32, y as f32, li as f32);
+                let p11 = project_3d((x + 1) as f32, (y + 1) as f32, li as f32);
+                let p01 = project_3d(x as f32, (y + 1) as f32, li as f32);
+
+                let q = [p00, p10, p11, p01];
+                let c0 = cross(q[0], q[1], pos);
+                let c1 = cross(q[1], q[2], pos);
+                let c2 = cross(q[2], q[3], pos);
+                let c3 = cross(q[3], q[0], pos);
+
+                let is_inside = (c0 >= 0.0 && c1 >= 0.0 && c2 >= 0.0 && c3 >= 0.0) ||
+                                (c0 <= 0.0 && c1 <= 0.0 && c2 <= 0.0 && c3 <= 0.0);
+                if is_inside {
+                    return Some((x, y));
+                }
+            }
+        }
+        None
+    }
+
+    fn draw_3d_voxel_workspace(&mut self, ctx: &egui::Context, painter: &egui::Painter, canvas_rect: egui::Rect) {
+        let w = self.project.canvas_width;
+        let h = self.project.canvas_height;
+        let ai = self.project.active_animation;
+        let fi = self.project.active_frame;
+        let li = self.project.active_layer;
+        let frame = &self.project.animations[ai].frames[fi];
+        let num_layers = frame.layers.len();
+
+        let center_pos = canvas_rect.center() + self.canvas.offset;
+
+        let project_3d = |x_val: f32, y_val: f32, z_val: f32| -> egui::Pos2 {
+            let cx = x_val - w as f32 / 2.0;
+            let cy = y_val - h as f32 / 2.0;
+            let cz = z_val - num_layers as f32 / 2.0;
+
+            let (rx, ry) = match self.sprite_stack_rotation_90 % 4 {
+                0 => (cx, cy),
+                1 => (-cy, cx),
+                2 => (-cx, -cy),
+                _ => (cy, -cx),
+            };
+
+            let px = rx - ry;
+            let py = (rx + ry) * 0.5 - cz * 1.0;
+            center_pos + egui::Vec2::new(px, py) * self.canvas.zoom
+        };
+
+        // Draw wireframe bounding box representing the 3 dimensions of the canvas
+        let c000 = project_3d(0.0, 0.0, 0.0);
+        let c100 = project_3d(w as f32, 0.0, 0.0);
+        let c110 = project_3d(w as f32, h as f32, 0.0);
+        let c010 = project_3d(0.0, h as f32, 0.0);
+
+        let c001 = project_3d(0.0, 0.0, num_layers as f32);
+        let c101 = project_3d(w as f32, 0.0, num_layers as f32);
+        let c111 = project_3d(w as f32, h as f32, num_layers as f32);
+        let c011 = project_3d(0.0, h as f32, num_layers as f32);
+
+        let wire_stroke = egui::Stroke::new(1.0, self.theme.muted);
+
+        // Draw bottom wireframe loop
+        painter.line_segment([c000, c100], wire_stroke);
+        painter.line_segment([c100, c110], wire_stroke);
+        painter.line_segment([c110, c010], wire_stroke);
+        painter.line_segment([c010, c000], wire_stroke);
+
+        // Draw top wireframe loop
+        painter.line_segment([c001, c101], wire_stroke);
+        painter.line_segment([c101, c111], wire_stroke);
+        painter.line_segment([c111, c011], wire_stroke);
+        painter.line_segment([c011, c001], wire_stroke);
+
+        // Draw vertical wireframe edges
+        painter.line_segment([c000, c001], wire_stroke);
+        painter.line_segment([c100, c101], wire_stroke);
+        painter.line_segment([c110, c111], wire_stroke);
+        painter.line_segment([c010, c011], wire_stroke);
+
+        // Draw active layer grid plane
+        let grid_stroke = egui::Stroke::new(0.5, self.theme.accent.gamma_multiply(0.4));
+        for y_val in 0..=h {
+            let p1 = project_3d(0.0, y_val as f32, li as f32);
+            let p2 = project_3d(w as f32, y_val as f32, li as f32);
+            painter.line_segment([p1, p2], grid_stroke);
+        }
+        for x_val in 0..=w {
+            let p1 = project_3d(x_val as f32, 0.0, li as f32);
+            let p2 = project_3d(x_val as f32, h as f32, li as f32);
+            painter.line_segment([p1, p2], grid_stroke);
+        }
+
+        // Draw voxels in back-to-front order (depth sorting)
+        let x_range: Vec<u32> = match self.sprite_stack_rotation_90 % 4 {
+            0 | 1 => (0..w).collect(),
+            _ => (0..w).rev().collect(),
+        };
+        let y_range: Vec<u32> = match self.sprite_stack_rotation_90 % 4 {
+            0 | 3 => (0..h).collect(),
+            _ => (0..h).rev().collect(),
+        };
+
+        let shade_color = |c: egui::Color32, factor: f32| -> egui::Color32 {
+            let r_c = (c.r() as f32 * factor).min(255.0) as u8;
+            let g_c = (c.g() as f32 * factor).min(255.0) as u8;
+            let b_c = (c.b() as f32 * factor).min(255.0) as u8;
+            egui::Color32::from_rgba_unmultiplied(r_c, g_c, b_c, c.a())
+        };
+
+        for z_val in 0..num_layers {
+            let layer = &frame.layers[z_val];
+            if !layer.visible || layer.is_group {
+                continue;
+            }
+            for &x_val in &x_range {
+                for &y_val in &y_range {
+                    let color = layer.get_pixel(x_val, y_val);
+                    if color[3] > 0 {
+                        let col32 = egui::Color32::from_rgba_unmultiplied(color[0], color[1], color[2], color[3]);
+
+                        // Top face
+                        let p00_1 = project_3d(x_val as f32, y_val as f32, (z_val + 1) as f32);
+                        let p10_1 = project_3d((x_val + 1) as f32, y_val as f32, (z_val + 1) as f32);
+                        let p11_1 = project_3d((x_val + 1) as f32, (y_val + 1) as f32, (z_val + 1) as f32);
+                        let p01_1 = project_3d(x_val as f32, (y_val + 1) as f32, (z_val + 1) as f32);
+                        painter.convex_polygon(
+                            &[p00_1, p10_1, p11_1, p01_1],
+                            col32,
+                            egui::Stroke::new(0.5, col32),
+                        );
+
+                        // Left face
+                        let p00_0 = project_3d(x_val as f32, y_val as f32, z_val as f32);
+                        let p01_0 = project_3d(x_val as f32, (y_val + 1) as f32, z_val as f32);
+                        let col_left = shade_color(col32, 0.85);
+                        painter.convex_polygon(
+                            &[p00_0, p01_0, p01_1, p00_1],
+                            col_left,
+                            egui::Stroke::new(0.5, col_left),
+                        );
+
+                        // Right face
+                        let p10_0 = project_3d((x_val + 1) as f32, y_val as f32, z_val as f32);
+                        let col_right = shade_color(col32, 0.7);
+                        painter.convex_polygon(
+                            &[p00_0, p10_0, p10_1, p00_1],
+                            col_right,
+                            egui::Stroke::new(0.5, col_right),
+                        );
+                    }
+                }
+            }
+        }
+
+        // Draw hover preview outlines of tool drawing
+        for &(px, py, color) in &self.shape_preview {
+            let col32 = egui::Color32::from_rgba_unmultiplied(color[0], color[1], color[2], 128);
+            let p00_1 = project_3d(px as f32, py as f32, (li + 1) as f32);
+            let p10_1 = project_3d((px + 1) as f32, py as f32, (li + 1) as f32);
+            let p11_1 = project_3d((px + 1) as f32, (py + 1) as f32, (li + 1) as f32);
+            let p01_1 = project_3d(px as f32, (py + 1) as f32, (li + 1) as f32);
+            painter.convex_polygon(
+                &[p00_1, p10_1, p11_1, p01_1],
+                col32,
+                egui::Stroke::new(1.0, egui::Color32::WHITE),
+            );
+        }
+
+        // Orbit rotation keyboard handlers
+        if ctx.input(|i| i.key_pressed(egui::Key::Q)) {
+            self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 3) % 4;
+            self.canvas_dirty = true;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::E)) {
+            self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 1) % 4;
+            self.canvas_dirty = true;
+        }
+    }
+
     fn handle_canvas_input(&mut self, response: egui::Response, canvas_rect: egui::Rect) {
         let middle_down = response.ctx.input(|i| i.pointer.middle_down());
         let space_held  = response.ctx.input(|i| i.key_down(egui::Key::Space));
@@ -8624,7 +8898,7 @@ print("FAIL")
             let layer_paintable = !self.project.animations[ai].frames[fi].layers[li].locked
                 && !self.project.animations[ai].frames[fi].layers[li].is_group;
             let hover_canvas = response.hover_pos()
-                .and_then(|p| self.canvas.screen_to_canvas(p, canvas_rect, w, h))
+                .and_then(|p| self.get_canvas_coords(p, canvas_rect))
                 .filter(|&(hx, hy)| hx < w && hy < h);
             if is_preview_tool && layer_paintable && !primary_down && self.drag_start.is_none() {
                 let color = self.color_state.foreground;
@@ -8746,7 +9020,7 @@ print("FAIL")
 
         // Unconstrained i32 canvas coordinates for shape tools — can be negative or
         // beyond canvas edges.  Pixels that fall outside are discarded by get_pixel/set_pixel.
-        let (shape_px, shape_py): (i32, i32) = self.canvas.screen_to_canvas_i32(pos, canvas_rect, w, h);
+        let (shape_px, shape_py): (i32, i32) = self.get_canvas_coords_i32(pos, canvas_rect);
         let shift_held = response.ctx.input(|i| i.modifiers.shift);
         let ctrl_held = response.ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
 
@@ -8757,7 +9031,7 @@ print("FAIL")
             // Already have shape_px/shape_py; (px, py) unused for shape mid-drag arms.
             (0u32, 0u32)
         } else {
-            let coords = self.canvas.screen_to_canvas(pos, canvas_rect, w, h);
+            let coords = self.get_canvas_coords(pos, canvas_rect);
             if is_select_tool || is_shape_tool {
                 let (cx, cy) = match coords {
                     Some((cx, cy)) => (cx.min(w - 1), cy.min(h - 1)),
