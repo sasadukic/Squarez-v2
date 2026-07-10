@@ -5958,7 +5958,7 @@ impl App {
                 }
                 let painter = ui.painter_at(canvas_rect);
                 if self.project.mode == crate::project::ProjectMode::SpriteStack {
-                    self.draw_3d_voxel_workspace(ctx, &painter, canvas_rect);
+                    self.draw_3d_voxel_workspace(ui, &painter, canvas_rect);
 
                 } else {
                     self.canvas.draw(
@@ -8253,7 +8253,8 @@ print("FAIL")
         }
     }
 
-    fn draw_3d_voxel_workspace(&mut self, ctx: &egui::Context, painter: &egui::Painter, canvas_rect: egui::Rect) {
+    fn draw_3d_voxel_workspace(&mut self, ui: &mut egui::Ui, painter: &egui::Painter, canvas_rect: egui::Rect) {
+        let ctx = ui.ctx().clone();
         let w = self.project.canvas_width;
         let h = self.project.canvas_height;
         let ai = self.project.active_animation;
@@ -8557,24 +8558,20 @@ print("FAIL")
         let text_w = galley.size().x;
         let btn_pos = egui::Pos2::new(label_pos.x + text_w + 6.0, line_end.y - 10.0);
 
-        egui::Area::new(egui::Id::new("sprite_stack_grid_vis_toggle"))
-            .fixed_pos(btn_pos)
-            .show(ctx, |ui| {
-                ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
-                let (rect, resp) = ui.allocate_exact_size(egui::Vec2::splat(20.0), egui::Sense::click());
-                let tint = if resp.hovered() { egui::Color32::WHITE } else { self.theme.fg_desc };
-                let vis_icon = if self.sprite_stack_show_grid {
-                    egui::include_image!("../assets/icons/visibility.svg")
-                } else {
-                    egui::include_image!("../assets/icons/visibility_off.svg")
-                };
-                ui.put(rect, egui::Image::new(vis_icon).tint(tint).fit_to_exact_size(egui::Vec2::splat(14.0)));
-                let vis_resp = resp.on_hover_text("Toggle Grid Plane Visibility");
-                if vis_resp.clicked() {
-                    self.sprite_stack_show_grid = !self.sprite_stack_show_grid;
-                    self.canvas_dirty = true;
-                }
-            });
+        let btn_rect = egui::Rect::from_min_size(btn_pos, egui::Vec2::splat(20.0));
+        let resp = ui.interact(btn_rect, egui::Id::new("sprite_stack_grid_vis_toggle"), egui::Sense::click());
+        let tint = if resp.hovered() { egui::Color32::WHITE } else { self.theme.fg_desc };
+        let vis_icon = if self.sprite_stack_show_grid {
+            egui::include_image!("../assets/icons/visibility.svg")
+        } else {
+            egui::include_image!("../assets/icons/visibility_off.svg")
+        };
+        ui.put(btn_rect, egui::Image::new(vis_icon).tint(tint).fit_to_exact_size(egui::Vec2::splat(14.0)));
+        let resp = resp.on_hover_text("Toggle Grid Plane Visibility");
+        if resp.clicked() {
+            self.sprite_stack_show_grid = !self.sprite_stack_show_grid;
+            self.canvas_dirty = true;
+        }
 
         // Draw active layer grid plane on top of voxels so it remains visible
         if self.sprite_stack_show_grid {
