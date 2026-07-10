@@ -278,6 +278,8 @@ pub struct App {
     pub sprite_stack_show_grid: bool,
     pub sprite_stack_preview_fixed_cam: bool,
     pub sprite_stack_grid_btn_rect: Option<egui::Rect>,
+    /// Current 3D view mode: 0 = orthographic (iso), 1-4 = side views (front, right, back, left)
+    pub three_d_view_mode: u8,
     /// Current chain of vertex indices being drawn in 3D mode
     pub drawing_chain: Vec<usize>,
     /// Track if any menu was open at the start of the current frame
@@ -980,6 +982,7 @@ impl App {
             sprite_stack_show_grid: true,
             sprite_stack_preview_fixed_cam: false,
             sprite_stack_grid_btn_rect: None,
+            three_d_view_mode: 0,
             drawing_chain: Vec::new(),
             menu_was_open_at_frame_start: false,
             brushes: {
@@ -8264,6 +8267,26 @@ print("FAIL")
         let num_layers = self.project.active_frame_ref().layers.len() as f32;
 
         let center_pos = canvas_rect.center() + self.canvas.offset;
+
+        // In 3D mode with side view, use inverse side projection
+        if self.project.mode == crate::project::ProjectMode::ThreeD && self.three_d_view_mode > 0 {
+            let dx = (pos.x - center_pos.x) / self.canvas.zoom;
+            let dy = (pos.y - center_pos.y) / self.canvas.zoom;
+
+            let cz = li - num_layers / 2.0;
+            let sx = dx;
+            let sy = -dy; // Inverted because screen Y is down
+
+            let (cx, cy) = match self.three_d_view_mode {
+                1 => (sx + w / 2.0, cz + h / 2.0),         // Front: sx=cx, sy=cz
+                2 => (cz + w / 2.0, -sx + h / 2.0),        // Right: sx=cy, sy=cz
+                3 => (-sx + w / 2.0, cz + h / 2.0),        // Back: sx=-cx, sy=cz
+                4 => (cz + w / 2.0, sx + h / 2.0),         // Left: sx=-cy, sy=cz
+                _ => (sx + w / 2.0, sy + h / 2.0),
+            };
+            return (cx, cy);
+        }
+
         let cz = li - num_layers / 2.0;
 
         let dx = (pos.x - center_pos.x) / self.canvas.zoom;
@@ -8288,9 +8311,9 @@ print("FAIL")
         let w = self.project.canvas_width;
         let h = self.project.canvas_height;
         let (xf, yf) = self.screen_to_voxel_coord_unconstrained(pos, canvas_rect);
-        let x = xf.floor();
-        let y = yf.floor();
-        if x >= 0.0 && x < w as f32 && y >= 0.0 && y < h as f32 {
+        let x = xf.round();
+        let y = yf.round();
+        if x >= 0.0 && x <= w as f32 && y >= 0.0 && y <= h as f32 {
             Some((x as u32, y as u32))
         } else {
             None
@@ -8314,16 +8337,29 @@ print("FAIL")
             let cy = y_val - h as f32 / 2.0;
             let cz = z_val - num_layers as f32 / 2.0;
 
-            let (rx, ry) = match self.sprite_stack_rotation_90 % 4 {
-                0 => (cx, cy),
-                1 => (-cy, cx),
-                2 => (-cx, -cy),
-                _ => (cy, -cx),
-            };
+            if self.project.mode == crate::project::ProjectMode::ThreeD && self.three_d_view_mode > 0 {
+                // Side view projection
+                let (sx, sy, _sz) = match self.three_d_view_mode {
+                    1 => (cx, cz, cy),         // Front view: look along Y
+                    2 => (cy, cz, -cx),        // Right view: look along X
+                    3 => (-cx, cz, -cy),       // Back view: look along -Y
+                    4 => (-cy, cz, cx),        // Left view: look along -X
+                    _ => (cx, cz, cy),
+                };
+                // sx = horizontal, sy = vertical (inverted for screen coords)
+                center_pos + egui::Vec2::new(sx, -sy) * self.canvas.zoom
+            } else {
+                let (rx, ry) = match self.sprite_stack_rotation_90 % 4 {
+                    0 => (cx, cy),
+                    1 => (-cy, cx),
+                    2 => (-cx, -cy),
+                    _ => (cy, -cx),
+                };
 
-            let px = rx - ry;
-            let py = (rx + ry) * 0.5 - cz * 1.0;
-            center_pos + egui::Vec2::new(px, py) * self.canvas.zoom
+                let px = rx - ry;
+                let py = (rx + ry) * 0.5 - cz * 1.0;
+                center_pos + egui::Vec2::new(px, py) * self.canvas.zoom
+            }
         };
 
         // Draw wireframe bounding box representing the 3 dimensions of the canvas
@@ -8671,11 +8707,21 @@ print("FAIL")
 
         // Orbit rotation keyboard handlers
         if ctx.input(|i| i.key_pressed(egui::Key::Q)) || ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
-            self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 3) % 4;
+            if self.project.mode == crate::project::ProjectMode::ThreeD {
+                // Cycle through view modes: 0 (iso) -> 1 (front) -> 2 (right) -> 3 (back) -> 4 (left) -> 0
+                self.three_d_view_mode = (self.three_d_view_mode + 1) % 5;
+            } else {
+                self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 3) % 4;
+            }
             self.canvas_dirty = true;
         }
         if ctx.input(|i| i.key_pressed(egui::Key::E)) || ctx.input(|i| i.key_pressed(egui::Key::ArrowRight)) {
-            self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 1) % 4;
+            if self.project.mode == crate::project::ProjectMode::ThreeD {
+                // Cycle backwards through view modes
+                self.three_d_view_mode = if self.three_d_view_mode == 0 { 4 } else { self.three_d_view_mode - 1 };
+            } else {
+                self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 1) % 4;
+            }
             self.canvas_dirty = true;
         }
 
@@ -8714,16 +8760,29 @@ print("FAIL")
             let cy = y_val - h as f32 / 2.0;
             let cz = z_val - num_layers as f32 / 2.0;
 
-            let (rx, ry) = match self.sprite_stack_rotation_90 % 4 {
-                0 => (cx, cy),
-                1 => (-cy, cx),
-                2 => (-cx, -cy),
-                _ => (cy, -cx),
-            };
+            if self.project.mode == crate::project::ProjectMode::ThreeD && self.three_d_view_mode > 0 {
+                // Side view projection
+                let (sx, sy, _sz) = match self.three_d_view_mode {
+                    1 => (cx, cz, cy),         // Front view: look along Y
+                    2 => (cy, cz, -cx),        // Right view: look along X
+                    3 => (-cx, cz, -cy),       // Back view: look along -Y
+                    4 => (-cy, cz, cx),        // Left view: look along -X
+                    _ => (cx, cz, cy),
+                };
+                // sx = horizontal, sy = vertical (inverted for screen coords)
+                center_pos + egui::Vec2::new(sx, -sy) * self.canvas.zoom
+            } else {
+                let (rx, ry) = match self.sprite_stack_rotation_90 % 4 {
+                    0 => (cx, cy),
+                    1 => (-cy, cx),
+                    2 => (-cx, -cy),
+                    _ => (cy, -cx),
+                };
 
-            let px = rx - ry;
-            let py = (rx + ry) * 0.5 - cz * 1.0;
-            center_pos + egui::Vec2::new(px, py) * self.canvas.zoom
+                let px = rx - ry;
+                let py = (rx + ry) * 0.5 - cz * 1.0;
+                center_pos + egui::Vec2::new(px, py) * self.canvas.zoom
+            }
         };
 
         let mesh = &frame.mesh;
@@ -8743,9 +8802,18 @@ print("FAIL")
             if let Some(&last_idx) = self.drawing_chain.last() {
                 if let Some(last_vertex) = mesh.vertices.get(last_idx) {
                     let p1 = project_3d(last_vertex.x, last_vertex.y, last_vertex.z);
+                    // Show where the next vertex will be placed (snapped to grid)
                     if let Some(mouse_pos) = ui.ctx().input(|i| i.pointer.hover_pos()) {
                         if canvas_rect.contains(mouse_pos) {
-                            painter.line_segment([p1, mouse_pos], egui::Stroke::new(1.0, edge_color.linear_multiply(0.5)));
+                            let (snap_x, snap_y) = self.get_canvas_coords_f32(mouse_pos, canvas_rect);
+                            let snap_x = snap_x.clamp(0.0, w as f32);
+                            let snap_y = snap_y.clamp(0.0, h as f32);
+                            let snap_z = li as f32;
+                            let p2 = project_3d(snap_x, snap_y, snap_z);
+                            painter.line_segment([p1, p2], egui::Stroke::new(1.0, edge_color.linear_multiply(0.5)));
+                            // Draw preview vertex dot at snap position
+                            let vertex_size = 0.5 * self.canvas.zoom;
+                            painter.circle_filled(p2, vertex_size / 2.0, edge_color.linear_multiply(0.7));
                         }
                     }
                 }
@@ -9662,6 +9730,9 @@ print("FAIL")
                 if self.project.mode == crate::project::ProjectMode::ThreeD {
                     // Get 3D coordinates from screen position (already snapped to grid corners)
                     let (x3d, y3d) = self.get_canvas_coords_f32(pos, canvas_rect);
+                    // Clamp to bounding box edges
+                    let x3d = x3d.clamp(0.0, self.project.canvas_width as f32);
+                    let y3d = y3d.clamp(0.0, self.project.canvas_height as f32);
                     let z3d = self.project.active_layer as f32;
 
                     // Check if clicking on an existing vertex (within threshold)
