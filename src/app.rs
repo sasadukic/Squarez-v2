@@ -8322,25 +8322,72 @@ print("FAIL")
                         let p11_1 = project_3d((x_val + 1) as f32, (y_val + 1) as f32, (z_val + 1) as f32);
                         let p01_1 = project_3d(x_val as f32, (y_val + 1) as f32, (z_val + 1) as f32);
 
+                        let p00_0 = project_3d(x_val as f32, y_val as f32, z_val as f32);
                         let p10_0 = project_3d((x_val + 1) as f32, y_val as f32, z_val as f32);
                         let p11_0 = project_3d((x_val + 1) as f32, (y_val + 1) as f32, z_val as f32);
                         let p01_0 = project_3d(x_val as f32, (y_val + 1) as f32, z_val as f32);
 
-                        // 1. Front-Left face (faces down-right: y = y + 1)
-                        let col_left = shade_color(col32, 0.85);
-                        painter.add(egui::Shape::convex_polygon(
-                            vec![p01_0, p11_0, p11_1, p01_1],
-                            col_left,
-                            egui::Stroke::new(0.5, col_left),
-                        ));
+                        // Find the bottom vertex that is closest to the camera (maximum screen Y)
+                        let mut max_y = p00_0.y;
+                        let mut front_idx = 0; // 0: p00, 1: p10, 2: p11, 3: p01
+                        
+                        if p10_0.y > max_y { max_y = p10_0.y; front_idx = 1; }
+                        if p11_0.y > max_y { max_y = p11_0.y; front_idx = 2; }
+                        if p01_0.y > max_y { front_idx = 3; }
 
-                        // 2. Front-Right face (faces down-left: x = x + 1)
-                        let col_right = shade_color(col32, 0.7);
-                        painter.add(egui::Shape::convex_polygon(
-                            vec![p10_0, p11_0, p11_1, p10_1],
-                            col_right,
-                            egui::Stroke::new(0.5, col_right),
-                        ));
+                        let col_side1 = shade_color(col32, 0.85);
+                        let col_side2 = shade_color(col32, 0.7);
+
+                        match front_idx {
+                            0 => {
+                                painter.add(egui::Shape::convex_polygon(
+                                    vec![p00_0, p10_0, p10_1, p00_1],
+                                    col_side1,
+                                    egui::Stroke::new(0.5, col_side1),
+                                ));
+                                painter.add(egui::Shape::convex_polygon(
+                                    vec![p00_0, p01_0, p01_1, p00_1],
+                                    col_side2,
+                                    egui::Stroke::new(0.5, col_side2),
+                                ));
+                            }
+                            1 => {
+                                painter.add(egui::Shape::convex_polygon(
+                                    vec![p10_0, p11_0, p11_1, p10_1],
+                                    col_side1,
+                                    egui::Stroke::new(0.5, col_side1),
+                                ));
+                                painter.add(egui::Shape::convex_polygon(
+                                    vec![p00_0, p10_0, p10_1, p00_1],
+                                    col_side2,
+                                    egui::Stroke::new(0.5, col_side2),
+                                ));
+                            }
+                            2 => {
+                                painter.add(egui::Shape::convex_polygon(
+                                    vec![p01_0, p11_0, p11_1, p01_1],
+                                    col_side1,
+                                    egui::Stroke::new(0.5, col_side1),
+                                ));
+                                painter.add(egui::Shape::convex_polygon(
+                                    vec![p10_0, p11_0, p11_1, p10_1],
+                                    col_side2,
+                                    egui::Stroke::new(0.5, col_side2),
+                                ));
+                            }
+                            _ => {
+                                painter.add(egui::Shape::convex_polygon(
+                                    vec![p00_0, p01_0, p01_1, p00_1],
+                                    col_side1,
+                                    egui::Stroke::new(0.5, col_side1),
+                                ));
+                                painter.add(egui::Shape::convex_polygon(
+                                    vec![p01_0, p11_0, p11_1, p01_1],
+                                    col_side2,
+                                    egui::Stroke::new(0.5, col_side2),
+                                ));
+                            }
+                        }
 
                         // 3. Top face (drawn last)
                         painter.add(egui::Shape::convex_polygon(
@@ -9068,7 +9115,7 @@ print("FAIL")
         let is_over_ui = pos.x < 38.0 // Left toolbar
             || pos.y < TOP_BAR_HEIGHT // Top bar
             || pos.x > self.sidebar_left_x // Right sidebar
-            || pos.y > timeline_y // Timeline
+            || (self.project.mode != crate::project::ProjectMode::SpriteStack && pos.y > timeline_y) // Timeline
             || (self.open_tool_submenu.is_some() && pos.x < 38.0 + 80.0 && pos.y < TOP_BAR_HEIGHT + 200.0) // Tool submenu
             || self.palette_browser.open
             || self.tile_browser.open
@@ -10193,7 +10240,8 @@ print("FAIL")
                                         ui.spacing_mut().item_spacing = Vec2::ZERO;
                                         let (r, _) = ui.allocate_exact_size(Vec2::new(select_w, row_h), egui::Sense::hover());
                                         ui.put(r, |ui: &mut egui::Ui| {
-                                            egui::ComboBox::from_id_salt("new_project_mode")
+                                            let prev_mode = self.new_project_mode.clone();
+                                            let resp = egui::ComboBox::from_id_salt("new_project_mode")
                                                 .selected_text(self.new_project_mode.label())
                                                 .width(select_w)
                                                 .show_ui(ui, |ui| {
