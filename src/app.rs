@@ -6247,6 +6247,7 @@ impl App {
                             }
                         }
                     }
+                }
 
                 let art_rect = self.canvas.art_rect(canvas_rect, disp_w, disp_h);
                 if self.project.mode != crate::project::ProjectMode::SpriteStack && self.project.mode != crate::project::ProjectMode::ThreeD {
