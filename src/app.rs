@@ -296,6 +296,8 @@ pub struct App {
     pub selected_vertices: Vec<usize>, // indices of selected vertices
     pub selected_faces: Vec<usize>, // indices of selected faces
     pub three_d_select_mode: Option<ThreeDSelectMode>, // vertex or face selection
+    pub drag_translate_start_3d: Option<(f32, f32, f32)>,
+    pub drag_translate_initial_vertices: Option<Vec<(usize, crate::project::Vertex3D)>>,
     /// Track if any menu was open at the start of the current frame
     menu_was_open_at_frame_start: bool,
     brushes: Vec<CustomBrush>,
@@ -1004,6 +1006,8 @@ impl App {
             selected_vertices: Vec::new(),
             selected_faces: Vec::new(),
             three_d_select_mode: None,
+            drag_translate_start_3d: None,
+            drag_translate_initial_vertices: None,
             menu_was_open_at_frame_start: false,
             brushes: {
                 let mut b = layout.as_ref().map(|l| l.brushes.clone()).unwrap_or_default();
@@ -9243,11 +9247,17 @@ print("FAIL")
             }
         }
 
-        // Handle vertex/face selection with click
+        // Handle vertex/face selection with click and drag translation
         if self.three_d_select_mode.is_some() {
             if let Some(click_pos) = ui.ctx().input(|i| i.pointer.interact_pos()) {
-                if canvas_rect.contains(click_pos) && ui.ctx().input(|i| i.pointer.primary_clicked()) {
-                    
+                let is_over_extrude_btn = self.three_d_select_mode == Some(ThreeDSelectMode::Face)
+                    && !self.selected_faces.is_empty()
+                    && egui::Rect::from_min_size(
+                        egui::Pos2::new(canvas_rect.min.x + 15.0, canvas_rect.max.y - 35.0),
+                        egui::Vec2::new(90.0, 24.0),
+                    ).contains(click_pos);
+
+                if canvas_rect.contains(click_pos) && ui.ctx().input(|i| i.pointer.primary_clicked()) && !is_over_extrude_btn {
                     // Find closest vertex
                     let mut closest_vertex: Option<(usize, f32)> = None;
                     for (idx, vertex) in mesh.vertices.iter().enumerate() {
@@ -9317,7 +9327,9 @@ print("FAIL")
                                     }
                                 } else {
                                     // Single selection
-                                    self.selected_vertices = vec![idx];
+                                    if !self.selected_vertices.contains(&idx) {
+                                        self.selected_vertices = vec![idx];
+                                    }
                                 }
                                 self.canvas_dirty = true;
                             } else if !ui.ctx().input(|i| i.modifiers.shift) {
@@ -9337,7 +9349,9 @@ print("FAIL")
                                     }
                                 } else {
                                     // Single selection
-                                    self.selected_faces = vec![idx];
+                                    if !self.selected_faces.contains(&idx) {
+                                        self.selected_faces = vec![idx];
+                                    }
                                 }
                                 self.canvas_dirty = true;
                             } else if !ui.ctx().input(|i| i.modifiers.shift) {
@@ -9348,7 +9362,62 @@ print("FAIL")
                         }
                         None => {}
                     }
+
+                    // Initialize drag translation state if we have a selection
+                    if !self.selected_vertices.is_empty() || !self.selected_faces.is_empty() {
+                        let click_3d = self.screen_to_3d_coord(click_pos, canvas_rect);
+                        self.drag_translate_start_3d = Some(click_3d);
+                        
+                        let mut vertices_to_move = std::collections::HashSet::new();
+                        for &idx in &self.selected_vertices {
+                            vertices_to_move.insert(idx);
+                        }
+                        for &face_idx in &self.selected_faces {
+                            if let Some(face) = mesh.faces.get(face_idx) {
+                                for &v_idx in &face.vertex_indices {
+                                    vertices_to_move.insert(v_idx);
+                                }
+                            }
+                        }
+                        let initial = vertices_to_move.into_iter()
+                            .filter_map(|idx| mesh.vertices.get(idx).map(|v| (idx, v.clone())))
+                            .collect();
+                        self.drag_translate_initial_vertices = Some(initial);
+                    }
                 }
+            }
+
+            // Update drag translation while mouse is held down
+            let mouse_down = ui.ctx().input(|i| i.pointer.primary_down());
+            if mouse_down {
+                if let (Some(start_3d), Some(initials)) = (&self.drag_translate_start_3d, &self.drag_translate_initial_vertices) {
+                    if let Some(curr_pos) = ui.ctx().input(|i| i.pointer.interact_pos()) {
+                        let (cx, cy, cz) = self.screen_to_3d_coord(curr_pos, canvas_rect);
+                        let snap_cx = cx.round();
+                        let snap_cy = cy.round();
+                        let snap_cz = cz.round();
+                        
+                        let snap_sx = start_3d.0.round();
+                        let snap_sy = start_3d.1.round();
+                        let snap_sz = start_3d.2.round();
+
+                        let dx = snap_cx - snap_sx;
+                        let dy = snap_cy - snap_sy;
+                        let dz = snap_cz - snap_sz;
+
+                        for &(idx, ref init_v) in initials {
+                            if let Some(vertex) = self.project.active_mesh_mut().vertices.get_mut(idx) {
+                                vertex.x = (init_v.x + dx).clamp(0.0, self.project.canvas_width as f32);
+                                vertex.y = (init_v.y + dy).clamp(0.0, self.project.canvas_height as f32);
+                                vertex.z = (init_v.z + dz).clamp(0.0, self.project.active_frame_ref().layers.len() as f32);
+                            }
+                        }
+                        self.canvas_dirty = true;
+                    }
+                }
+            } else {
+                self.drag_translate_start_3d = None;
+                self.drag_translate_initial_vertices = None;
             }
         }
 
