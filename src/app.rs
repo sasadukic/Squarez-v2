@@ -8543,11 +8543,11 @@ print("FAIL")
                 
                 let A1 = D * cos_y - dx * cos_x * sin_y;
                 let B1 = -(D * sin_y + dx * cos_x * cos_y);
-                let R1 = dx * (D + sy_const * sin_x);
+                let R1 = dx * (D - sy_const * sin_x);
 
-                let A2 = D * sin_y * sin_x - dy * cos_x * sin_y;
-                let B2 = D * cos_y * sin_x - dy * cos_x * cos_y;
-                let R2 = D * sy_const * cos_x + dy * (D + sy_const * sin_x);
+                let A2 = (D * sin_x + dy * cos_x) * sin_y;
+                let B2 = (D * sin_x + dy * cos_x) * cos_y;
+                let R2 = -dy * D - (D * cos_x - dy * sin_x) * sy_const;
 
                 let det = A1 * B2 - B1 * A2;
                 if det.abs() > 1e-5 {
@@ -8555,13 +8555,15 @@ print("FAIL")
                     let sz_solved = (A1 * R2 - R1 * A2) / det;
                     (sx_solved, sz_solved)
                 } else {
-                    let C = 1.0 + K * cos_y * cos_x / D;
+                    let C = 1.0 - K * cos_y * cos_x / D;
                     let A1_f = cos_y - dx * sin_y * cos_x / D;
-                    let B1_f = -dx * sin_x / D;
+                    let B1_f = dx * sin_x / D;
                     let R1_f = dx * C + K * sin_y;
-                    let A2_f = -sin_y * sin_x + dy * sin_y * cos_x / D;
-                    let B2_f = cos_x + dy * sin_x / D;
-                    let R2_f = -dy * C + K * cos_y * sin_x;
+                    
+                    let A2_f = sin_y * sin_x + dy * sin_y * cos_x / D;
+                    let B2_f = cos_x - dy * sin_x / D;
+                    let R2_f = -dy * C - K * cos_y * sin_x;
+                    
                     let det_f = A1_f * B2_f - B1_f * A2_f;
                     if det_f.abs() > 1e-5 {
                         let sx_solved = (R1_f * B2_f - B1_f * R2_f) / det_f;
@@ -8580,7 +8582,7 @@ print("FAIL")
 
                     let A2 = sin_y * sin_x;
                     let B2 = cos_y * sin_x;
-                    let R2 = dy + sy_const * cos_x;
+                    let R2 = -dy - sy_const * cos_x;
 
                     let sx_solved = (R1 * B2 - B1 * R2) / det;
                     let sz_solved = (A1 * R2 - R1 * A2) / det;
@@ -8700,8 +8702,8 @@ print("FAIL")
                     let rz = sx * sin_y + sz * cos_y;
                     
                     // Rotate around X axis (pitch)
-                    let ry = sy * cos_x - rz * sin_x;
-                    let rz2 = sy * sin_x + rz * cos_x;
+                    let ry = sy * cos_x + rz * sin_x;
+                    let rz2 = rz * cos_x - sy * sin_x;
                     
                     let scale = if self.three_d_perspective {
                         let perspective_distance = 1000.0;
@@ -9160,8 +9162,8 @@ print("FAIL")
                     let rz = sx * sin_y + sz * cos_y;
                     
                     // Rotate around X axis (pitch)
-                    let ry = sy * cos_x - rz * sin_x;
-                    let rz2 = sy * sin_x + rz * cos_x;
+                    let ry = sy * cos_x + rz * sin_x;
+                    let rz2 = rz * cos_x - sy * sin_x;
                     
                     let scale = if self.three_d_perspective {
                         let perspective_distance = 1000.0;
@@ -9265,8 +9267,8 @@ print("FAIL")
                             let sin_y = self.three_d_rotation_y.sin();
                             let rx = sx * cos_y - sz * sin_y;
                             let rz = sx * sin_y + sz * cos_y;
-                            let ry = sy * cos_x - rz * sin_x;
-                            let rz2 = sy * sin_x + rz * cos_x;
+                            let ry = sy * cos_x + rz * sin_x;
+                            let rz2 = rz * cos_x - sy * sin_x;
                             rz2
                         })
                         .sum::<f32>() / face.vertex_indices.len() as f32
