@@ -9037,7 +9037,11 @@ print("FAIL")
         let indicator_color = self.theme.accent;
         painter.line_segment([line_start, line_end], egui::Stroke::new(1.5, indicator_color));
 
-        let active_layer_name = &self.project.animations[ai].frames[fi].layers[li].name;
+        let active_layer_name: std::borrow::Cow<'_, str> = if self.project.mode == crate::project::ProjectMode::ThreeD {
+            format!("{}", li).into()
+        } else {
+            self.project.animations[ai].frames[fi].layers[li].name.as_str().into()
+        };
         let label_pos = egui::Pos2::new(line_end.x + 4.0, line_end.y - 6.0);
         painter.text(
             label_pos,
@@ -9050,7 +9054,6 @@ print("FAIL")
         // Put visibility toggle button right after the name
         let font_id = egui::FontId::new(10.0, egui::FontFamily::Proportional);
         let galley = ctx.fonts(|f| f.layout_no_wrap(active_layer_name.to_string(), font_id, indicator_color));
-        let text_w = galley.size().x;
         let btn_pos = egui::Pos2::new(label_pos.x + text_w + 6.0, line_end.y - 10.0);
 
         let btn_rect = egui::Rect::from_min_size(btn_pos, egui::Vec2::splat(20.0));
