@@ -292,7 +292,6 @@ pub struct App {
     pub three_d_perspective: bool, // true = perspective, false = orthographic
     pub three_d_rotation_x: f32, // rotation around X axis (pitch)
     pub three_d_rotation_y: f32, // rotation around Y axis (yaw)
-    pub three_d_lock_rotation: bool, // lock camera rotation
     // 3D selection state
     pub selected_vertices: Vec<usize>, // indices of selected vertices
     pub selected_faces: Vec<usize>, // indices of selected faces
@@ -1002,7 +1001,6 @@ impl App {
             three_d_perspective: false,
             three_d_rotation_x: 0.0,
             three_d_rotation_y: 0.0,
-            three_d_lock_rotation: false,
             selected_vertices: Vec::new(),
             selected_faces: Vec::new(),
             three_d_select_mode: None,
@@ -6111,7 +6109,7 @@ impl App {
                         self.canvas.handle_input(ui, canvas_rect);
 
                         // Handle Right-click drag to rotate 3D camera
-                        if self.project.mode == crate::project::ProjectMode::ThreeD && !self.three_d_lock_rotation {
+                        if self.project.mode == crate::project::ProjectMode::ThreeD {
                             let is_hovered = ui.input(|i| i.pointer.hover_pos().map(|pos| canvas_rect.contains(pos)).unwrap_or(false));
                             let over_gizmo = ui.input(|i| i.pointer.hover_pos().map(|pos| {
                                 pos.x >= canvas_rect.max.x - 120.0 && pos.y <= canvas_rect.min.y + 160.0
@@ -8431,7 +8429,17 @@ print("FAIL")
                     (dx, -dy)
                 }
             } else {
-                (dx, -dy)
+                let sx_solved = if cos_y.abs() > 1e-5 {
+                    (dx + K * sin_y) / cos_y
+                } else {
+                    dx
+                };
+                let sy_solved = if cos_x.abs() > 1e-5 {
+                    (-dy + (sx_solved * sin_y + K * cos_y) * sin_x) / cos_x
+                } else {
+                    -dy
+                };
+                (sx_solved, sy_solved)
             };
 
             match self.three_d_view_mode {
@@ -9258,52 +9266,9 @@ print("FAIL")
         let gizmo_center = egui::Pos2::new(canvas_rect.max.x - 65.0, canvas_rect.min.y + 65.0);
         let gizmo_rect = egui::Rect::from_center_size(gizmo_center, egui::Vec2::splat(100.0));
 
-        // Draw lock icon next to the gizmo
-        let lock_btn_rect = egui::Rect::from_min_size(
-            egui::Pos2::new(canvas_rect.max.x - 30.0, canvas_rect.min.y + 15.0),
-            egui::Vec2::splat(16.0),
-        );
-        let lock_resp = ui.interact(lock_btn_rect, egui::Id::new("three_d_lock_toggle"), egui::Sense::click());
-        let lock_color = if lock_resp.hovered() { self.theme.fg } else { self.theme.fg_desc };
-        
-        {
-            let rect = lock_btn_rect;
-            let body_w = rect.width();
-            let body_h = rect.height() * 0.55;
-            let body_rect = egui::Rect::from_min_size(
-                egui::Pos2::new(rect.min.x, rect.max.y - body_h),
-                egui::Vec2::new(body_w, body_h),
-            );
-            painter.rect_filled(body_rect, 1.5, lock_color);
-            
-            let stroke = egui::Stroke::new(1.2, lock_color);
-            let shackle_center_x = rect.center().x;
-            let shackle_radius = body_w * 0.28;
-            let shackle_y = rect.min.y + body_h * 0.65;
-            
-            if self.three_d_lock_rotation {
-                painter.circle_stroke(
-                    egui::Pos2::new(shackle_center_x, shackle_y),
-                    shackle_radius,
-                    stroke,
-                );
-            } else {
-                painter.circle_stroke(
-                    egui::Pos2::new(shackle_center_x - 1.5, shackle_y - 1.0),
-                    shackle_radius,
-                    stroke,
-                );
-            }
-        }
-        
-        if lock_resp.clicked() {
-            self.three_d_lock_rotation = !self.three_d_lock_rotation;
-            self.canvas_dirty = true;
-        }
-
         // Drag on the gizmo area to rotate camera
         let gizmo_drag_resp = ui.interact(gizmo_rect, egui::Id::new("three_d_gizmo_drag"), egui::Sense::drag());
-        if gizmo_drag_resp.dragged() && !self.three_d_lock_rotation {
+        if gizmo_drag_resp.dragged() {
             let delta = gizmo_drag_resp.drag_delta();
             if delta != egui::Vec2::ZERO {
                 self.three_d_rotation_y += delta.x * 0.01;
