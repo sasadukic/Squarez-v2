@@ -9644,25 +9644,26 @@ print("FAIL")
             // Draw grid position labels
             let indicator_color = self.theme.accent;
             
-            // Horizontal grid label (left side) - shows Z position
+            // Horizontal grid label (left side) - shows layer name
             let h_label_pos = project_3d(0.0, 0.0, li as f32);
             let h_label_end = egui::Pos2::new(h_label_pos.x - 25.0, h_label_pos.y);
             painter.line_segment([h_label_end, h_label_pos], egui::Stroke::new(1.5, indicator_color));
+            let h_name = &self.project.animations[ai].frames[fi].layers[li].name;
             painter.text(
                 egui::Pos2::new(h_label_end.x - 4.0, h_label_end.y - 6.0),
                 egui::Align2::RIGHT_TOP,
-                format!("Z: {}", li),
+                h_name,
                 egui::FontId::new(10.0, egui::FontFamily::Proportional),
                 indicator_color,
             );
             
-            // Vertical grid label (at the grid position) - shows X position
-            let v_label_pos = project_3d(grid_x_offset, 0.0, 0.0);
-            let v_label_end = egui::Pos2::new(v_label_pos.x, v_label_pos.y - 25.0);
-            painter.line_segment([v_label_pos, v_label_end], egui::Stroke::new(1.5, indicator_color.gamma_multiply(0.5)));
+            // Vertical grid label: line goes LEFT from the wall at the front-top corner
+            let v_corner = project_3d(grid_x_offset, 0.0, num_layers as f32);
+            let v_label_end = egui::Pos2::new(v_corner.x - 25.0, v_corner.y);
+            painter.line_segment([v_label_end, v_corner], egui::Stroke::new(1.5, indicator_color.gamma_multiply(0.5)));
             painter.text(
-                egui::Pos2::new(v_label_end.x - 6.0, v_label_end.y - 4.0),
-                egui::Align2::RIGHT_CENTER,
+                egui::Pos2::new(v_label_end.x - 4.0, v_label_end.y - 6.0),
+                egui::Align2::RIGHT_TOP,
                 format!("X: {:.0}", grid_x_offset),
                 egui::FontId::new(10.0, egui::FontFamily::Proportional),
                 indicator_color.gamma_multiply(0.5),
@@ -10755,22 +10756,32 @@ print("FAIL")
             ActiveTool::Pencil => {
                 // In 3D mode, pencil places vertices and creates edges
                 if self.project.mode == crate::project::ProjectMode::ThreeD {
-                    // Get 3D coordinates from screen position (already snapped to grid corners)
-                    let (x3d, y3d, z3d) = self.screen_to_3d_coord(pos, canvas_rect);
+                    // Try to get 3D coordinates for both horizontal and vertical planes
+                    let (x3d_h, y3d_h, z3d_h) = self.screen_to_3d_coord(pos, canvas_rect);
                     
-                    // Snap to corners and edges when close
                     let w = self.project.canvas_width as f32;
                     let h = self.project.canvas_height as f32;
                     let num_layers = self.project.active_frame_ref().layers.len() as f32;
                     
-                    let mut x3d = x3d.round().clamp(0.0, w);
-                    let y3d = y3d.round().clamp(0.0, h);
-                    let z3d = z3d.round().clamp(0.0, num_layers);
-                    
-                    // Snap to vertical grid if close
+                    // Try vertical plane intersection (X = grid_x)
                     let grid_x = self.three_d_grid_x;
-                    if (x3d - grid_x).abs() < 0.5 {
-                        x3d = grid_x;
+                    let center_pos = canvas_rect.center() + self.canvas.offset;
+                    let dx = (pos.x - center_pos.x) / self.canvas.zoom;
+                    let dy = (pos.y - center_pos.y) / self.canvas.zoom;
+                    
+                    // Compute what (y, z) would be on the vertical plane at X = grid_x
+                    let (v_y, v_z) = self.screen_to_grid_plane_coord(pos, canvas_rect, grid_x);
+                    
+                    // Choose horizontal or vertical based on which plane the click is closer to
+                    let (mut x3d, mut y3d, mut z3d) = (x3d_h.round().clamp(0.0, w), y3d_h.round().clamp(0.0, h), z3d_h.round().clamp(0.0, num_layers));
+                    
+                    // Check if clicking near the vertical grid
+                    let grid_x_rounded = grid_x.round();
+                    if (x3d_h - grid_x_rounded).abs() < 1.0 {
+                        // Use vertical plane coordinates
+                        x3d = grid_x_rounded;
+                        y3d = v_y.round().clamp(0.0, h);
+                        z3d = v_z.round().clamp(0.0, num_layers);
                     }
 
                     // Check if clicking on an existing vertex (within threshold)
@@ -12366,6 +12377,62 @@ print("FAIL")
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.replace_project_pending = false;
             self.show_new_dialog = false;
+        }
+    }
+
+    /// Intersect the click ray with a vertical plane at X = grid_x.
+    /// Returns (y, z) coordinates on that plane.
+    fn screen_to_grid_plane_coord(&self, pos: egui::Pos2, canvas_rect: egui::Rect, grid_x: f32) -> (f32, f32) {
+        let w = self.project.canvas_width as f32;
+        let h = self.project.canvas_height as f32;
+        let num_layers = self.project.active_frame_ref().layers.len() as f32;
+        let center_pos = canvas_rect.center() + self.canvas.offset;
+
+        let dx = (pos.x - center_pos.x) / self.canvas.zoom;
+        let dy = (pos.y - center_pos.y) / self.canvas.zoom;
+
+        // In Front view (mode 1): screen x → world x, screen y → world z
+        // The vertical plane is at X = grid_x, in Y-Z space
+        // We need to solve: given dx, dy (screen), and X = grid_x, find Y and Z
+        
+        if self.three_d_view_mode > 0 {
+            let cos_x = self.three_d_rotation_x.cos();
+            let sin_x = self.three_d_rotation_x.sin();
+            let cos_y = self.three_d_rotation_y.cos();
+            let sin_y = self.three_d_rotation_y.sin();
+
+            let cx = grid_x - w / 2.0;
+            let sy_const = 0.0; // We're solving at the grid's Y=0 reference point
+            
+            // Forward projection: screen_x = (cx*cos_y - cy*sin_y) * zoom
+            // screen_y = -(cz*cos_x + (cx*sin_y + cy*cos_y)*sin_x) * zoom
+            // Given cx (grid_x), solve for cy and cz from dx, dy
+            
+            // From screen_x equation: dx = cx*cos_y - cy*sin_y
+            // cy = (cx*cos_y - dx) / sin_y  (if sin_y != 0)
+            // From screen_y equation: dy = -(cz*cos_x + (cx*sin_y + cy*cos_y)*sin_x)
+            
+            let cy = if sin_y.abs() > 0.01 {
+                (cx * cos_y - dx) / sin_y
+            } else {
+                // sin_y ≈ 0, cos_y ≈ 1 or ≈ -1
+                // dx = cx * cos_y, so cx ≈ dx / cos_y
+                // No Y info available in this case, use center
+                h / 2.0 - cx
+            };
+            
+            // Now solve for cz
+            let inner = cx * sin_y + cy * cos_y;
+            let cz = if cos_x.abs() > 0.01 {
+                -(dy + inner * sin_x) / cos_x
+            } else {
+                num_layers / 2.0
+            };
+            
+            (cy + h / 2.0, cz + num_layers / 2.0)
+        } else {
+            // Top-down view: screen maps directly to X-Y, Z is from layer
+            (dx + h / 2.0, 0.0)
         }
     }
 
