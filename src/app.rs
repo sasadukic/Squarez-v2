@@ -4968,7 +4968,11 @@ impl App {
                                                         self.tile_display_active = false;
                                                     }
                                                     self.canvas_dirty = true;
-                                                    self.pending_zoom_fit = true;
+            self.pending_zoom_fit = true;
+            // Initialize 3D grid positions when switching to 3D mode
+            if self.project.mode == crate::project::ProjectMode::ThreeD {
+                self.three_d_grid_x = self.project.canvas_width as f32;
+            }
                                                 }
                                             }
                                             ui.add_space(4.0);
@@ -9797,7 +9801,7 @@ print("FAIL")
                     self.three_d_view_mode = 1;
                     self.three_d_perspective = false;
                     self.three_d_grid_y = 0.0;
-                    self.three_d_grid_x = 0.0;
+                    self.three_d_grid_x = self.project.canvas_width as f32;
                     self.project.active_layer = 0;
                 } else {
                     self.three_d_perspective = !self.three_d_perspective;
