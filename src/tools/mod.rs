@@ -28,6 +28,9 @@ pub enum ActiveTool {
     MagicWand,
     Move,
     Zoom,
+    // 3D mode tools
+    VertexSelect,
+    FaceSelect,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

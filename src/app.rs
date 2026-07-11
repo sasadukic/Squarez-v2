@@ -9060,8 +9060,8 @@ print("FAIL")
             self.canvas_dirty = true;
         }
 
-        // Draw active layer grid plane on top of voxels so it remains visible
-        if self.sprite_stack_show_grid {
+        // Draw active layer grid plane on top of voxels so it remains visible (non-3D mode only)
+        if self.sprite_stack_show_grid && self.project.mode != crate::project::ProjectMode::ThreeD {
             let grid_stroke = egui::Stroke::new(0.5, self.theme.accent.gamma_multiply(0.4));
             for y_val in 0..=h {
                 let p1 = project_3d(0.0, y_val as f32, li as f32);
@@ -9135,60 +9135,53 @@ print("FAIL")
 
         let center_pos = canvas_rect.center() + self.canvas.offset;
 
-        let project_3d = |x_val: f32, y_val: f32, z_val: f32| -> egui::Pos2 {
+        let zoom = self.canvas.zoom;
+        let view_mode = self.three_d_view_mode;
+        let is_perspective = self.three_d_perspective;
+        let rot_x = self.three_d_rotation_x;
+        let rot_y = self.three_d_rotation_y;
+
+        let project_3d = move |x_val: f32, y_val: f32, z_val: f32| -> egui::Pos2 {
             let cx = x_val - w as f32 / 2.0;
             let cy = y_val - h as f32 / 2.0;
             let cz = z_val - num_layers as f32 / 2.0;
 
-            if self.project.mode == crate::project::ProjectMode::ThreeD {
-                if self.three_d_view_mode > 0 {
-                    // Side view projection
-                    let (sx, sy, sz) = match self.three_d_view_mode {
-                        1 => (cx, cz, cy),         // Front view: look along Y
-                        2 => (cy, cz, -cx),        // Right view: look along X
-                        3 => (-cx, cz, -cy),       // Back view: look along -Y
-                        4 => (-cy, cz, cx),        // Left view: look along -X
-                        _ => (cx, cz, cy),
-                    };
-                    
-                    // Apply camera rotation
-                    let cos_x = self.three_d_rotation_x.cos();
-                    let sin_x = self.three_d_rotation_x.sin();
-                    let cos_y = self.three_d_rotation_y.cos();
-                    let sin_y = self.three_d_rotation_y.sin();
-                    
-                    // Rotate around Y axis (yaw)
-                    let rx = sx * cos_y - sz * sin_y;
-                    let rz = sx * sin_y + sz * cos_y;
-                    
-                    // Rotate around X axis (pitch)
-                    let ry = sy * cos_x + rz * sin_x;
-                    let rz2 = rz * cos_x - sy * sin_x;
-                    
-                    let scale = if self.three_d_perspective {
-                        let perspective_distance = 1000.0;
-                        perspective_distance / (perspective_distance + rz2)
-                    } else {
-                        1.0
-                    };
-                    
-                    center_pos + egui::Vec2::new(rx * scale, -ry * scale) * self.canvas.zoom
-                } else {
-                    // Orthographic view (mode 0): simple 2D projection
-                    // x maps to screen x, y maps to screen y (inverted)
-                    center_pos + egui::Vec2::new(cx, -cy) * self.canvas.zoom
-                }
-            } else {
-                let (rx, ry) = match self.sprite_stack_rotation_90 % 4 {
-                    0 => (cx, cy),
-                    1 => (-cy, cx),
-                    2 => (-cx, -cy),
-                    _ => (cy, -cx),
+            if view_mode > 0 {
+                // Side view projection
+                let (sx, sy, sz) = match view_mode {
+                    1 => (cx, cz, cy),         // Front view: look along Y
+                    2 => (cy, cz, -cx),        // Right view: look along X
+                    3 => (-cx, cz, -cy),       // Back view: look along -Y
+                    4 => (-cy, cz, cx),        // Left view: look along -X
+                    _ => (cx, cz, cy),
                 };
-
-                let px = rx - ry;
-                let py = (rx + ry) * 0.5 - cz * 1.0;
-                center_pos + egui::Vec2::new(px, py) * self.canvas.zoom
+                
+                // Apply camera rotation
+                let cos_x = rot_x.cos();
+                let sin_x = rot_x.sin();
+                let cos_y = rot_y.cos();
+                let sin_y = rot_y.sin();
+                
+                // Rotate around Y axis (yaw)
+                let rx = sx * cos_y - sz * sin_y;
+                let rz = sx * sin_y + sz * cos_y;
+                
+                // Rotate around X axis (pitch)
+                let ry = sy * cos_x + rz * sin_x;
+                let rz2 = rz * cos_x - sy * sin_x;
+                
+                let scale = if is_perspective {
+                    let perspective_distance = 1000.0;
+                    perspective_distance / (perspective_distance + rz2)
+                } else {
+                    1.0
+                };
+                
+                center_pos + egui::Vec2::new(rx * scale, -ry * scale) * zoom
+            } else {
+                // Orthographic view (mode 0): simple 2D projection
+                // x maps to screen x, y maps to screen y (inverted)
+                center_pos + egui::Vec2::new(cx, -cy) * zoom
             }
         };
 
@@ -9590,6 +9583,21 @@ print("FAIL")
                     }
                 }
                 self.canvas_dirty = true;
+            }
+        }
+
+        // Draw grid on top of everything so it's always visible
+        if self.sprite_stack_show_grid {
+            let grid_stroke = egui::Stroke::new(0.8, self.theme.accent.gamma_multiply(0.7));
+            for y_val in 0..=h {
+                let p1 = project_3d(0.0, y_val as f32, li as f32);
+                let p2 = project_3d(w as f32, y_val as f32, li as f32);
+                painter.line_segment([p1, p2], grid_stroke);
+            }
+            for x_val in 0..=w {
+                let p1 = project_3d(x_val as f32, 0.0, li as f32);
+                let p2 = project_3d(x_val as f32, h as f32, li as f32);
+                painter.line_segment([p1, p2], grid_stroke);
             }
         }
 
