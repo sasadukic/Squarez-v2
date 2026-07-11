@@ -9297,10 +9297,10 @@ print("FAIL")
                 .filter_map(|&idx| mesh.vertices.get(idx).map(|v| project_3d(v.x, v.y, v.z)))
                 .collect();
 
-                // Draw face triangles (ear clipping for non-convex polygons)
+                // Draw face polygon
                 if points.len() >= 3 {
                     let is_selected = self.selected_faces.contains(idx);
-                    let base_color = if is_selected {
+                    let face_color = if is_selected {
                         egui::Color32::from_rgba_unmultiplied(255, 255, 0, 160)
                     } else {
                         egui::Color32::from_rgba_unmultiplied(
@@ -9314,20 +9314,11 @@ print("FAIL")
                         255
                     );
 
-                    // Triangulate: fan triangulation from first vertex (no stroke on internal edges)
-                    for i in 1..(points.len() - 1) {
-                        let tri = vec![points[0], points[i], points[i + 1]];
-                        painter.add(egui::Shape::convex_polygon(
-                            tri,
-                            base_color,
-                            egui::Stroke::new(0.0, egui::Color32::TRANSPARENT),
-                        ));
-                    }
-                    // Draw the outline as a closed path
-                    for i in 0..points.len() {
-                        let j = (i + 1) % points.len();
-                        painter.line_segment([points[i], points[j]], egui::Stroke::new(1.0, stroke_color));
-                    }
+                    painter.add(egui::Shape::convex_polygon(
+                        points.clone(),
+                        face_color,
+                        egui::Stroke::new(1.0, stroke_color),
+                    ));
 
                 // Record that these vertices are part of a drawn face
                 for &v_idx in &face.vertex_indices {
