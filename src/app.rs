@@ -8830,48 +8830,48 @@ print("FAIL")
                                 painter.add(egui::Shape::convex_polygon(
                                     vec![p00_0, p10_0, p10_1, p00_1],
                                     col_side1,
-                                    egui::Stroke::new(0.5, col_side1),
+                                    egui::Stroke::new(0.0, egui::Color32::TRANSPARENT),
                                 ));
                                 painter.add(egui::Shape::convex_polygon(
                                     vec![p00_0, p01_0, p01_1, p00_1],
                                     col_side2,
-                                    egui::Stroke::new(0.5, col_side2),
+                                    egui::Stroke::new(0.0, egui::Color32::TRANSPARENT),
                                 ));
                             }
                             1 => {
                                 painter.add(egui::Shape::convex_polygon(
                                     vec![p10_0, p11_0, p11_1, p10_1],
                                     col_side1,
-                                    egui::Stroke::new(0.5, col_side1),
+                                    egui::Stroke::new(0.0, egui::Color32::TRANSPARENT),
                                 ));
                                 painter.add(egui::Shape::convex_polygon(
                                     vec![p00_0, p10_0, p10_1, p00_1],
                                     col_side2,
-                                    egui::Stroke::new(0.5, col_side2),
+                                    egui::Stroke::new(0.0, egui::Color32::TRANSPARENT),
                                 ));
                             }
                             2 => {
                                 painter.add(egui::Shape::convex_polygon(
                                     vec![p01_0, p11_0, p11_1, p01_1],
                                     col_side1,
-                                    egui::Stroke::new(0.5, col_side1),
+                                    egui::Stroke::new(0.0, egui::Color32::TRANSPARENT),
                                 ));
                                 painter.add(egui::Shape::convex_polygon(
                                     vec![p10_0, p11_0, p11_1, p10_1],
                                     col_side2,
-                                    egui::Stroke::new(0.5, col_side2),
+                                    egui::Stroke::new(0.0, egui::Color32::TRANSPARENT),
                                 ));
                             }
                             _ => {
                                 painter.add(egui::Shape::convex_polygon(
                                     vec![p00_0, p01_0, p01_1, p00_1],
                                     col_side1,
-                                    egui::Stroke::new(0.5, col_side1),
+                                    egui::Stroke::new(0.0, egui::Color32::TRANSPARENT),
                                 ));
                                 painter.add(egui::Shape::convex_polygon(
                                     vec![p01_0, p11_0, p11_1, p01_1],
                                     col_side2,
-                                    egui::Stroke::new(0.5, col_side2),
+                                    egui::Stroke::new(0.0, egui::Color32::TRANSPARENT),
                                 ));
                             }
                         }
@@ -8880,7 +8880,7 @@ print("FAIL")
                         painter.add(egui::Shape::convex_polygon(
                             vec![p00_1, p10_1, p11_1, p01_1],
                             col32,
-                            egui::Stroke::new(0.5, col32),
+                            egui::Stroke::new(0.0, egui::Color32::TRANSPARENT),
                         ));
                     }
                 }
