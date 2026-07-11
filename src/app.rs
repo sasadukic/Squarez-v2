@@ -9046,7 +9046,7 @@ print("FAIL")
         painter.text(
             label_pos,
             egui::Align2::LEFT_TOP,
-            active_layer_name,
+            &active_layer_name,
             egui::FontId::new(10.0, egui::FontFamily::Proportional),
             indicator_color,
         );
@@ -9054,7 +9054,7 @@ print("FAIL")
         // Put visibility toggle button right after the name
         let font_id = egui::FontId::new(10.0, egui::FontFamily::Proportional);
         let galley = ctx.fonts(|f| f.layout_no_wrap(active_layer_name.to_string(), font_id, indicator_color));
-        let btn_pos = egui::Pos2::new(label_pos.x + text_w + 6.0, line_end.y - 10.0);
+        let text_w = galley.size().x;        let btn_pos = egui::Pos2::new(label_pos.x + text_w + 6.0, line_end.y - 10.0);
 
         let btn_rect = egui::Rect::from_min_size(btn_pos, egui::Vec2::splat(20.0));
         self.sprite_stack_grid_btn_rect = Some(btn_rect);
@@ -9644,22 +9644,8 @@ print("FAIL")
                 painter.line_segment([p1, p2], grid_stroke_vertical);
             }
             
-            // Draw grid position labels
+            // Draw vertical grid X label: line goes LEFT from the wall at the front-top corner
             let indicator_color = self.theme.accent;
-            
-            // Z label (right side of the grid, top corner)
-            let z_pos = project_3d(w as f32, 0.0, li as f32);
-            let z_end = egui::Pos2::new(z_pos.x + 25.0, z_pos.y);
-            painter.line_segment([z_pos, z_end], egui::Stroke::new(1.5, indicator_color));
-            painter.text(
-                egui::Pos2::new(z_end.x + 4.0, z_end.y - 6.0),
-                egui::Align2::LEFT_TOP,
-                format!("{}", li),
-                egui::FontId::new(10.0, egui::FontFamily::Proportional),
-                indicator_color,
-            );
-            
-            // Vertical grid X label: line goes LEFT from the wall at the front-top corner
             let v_corner = project_3d(grid_x_offset, 0.0, num_layers as f32);
             let v_label_end = egui::Pos2::new(v_corner.x - 25.0, v_corner.y);
             painter.line_segment([v_label_end, v_corner], egui::Stroke::new(1.5, indicator_color.gamma_multiply(0.5)));
