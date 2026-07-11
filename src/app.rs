@@ -1339,6 +1339,10 @@ impl App {
             ];
 
             self.pending_zoom_fit = true;
+            // Initialize 3D grid positions when switching to 3D mode
+            if self.project.mode == crate::project::ProjectMode::ThreeD {
+                self.three_d_grid_x = self.project.canvas_width as f32;
+            }
         } else {
             self.ui_state.collapse_palette = false;
             self.ui_state.collapse_color = false;
@@ -4968,11 +4972,6 @@ impl App {
                                                         self.tile_display_active = false;
                                                     }
                                                     self.canvas_dirty = true;
-            self.pending_zoom_fit = true;
-            // Initialize 3D grid positions when switching to 3D mode
-            if self.project.mode == crate::project::ProjectMode::ThreeD {
-                self.three_d_grid_x = self.project.canvas_width as f32;
-            }
                                                 }
                                             }
                                             ui.add_space(4.0);
