@@ -9086,6 +9086,15 @@ print("FAIL")
             self.canvas_dirty = true;
         }
 
+        // Handle confirmation with Enter key in 3D selection
+        if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+            if self.project.mode == crate::project::ProjectMode::ThreeD {
+                self.selected_faces.clear();
+                self.selected_vertices.clear();
+                self.canvas_dirty = true;
+            }
+        }
+
         // Active layer adjustment keyboard handlers
         let total_layers = self.project.animations[ai].frames[fi].layers.len();
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
@@ -9209,21 +9218,50 @@ print("FAIL")
             }
         }
 
-        // Draw vertices (small)
+        // Draw faces and their vertices in depth-sorted order (Painter's Algorithm)
+        let mut sorted_faces: Vec<(usize, &crate::project::Face3D, f32)> = mesh.faces.iter().enumerate()
+            .map(|(idx, face)| {
+                let avg_depth = if face.vertex_indices.is_empty() {
+                    0.0
+                } else {
+                    face.vertex_indices.iter()
+                        .filter_map(|&v_idx| mesh.vertices.get(v_idx))
+                        .map(|v| {
+                            let cx = v.x - w as f32 / 2.0;
+                            let cy = v.y - h as f32 / 2.0;
+                            let cz = v.z - num_layers as f32 / 2.0;
+                            let (sx, sy, sz) = match self.three_d_view_mode {
+                                1 => (cx, cz, cy),
+                                2 => (cy, cz, -cx),
+                                3 => (-cx, cz, -cy),
+                                4 => (-cy, cz, cx),
+                                _ => (cx, cz, cy),
+                            };
+                            let cos_x = self.three_d_rotation_x.cos();
+                            let sin_x = self.three_d_rotation_x.sin();
+                            let cos_y = self.three_d_rotation_y.cos();
+                            let sin_y = self.three_d_rotation_y.sin();
+                            let rx = sx * cos_y - sz * sin_y;
+                            let rz = sx * sin_y + sz * cos_y;
+                            let ry = sy * cos_x - rz * sin_x;
+                            let rz2 = sy * sin_x + rz * cos_x;
+                            rz2
+                        })
+                        .sum::<f32>() / face.vertex_indices.len() as f32
+                };
+                (idx, face, avg_depth)
+            })
+            .collect();
+
+        // Sort by depth descending (furthest first)
+        sorted_faces.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+
         let vertex_color = self.theme.accent;
         let vertex_size = 0.5 * self.canvas.zoom;
         let selected_vertex_size = 1.0 * self.canvas.zoom;
+        let mut referenced_vertices = std::collections::HashSet::new();
 
-        for (idx, vertex) in mesh.vertices.iter().enumerate() {
-            let pos = project_3d(vertex.x, vertex.y, vertex.z);
-            let is_selected = self.selected_vertices.contains(&idx);
-            let size = if is_selected { selected_vertex_size } else { vertex_size };
-            let color = if is_selected { Color32::YELLOW } else { vertex_color };
-            painter.circle_filled(pos, size / 2.0, color);
-        }
-
-        // Draw faces
-        for (idx, face) in mesh.faces.iter().enumerate() {
+        for (idx, face, _) in &sorted_faces {
             if face.vertex_indices.len() < 3 { continue; }
 
             let points: Vec<egui::Pos2> = face.vertex_indices.iter()
@@ -9231,19 +9269,55 @@ print("FAIL")
                 .collect();
 
             if points.len() >= 3 {
-                let is_selected = self.selected_faces.contains(&idx);
+                let is_selected = self.selected_faces.contains(idx);
                 let face_color = if is_selected {
-                    egui::Color32::from_rgba_unmultiplied(255, 255, 0, 128) // Yellow with alpha
+                    egui::Color32::from_rgba_unmultiplied(255, 255, 0, 160) // Yellow highlight with slight alpha
                 } else {
                     egui::Color32::from_rgba_unmultiplied(
-                        face.color[0], face.color[1], face.color[2], 128
+                        face.color[0], face.color[1], face.color[2], 255 // Opaque solid color!
                     )
                 };
+                
+                // Draw face polygon with a slightly darker edge stroke for high-end voxel appearance
                 painter.add(egui::Shape::convex_polygon(
-                    points,
+                    points.clone(),
                     face_color,
-                    egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(face.color[0], face.color[1], face.color[2], 255)),
+                    egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(
+                        (face.color[0] as f32 * 0.7) as u8,
+                        (face.color[1] as f32 * 0.7) as u8,
+                        (face.color[2] as f32 * 0.7) as u8,
+                        255
+                    )),
                 ));
+
+                // Record that these vertices are part of a drawn face
+                for &v_idx in &face.vertex_indices {
+                    referenced_vertices.insert(v_idx);
+                }
+
+                // Draw vertices of this face if VertexSelect mode is active
+                if self.three_d_select_mode == Some(ThreeDSelectMode::Vertex) {
+                    for &v_idx in &face.vertex_indices {
+                        if let Some(vertex) = mesh.vertices.get(v_idx) {
+                            let pos = project_3d(vertex.x, vertex.y, vertex.z);
+                            let is_v_selected = self.selected_vertices.contains(&v_idx);
+                            let size = if is_v_selected { selected_vertex_size } else { vertex_size };
+                            let color = if is_v_selected { Color32::YELLOW } else { vertex_color };
+                            painter.circle_filled(pos, size / 2.0, color);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Draw standalone vertices (not part of any face) so they are always visible when drawing
+        for (idx, vertex) in mesh.vertices.iter().enumerate() {
+            if !referenced_vertices.contains(&idx) {
+                let pos = project_3d(vertex.x, vertex.y, vertex.z);
+                let is_selected = self.selected_vertices.contains(&idx);
+                let size = if is_selected { selected_vertex_size } else { vertex_size };
+                let color = if is_selected { Color32::YELLOW } else { vertex_color };
+                painter.circle_filled(pos, size / 2.0, color);
             }
         }
 
