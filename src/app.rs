@@ -9644,20 +9644,19 @@ print("FAIL")
             // Draw grid position labels
             let indicator_color = self.theme.accent;
             
-            // Horizontal grid label (left side) - shows layer name
-            let h_label_pos = project_3d(0.0, 0.0, li as f32);
-            let h_label_end = egui::Pos2::new(h_label_pos.x - 25.0, h_label_pos.y);
-            painter.line_segment([h_label_end, h_label_pos], egui::Stroke::new(1.5, indicator_color));
-            let h_name = &self.project.animations[ai].frames[fi].layers[li].name;
+            // Horizontal grid Z label (right side)  
+            let h_right = project_3d(w as f32, h as f32, li as f32);
+            let h_right_end = egui::Pos2::new(h_right.x + 25.0, h_right.y);
+            painter.line_segment([h_right, h_right_end], egui::Stroke::new(1.5, indicator_color));
             painter.text(
-                egui::Pos2::new(h_label_end.x - 4.0, h_label_end.y - 6.0),
-                egui::Align2::RIGHT_TOP,
-                h_name,
+                egui::Pos2::new(h_right_end.x + 4.0, h_right_end.y - 6.0),
+                egui::Align2::LEFT_TOP,
+                format!("Z: {}", li),
                 egui::FontId::new(10.0, egui::FontFamily::Proportional),
                 indicator_color,
             );
             
-            // Vertical grid label: line goes LEFT from the wall at the front-top corner
+            // Vertical grid X label: line goes LEFT from the wall at the front-top corner
             let v_corner = project_3d(grid_x_offset, 0.0, num_layers as f32);
             let v_label_end = egui::Pos2::new(v_corner.x - 25.0, v_corner.y);
             painter.line_segment([v_label_end, v_corner], egui::Stroke::new(1.5, indicator_color.gamma_multiply(0.5)));
