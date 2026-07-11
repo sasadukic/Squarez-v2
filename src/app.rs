@@ -302,6 +302,7 @@ pub struct App {
     pub last_active_layer: usize,
     pub last_frame_index: usize,
     pub last_anim_index: usize,
+    pub last_gizmo_click_time: f64,
     /// Track if any menu was open at the start of the current frame
     menu_was_open_at_frame_start: bool,
     brushes: Vec<CustomBrush>,
@@ -1016,6 +1017,7 @@ impl App {
             last_active_layer: 0,
             last_frame_index: 0,
             last_anim_index: 0,
+            last_gizmo_click_time: -1.0,
             menu_was_open_at_frame_start: false,
             brushes: {
                 let mut b = layout.as_ref().map(|l| l.brushes.clone()).unwrap_or_default();
@@ -9619,16 +9621,18 @@ print("FAIL")
                 painter.line_segment([p1, p2], grid_stroke);
             }
             
-            // Vertical grid (wall) at Y = three_d_grid_y, moved by left/right arrows
+            // Vertical grid (wall) on the right side at x = w, moved front/back by left/right arrows
             let grid_y_offset = self.three_d_grid_y;
+            // Draw vertical lines in Y-Z plane at x = w
             for z_val in 0..=num_layers {
-                let p1 = project_3d(0.0, grid_y_offset, z_val as f32);
-                let p2 = project_3d(w as f32, grid_y_offset, z_val as f32);
+                let p1 = project_3d(w as f32, grid_y_offset, z_val as f32);
+                let p2 = project_3d(w as f32, grid_y_offset + h as f32, z_val as f32);
                 painter.line_segment([p1, p2], grid_stroke_vertical);
             }
-            for x_val in 0..=w {
-                let p1 = project_3d(x_val as f32, grid_y_offset, 0.0);
-                let p2 = project_3d(x_val as f32, grid_y_offset, num_layers as f32);
+            // Draw horizontal lines in Y-Z plane at x = w
+            for y_step in 0..=h {
+                let p1 = project_3d(w as f32, grid_y_offset + y_step as f32, 0.0);
+                let p2 = project_3d(w as f32, grid_y_offset + y_step as f32, num_layers as f32);
                 painter.line_segment([p1, p2], grid_stroke_vertical);
             }
         }
@@ -9772,15 +9776,29 @@ print("FAIL")
 
         // Handle clicking on an axis tip or controls
         if ui.input(|i| i.pointer.primary_clicked()) {
+            let now = ui.input(|i| i.time);
             if let Some(idx) = hovered_axis_idx {
                 let axis = &axes[idx];
                 self.three_d_rotation_x = axis.target_rot.0;
                 self.three_d_rotation_y = axis.target_rot.1;
                 self.three_d_view_mode = axis.target_view_mode;
                 self.three_d_perspective = false; // Snap to orthographic
+                self.last_gizmo_click_time = -1.0;
                 self.canvas_dirty = true;
             } else if center_hovered {
-                self.three_d_perspective = !self.three_d_perspective;
+                let since_last = now - self.last_gizmo_click_time;
+                self.last_gizmo_click_time = now;
+                if since_last < 0.4 {
+                    // Double-click center → reset to default view
+                    self.three_d_rotation_x = -0.615;
+                    self.three_d_rotation_y = -0.785;
+                    self.three_d_view_mode = 1;
+                    self.three_d_perspective = false;
+                    self.three_d_grid_y = 0.0;
+                    self.project.active_layer = 0;
+                } else {
+                    self.three_d_perspective = !self.three_d_perspective;
+                }
                 self.canvas_dirty = true;
             } else if persp_text_resp.clicked() {
                 self.three_d_perspective = !self.three_d_perspective;
