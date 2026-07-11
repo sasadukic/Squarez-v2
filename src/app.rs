@@ -9405,11 +9405,15 @@ print("FAIL")
                         let dy = snap_cy - snap_sy;
                         let dz = snap_cz - snap_sz;
 
+                        let max_w = self.project.canvas_width as f32;
+                        let max_h = self.project.canvas_height as f32;
+                        let max_l = self.project.active_frame_ref().layers.len() as f32;
+
                         for &(idx, ref init_v) in initials {
                             if let Some(vertex) = self.project.active_mesh_mut().vertices.get_mut(idx) {
-                                vertex.x = (init_v.x + dx).clamp(0.0, self.project.canvas_width as f32);
-                                vertex.y = (init_v.y + dy).clamp(0.0, self.project.canvas_height as f32);
-                                vertex.z = (init_v.z + dz).clamp(0.0, self.project.active_frame_ref().layers.len() as f32);
+                                vertex.x = (init_v.x + dx).clamp(0.0, max_w);
+                                vertex.y = (init_v.y + dy).clamp(0.0, max_h);
+                                vertex.z = (init_v.z + dz).clamp(0.0, max_l);
                             }
                         }
                         self.canvas_dirty = true;
