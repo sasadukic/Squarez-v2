@@ -298,6 +298,9 @@ pub struct App {
     pub three_d_select_mode: Option<ThreeDSelectMode>, // vertex or face selection
     pub drag_translate_start_3d: Option<(f32, f32, f32)>,
     pub drag_translate_initial_vertices: Option<Vec<(usize, crate::project::Vertex3D)>>,
+    pub last_active_layer: usize,
+    pub last_frame_index: usize,
+    pub last_anim_index: usize,
     /// Track if any menu was open at the start of the current frame
     menu_was_open_at_frame_start: bool,
     brushes: Vec<CustomBrush>,
@@ -1008,6 +1011,9 @@ impl App {
             three_d_select_mode: None,
             drag_translate_start_3d: None,
             drag_translate_initial_vertices: None,
+            last_active_layer: 0,
+            last_frame_index: 0,
+            last_anim_index: 0,
             menu_was_open_at_frame_start: false,
             brushes: {
                 let mut b = layout.as_ref().map(|l| l.brushes.clone()).unwrap_or_default();
@@ -1589,45 +1595,35 @@ impl App {
         if self.selected_faces.is_empty() {
             return;
         }
-        let w = self.project.canvas_width;
-        let h = self.project.canvas_height;
         let ai = self.project.active_animation;
         let fi = self.project.active_frame;
+        let li = self.project.active_layer;
         let frame = &self.project.animations[ai].frames[fi];
-        let num_layers = frame.layers.len();
 
         let mut new_vertices: Vec<crate::project::Vertex3D> = Vec::new();
         let mut new_faces: Vec<crate::project::Face3D> = Vec::new();
         let mut vertex_map: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
 
+        let active_z = li as f32;
+
         for &face_idx in &self.selected_faces {
             if let Some(face) = self.project.active_mesh().faces.get(face_idx) {
-                let mut dx = 0.0f32;
-                let mut dy = 0.0f32;
-                let mut dz = 0.0f32;
-                
-                if face.vertex_indices.len() >= 3 {
-                    let first_v = self.project.active_mesh().vertices[face.vertex_indices[0]];
-                    let all_same_x = face.vertex_indices.iter().all(|&idx| {
-                        (self.project.active_mesh().vertices[idx].x - first_v.x).abs() < 0.01
-                    });
-                    let all_same_y = face.vertex_indices.iter().all(|&idx| {
-                        (self.project.active_mesh().vertices[idx].y - first_v.y).abs() < 0.01
-                    });
-                    let all_same_z = face.vertex_indices.iter().all(|&idx| {
-                        (self.project.active_mesh().vertices[idx].z - first_v.z).abs() < 0.01
-                    });
-                    
-                    if all_same_z {
-                        dz = 1.0;
-                    } else if all_same_y {
-                        dy = 1.0;
-                    } else if all_same_x {
-                        dx = 1.0;
-                    } else {
-                        dz = 1.0;
-                    }
+                if face.vertex_indices.len() < 3 {
+                    continue;
                 }
+                
+                let avg_z = face.vertex_indices.iter()
+                    .filter_map(|&idx| self.project.active_mesh().vertices.get(idx).map(|v| v.z))
+                    .sum::<f32>() / face.vertex_indices.len() as f32;
+                
+                if (active_z - avg_z).abs() < 0.01 {
+                    // Skip extrusion if active grid layer is on the same layer as the face
+                    continue;
+                }
+
+                let dz = active_z - avg_z;
+                let dx = 0.0f32;
+                let dy = 0.0f32;
                 
                 let mut new_face_indices = Vec::new();
                 for &v_idx in &face.vertex_indices {
@@ -1668,6 +1664,10 @@ impl App {
             }
         }
         
+        if new_vertices.is_empty() {
+            return;
+        }
+
         for vertex in new_vertices {
             self.project.active_mesh_mut().vertices.push(vertex);
         }
@@ -13897,6 +13897,46 @@ impl eframe::App for App {
         self.draw_save_confirm_dialog(ctx);
         self.draw_anim_tile_menu(ctx);
         self.draw_tab_resize_menu(ctx);
+
+        // Track active layer, frame, and animation changes to automatically translate selected vertices in 3D
+        if self.project_created {
+            let active_layer = self.project.active_layer;
+            let active_frame = self.project.active_frame;
+            let active_anim = self.project.active_animation;
+
+            if active_frame == self.last_frame_index && active_anim == self.last_anim_index {
+                if active_layer != self.last_active_layer {
+                    let dl = active_layer as f32 - self.last_active_layer as f32;
+                    if dl != 0.0 && self.project.mode == crate::project::ProjectMode::ThreeD {
+                        let mut vertices_to_move = std::collections::HashSet::new();
+                        for &idx in &self.selected_vertices {
+                            vertices_to_move.insert(idx);
+                        }
+                        for &face_idx in &self.selected_faces {
+                            if let Some(face) = self.project.active_mesh().faces.get(face_idx) {
+                                for &v_idx in &face.vertex_indices {
+                                    vertices_to_move.insert(v_idx);
+                                }
+                            }
+                        }
+                        
+                        if !vertices_to_move.is_empty() {
+                            let max_l = self.project.active_frame_ref().layers.len() as f32;
+                            for idx in vertices_to_move {
+                                if let Some(vertex) = self.project.active_mesh_mut().vertices.get_mut(idx) {
+                                    vertex.z = (vertex.z + dl).clamp(0.0, max_l);
+                                }
+                            }
+                            self.canvas_dirty = true;
+                        }
+                    }
+                }
+            }
+            
+            self.last_active_layer = active_layer;
+            self.last_frame_index = active_frame;
+            self.last_anim_index = active_anim;
+        }
 
         if self.playback.is_playing {
             ctx.request_repaint();
