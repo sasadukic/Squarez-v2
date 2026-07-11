@@ -292,6 +292,7 @@ pub struct App {
     pub three_d_perspective: bool, // true = perspective, false = orthographic
     pub three_d_rotation_x: f32, // rotation around X axis (pitch)
     pub three_d_rotation_y: f32, // rotation around Y axis (yaw)
+    pub three_d_grid_y: f32, // grid Y offset for 3D mode (front/back movement)
     // 3D selection state
     pub selected_vertices: Vec<usize>, // indices of selected vertices
     pub selected_faces: Vec<usize>, // indices of selected faces
@@ -1006,6 +1007,7 @@ impl App {
             three_d_perspective: false,
             three_d_rotation_x: 0.0,
             three_d_rotation_y: 0.0,
+            three_d_grid_y: 0.0,
             selected_vertices: Vec::new(),
             selected_faces: Vec::new(),
             three_d_select_mode: None,
@@ -9076,7 +9078,7 @@ print("FAIL")
         }
 
         // Orbit rotation keyboard handlers
-        if ctx.input(|i| i.key_pressed(egui::Key::Q)) || ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
+        if ctx.input(|i| i.key_pressed(egui::Key::Q)) {
             if self.project.mode == crate::project::ProjectMode::ThreeD {
                 // Cycle through view modes: 0 (iso) -> 1 (front) -> 2 (right) -> 3 (back) -> 4 (left) -> 0
                 self.three_d_view_mode = (self.three_d_view_mode + 1) % 5;
@@ -9085,7 +9087,7 @@ print("FAIL")
             }
             self.canvas_dirty = true;
         }
-        if (ctx.input(|i| i.key_pressed(egui::Key::E)) && self.selected_faces.is_empty()) || ctx.input(|i| i.key_pressed(egui::Key::ArrowRight)) {
+        if ctx.input(|i| i.key_pressed(egui::Key::E)) && self.selected_faces.is_empty() {
             if self.project.mode == crate::project::ProjectMode::ThreeD {
                 // Cycle backwards through view modes
                 self.three_d_view_mode = if self.three_d_view_mode == 0 { 4 } else { self.three_d_view_mode - 1 };
@@ -9586,17 +9588,30 @@ print("FAIL")
             }
         }
 
+        // Grid front/back movement with left/right arrows (3D mode, only when nothing selected)
+        if self.selected_vertices.is_empty() && self.selected_faces.is_empty() {
+            if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
+                self.three_d_grid_y -= 1.0;
+                self.canvas_dirty = true;
+            }
+            if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowRight)) {
+                self.three_d_grid_y += 1.0;
+                self.canvas_dirty = true;
+            }
+        }
+
         // Draw grid on top of everything so it's always visible
         if self.sprite_stack_show_grid {
             let grid_stroke = egui::Stroke::new(0.8, self.theme.accent.gamma_multiply(0.7));
             for y_val in 0..=h {
-                let p1 = project_3d(0.0, y_val as f32, li as f32);
-                let p2 = project_3d(w as f32, y_val as f32, li as f32);
+                let grid_y = y_val as f32 + self.three_d_grid_y;
+                let p1 = project_3d(0.0, grid_y, li as f32);
+                let p2 = project_3d(w as f32, grid_y, li as f32);
                 painter.line_segment([p1, p2], grid_stroke);
             }
             for x_val in 0..=w {
-                let p1 = project_3d(x_val as f32, 0.0, li as f32);
-                let p2 = project_3d(x_val as f32, h as f32, li as f32);
+                let p1 = project_3d(x_val as f32, 0.0 + self.three_d_grid_y, li as f32);
+                let p2 = project_3d(x_val as f32, h as f32 + self.three_d_grid_y, li as f32);
                 painter.line_segment([p1, p2], grid_stroke);
             }
         }
