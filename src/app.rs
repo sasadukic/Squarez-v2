@@ -292,7 +292,8 @@ pub struct App {
     pub three_d_perspective: bool, // true = perspective, false = orthographic
     pub three_d_rotation_x: f32, // rotation around X axis (pitch)
     pub three_d_rotation_y: f32, // rotation around Y axis (yaw)
-    pub three_d_grid_y: f32, // grid Y offset for 3D mode (front/back movement)
+    pub three_d_grid_y: f32, // grid Y offset for 3D mode (horizontal floor Y movement)
+    pub three_d_grid_x: f32, // grid X offset for 3D mode (vertical wall X movement)
     // 3D selection state
     pub selected_vertices: Vec<usize>, // indices of selected vertices
     pub selected_faces: Vec<usize>, // indices of selected faces
@@ -1009,6 +1010,7 @@ impl App {
             three_d_rotation_x: -0.615,
             three_d_rotation_y: -0.785,
             three_d_grid_y: 0.0,
+            three_d_grid_x: 0.0,
             selected_vertices: Vec::new(),
             selected_faces: Vec::new(),
             three_d_select_mode: None,
@@ -9593,13 +9595,13 @@ print("FAIL")
         // Vertical grid movement with left/right arrows (3D mode, only when nothing selected)
         if self.selected_vertices.is_empty() && self.selected_faces.is_empty() {
             if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
-                self.three_d_grid_y -= 1.0;
-                self.three_d_grid_y = self.three_d_grid_y.clamp(0.0, h as f32);
+                self.three_d_grid_x -= 1.0;
+                self.three_d_grid_x = self.three_d_grid_x.clamp(0.0, w as f32);
                 self.canvas_dirty = true;
             }
             if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowRight)) {
-                self.three_d_grid_y += 1.0;
-                self.three_d_grid_y = self.three_d_grid_y.clamp(0.0, h as f32);
+                self.three_d_grid_x += 1.0;
+                self.three_d_grid_x = self.three_d_grid_x.clamp(0.0, w as f32);
                 self.canvas_dirty = true;
             }
         }
@@ -9621,18 +9623,18 @@ print("FAIL")
                 painter.line_segment([p1, p2], grid_stroke);
             }
             
-            // Vertical grid (wall) on the right side at x = w, moved front/back by left/right arrows
-            let grid_y_offset = self.three_d_grid_y;
-            // Draw vertical lines in Y-Z plane at x = w
+            // Vertical grid (wall) on the right side at x = grid_x, moved left/right by arrow keys
+            let grid_x_offset = self.three_d_grid_x;
+            // Draw vertical lines in Y-Z plane at x = grid_x_offset
             for z_val in 0..=num_layers {
-                let p1 = project_3d(w as f32, grid_y_offset, z_val as f32);
-                let p2 = project_3d(w as f32, grid_y_offset + h as f32, z_val as f32);
+                let p1 = project_3d(grid_x_offset, 0.0, z_val as f32);
+                let p2 = project_3d(grid_x_offset, h as f32, z_val as f32);
                 painter.line_segment([p1, p2], grid_stroke_vertical);
             }
-            // Draw horizontal lines in Y-Z plane at x = w
+            // Draw horizontal lines in Y-Z plane at x = grid_x_offset
             for y_step in 0..=h {
-                let p1 = project_3d(w as f32, grid_y_offset + y_step as f32, 0.0);
-                let p2 = project_3d(w as f32, grid_y_offset + y_step as f32, num_layers as f32);
+                let p1 = project_3d(grid_x_offset, y_step as f32, 0.0);
+                let p2 = project_3d(grid_x_offset, y_step as f32, num_layers as f32);
                 painter.line_segment([p1, p2], grid_stroke_vertical);
             }
         }
@@ -9795,6 +9797,7 @@ print("FAIL")
                     self.three_d_view_mode = 1;
                     self.three_d_perspective = false;
                     self.three_d_grid_y = 0.0;
+                    self.three_d_grid_x = 0.0;
                     self.project.active_layer = 0;
                 } else {
                     self.three_d_perspective = !self.three_d_perspective;
