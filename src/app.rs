@@ -9644,14 +9644,14 @@ print("FAIL")
             // Draw grid position labels
             let indicator_color = self.theme.accent;
             
-            // Horizontal grid Z label (right side)  
-            let h_right = project_3d(w as f32, h as f32, li as f32);
-            let h_right_end = egui::Pos2::new(h_right.x + 25.0, h_right.y);
-            painter.line_segment([h_right, h_right_end], egui::Stroke::new(1.5, indicator_color));
+            // Z label (right side of the grid, top corner)
+            let z_pos = project_3d(w as f32, 0.0, li as f32);
+            let z_end = egui::Pos2::new(z_pos.x + 25.0, z_pos.y);
+            painter.line_segment([z_pos, z_end], egui::Stroke::new(1.5, indicator_color));
             painter.text(
-                egui::Pos2::new(h_right_end.x + 4.0, h_right_end.y - 6.0),
+                egui::Pos2::new(z_end.x + 4.0, z_end.y - 6.0),
                 egui::Align2::LEFT_TOP,
-                format!("Z: {}", li),
+                format!("{}", li),
                 egui::FontId::new(10.0, egui::FontFamily::Proportional),
                 indicator_color,
             );
@@ -9663,7 +9663,7 @@ print("FAIL")
             painter.text(
                 egui::Pos2::new(v_label_end.x - 4.0, v_label_end.y - 6.0),
                 egui::Align2::RIGHT_TOP,
-                format!("X: {:.0}", grid_x_offset),
+                format!("{}", grid_x_offset as u32),
                 egui::FontId::new(10.0, egui::FontFamily::Proportional),
                 indicator_color.gamma_multiply(0.5),
             );
