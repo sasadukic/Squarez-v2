@@ -1563,8 +1563,122 @@ impl App {
         self.set_active_tool(new_tool);
     }
 
+    fn is_point_in_polygon(&self, p: egui::Pos2, poly: &[egui::Pos2]) -> bool {
+        let mut inside = false;
+        let n = poly.len();
+        if n < 3 {
+            return false;
+        }
+        let mut j = n - 1;
+        for i in 0..n {
+            if ((poly[i].y > p.y) != (poly[j].y > p.y))
+                && (p.x < (poly[j].x - poly[i].x) * (p.y - poly[i].y) / (poly[j].y - poly[i].y) + poly[i].x)
+            {
+                inside = !inside;
+            }
+            j = i;
+        }
+        inside
+    }
+
+    fn extrude_selected_faces(&mut self) {
+        if self.selected_faces.is_empty() {
+            return;
+        }
+        let w = self.project.canvas_width;
+        let h = self.project.canvas_height;
+        let ai = self.project.active_animation;
+        let fi = self.project.active_frame;
+        let frame = &self.project.animations[ai].frames[fi];
+        let num_layers = frame.layers.len();
+
+        let mut new_vertices: Vec<crate::project::Vertex3D> = Vec::new();
+        let mut new_faces: Vec<crate::project::Face3D> = Vec::new();
+        let mut vertex_map: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+
+        for &face_idx in &self.selected_faces {
+            if let Some(face) = self.project.active_mesh().faces.get(face_idx) {
+                let mut dx = 0.0f32;
+                let mut dy = 0.0f32;
+                let mut dz = 0.0f32;
+                
+                if face.vertex_indices.len() >= 3 {
+                    let first_v = self.project.active_mesh().vertices[face.vertex_indices[0]];
+                    let all_same_x = face.vertex_indices.iter().all(|&idx| {
+                        (self.project.active_mesh().vertices[idx].x - first_v.x).abs() < 0.01
+                    });
+                    let all_same_y = face.vertex_indices.iter().all(|&idx| {
+                        (self.project.active_mesh().vertices[idx].y - first_v.y).abs() < 0.01
+                    });
+                    let all_same_z = face.vertex_indices.iter().all(|&idx| {
+                        (self.project.active_mesh().vertices[idx].z - first_v.z).abs() < 0.01
+                    });
+                    
+                    if all_same_z {
+                        dz = 1.0;
+                    } else if all_same_y {
+                        dy = 1.0;
+                    } else if all_same_x {
+                        dx = 1.0;
+                    } else {
+                        dz = 1.0;
+                    }
+                }
+                
+                let mut new_face_indices = Vec::new();
+                for &v_idx in &face.vertex_indices {
+                    if let Some(vertex) = self.project.active_mesh().vertices.get(v_idx) {
+                        let new_vertex = crate::project::Vertex3D {
+                            x: vertex.x + dx,
+                            y: vertex.y + dy,
+                            z: vertex.z + dz,
+                        };
+                        
+                        if let Some(&mapped_idx) = vertex_map.get(&v_idx) {
+                            new_face_indices.push(mapped_idx);
+                        } else {
+                            let new_idx = self.project.active_mesh().vertices.len() + new_vertices.len();
+                            new_vertices.push(new_vertex);
+                            vertex_map.insert(v_idx, new_idx);
+                            new_face_indices.push(new_idx);
+                        }
+                    }
+                }
+                
+                for i in 0..face.vertex_indices.len() {
+                    let next_i = (i + 1) % face.vertex_indices.len();
+                    let v1_old = face.vertex_indices[i];
+                    let v2_old = face.vertex_indices[next_i];
+                    let v1_new = *vertex_map.get(&v1_old).unwrap();
+                    let v2_new = *vertex_map.get(&v2_old).unwrap();
+                    
+                    new_faces.push(crate::project::Face3D {
+                        vertex_indices: vec![v1_old, v2_old, v2_new, v1_new],
+                        color: face.color,
+                    });
+                }
+                
+                if let Some(orig_face) = self.project.active_mesh_mut().faces.get_mut(face_idx) {
+                    orig_face.vertex_indices = new_face_indices;
+                }
+            }
+        }
+        
+        for vertex in new_vertices {
+            self.project.active_mesh_mut().vertices.push(vertex);
+        }
+        for face in new_faces {
+            self.project.active_mesh_mut().faces.push(face);
+        }
+        
+        self.canvas_dirty = true;
+    }
+
     /// Set active tool and sync the group's "current" display.
     fn set_active_tool(&mut self, t: ActiveTool) {
+        if !matches!(t, ActiveTool::VertexSelect | ActiveTool::FaceSelect) {
+            self.three_d_select_mode = None;
+        }
         match &t {
             ActiveTool::Pencil | ActiveTool::Eraser => self.pen_group_current = t.clone(),
             ActiveTool::Fill | ActiveTool::Eyedropper => self.bucket_group_current = t.clone(),
@@ -6126,9 +6240,13 @@ impl App {
                                     self.canvas_dirty = true;
                                 }
                             }
+                            
+                            // Handle face extrusion with E key
+                            if ui.ctx().input(|i| i.key_pressed(egui::Key::E)) && !self.selected_faces.is_empty() {
+                                self.extrude_selected_faces();
+                            }
                         }
                     }
-                }
 
                 let art_rect = self.canvas.art_rect(canvas_rect, disp_w, disp_h);
                 if self.project.mode != crate::project::ProjectMode::SpriteStack && self.project.mode != crate::project::ProjectMode::ThreeD {
@@ -8953,7 +9071,7 @@ print("FAIL")
             }
             self.canvas_dirty = true;
         }
-        if ctx.input(|i| i.key_pressed(egui::Key::E)) || ctx.input(|i| i.key_pressed(egui::Key::ArrowRight)) {
+        if (ctx.input(|i| i.key_pressed(egui::Key::E)) && self.selected_faces.is_empty()) || ctx.input(|i| i.key_pressed(egui::Key::ArrowRight)) {
             if self.project.mode == crate::project::ProjectMode::ThreeD {
                 // Cycle backwards through view modes
                 self.three_d_view_mode = if self.three_d_view_mode == 0 { 4 } else { self.three_d_view_mode - 1 };
@@ -9152,17 +9270,35 @@ print("FAIL")
                             .filter_map(|&v_idx| mesh.vertices.get(v_idx).map(|v| project_3d(v.x, v.y, v.z)))
                             .collect();
                         
-                        if points.len() >= 3 {
-                            // Simple centroid distance check
-                            let centroid = points.iter().fold(egui::Vec2::new(0.0, 0.0), |acc, p| acc + p.to_vec2()) / points.len() as f32;
-                            let centroid_pos = egui::Pos2::new(centroid.x, centroid.y);
-                            let dist = (centroid_pos - click_pos).length();
-                            let threshold = 20.0 / self.canvas.zoom; // 20 pixels threshold
-                            
-                            if dist < threshold {
-                                if closest_face.is_none() || dist < closest_face.unwrap().1 {
-                                    closest_face = Some((idx, dist));
-                                }
+                        if points.len() >= 3 && self.is_point_in_polygon(click_pos, &points) {
+                            // Calculate average depth of the face in camera space (rz2)
+                            let avg_depth = face.vertex_indices.iter()
+                                .filter_map(|&v_idx| mesh.vertices.get(v_idx))
+                                .map(|v| {
+                                    let cx = v.x - w as f32 / 2.0;
+                                    let cy = v.y - h as f32 / 2.0;
+                                    let cz = v.z - num_layers as f32 / 2.0;
+                                    let (sx, sy, sz) = match self.three_d_view_mode {
+                                        1 => (cx, cz, cy),
+                                        2 => (cy, cz, -cx),
+                                        3 => (-cx, cz, -cy),
+                                        4 => (-cy, cz, cx),
+                                        _ => (cx, cz, cy),
+                                    };
+                                    let cos_x = self.three_d_rotation_x.cos();
+                                    let sin_x = self.three_d_rotation_x.sin();
+                                    let cos_y = self.three_d_rotation_y.cos();
+                                    let sin_y = self.three_d_rotation_y.sin();
+                                    let rx = sx * cos_y - sz * sin_y;
+                                    let rz = sx * sin_y + sz * cos_y;
+                                    let ry = sy * cos_x - rz * sin_x;
+                                    let rz2 = sy * sin_x + rz * cos_x;
+                                    rz2
+                                })
+                                .sum::<f32>() / face.vertex_indices.len() as f32;
+                                
+                            if closest_face.is_none() || avg_depth < closest_face.unwrap().1 {
+                                closest_face = Some((idx, avg_depth));
                             }
                         }
                     }
@@ -9437,6 +9573,34 @@ print("FAIL")
             } else if persp_text_resp.clicked() {
                 self.three_d_perspective = !self.three_d_perspective;
                 self.canvas_dirty = true;
+            }
+        }
+
+        if self.three_d_select_mode == Some(ThreeDSelectMode::Face) && !self.selected_faces.is_empty() {
+            let extrude_btn_rect = egui::Rect::from_min_size(
+                egui::Pos2::new(canvas_rect.min.x + 15.0, canvas_rect.max.y - 35.0),
+                egui::Vec2::new(90.0, 24.0),
+            );
+            
+            let shadow_color = egui::Color32::from_rgba_unmultiplied(0, 0, 0, 89);
+            painter.rect_filled(extrude_btn_rect.translate(egui::vec2(0.0, 2.0)), 6.0, shadow_color);
+            
+            let btn_resp = ui.interact(extrude_btn_rect, egui::Id::new("three_d_extrude_btn"), egui::Sense::click());
+            let btn_bg = if btn_resp.hovered() { self.theme.accent } else { self.theme.panel };
+            let text_color = if btn_resp.hovered() { self.theme.bg } else { self.theme.fg };
+            
+            painter.rect_filled(extrude_btn_rect, 6.0, btn_bg);
+            
+            painter.text(
+                extrude_btn_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "Extrude (E)",
+                egui::FontId::new(10.0, egui::FontFamily::Proportional),
+                text_color,
+            );
+            
+            if btn_resp.clicked() {
+                self.extrude_selected_faces();
             }
         }
     }
