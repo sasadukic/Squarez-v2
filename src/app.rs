@@ -9588,7 +9588,7 @@ print("FAIL")
             }
         }
 
-        // Grid front/back movement with left/right arrows (3D mode, only when nothing selected)
+        // Vertical grid movement with left/right arrows (3D mode, only when nothing selected)
         if self.selected_vertices.is_empty() && self.selected_faces.is_empty() {
             if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
                 self.three_d_grid_y -= 1.0;
@@ -9603,16 +9603,31 @@ print("FAIL")
         // Draw grid on top of everything so it's always visible
         if self.sprite_stack_show_grid {
             let grid_stroke = egui::Stroke::new(0.8, self.theme.accent.gamma_multiply(0.7));
+            let grid_stroke_vertical = egui::Stroke::new(0.8, self.theme.accent.gamma_multiply(0.35));
+            
+            // Horizontal grid (floor) at active layer Z, moved by up/down arrows
             for y_val in 0..=h {
-                let grid_y = y_val as f32 + self.three_d_grid_y;
-                let p1 = project_3d(0.0, grid_y, li as f32);
-                let p2 = project_3d(w as f32, grid_y, li as f32);
+                let p1 = project_3d(0.0, y_val as f32, li as f32);
+                let p2 = project_3d(w as f32, y_val as f32, li as f32);
                 painter.line_segment([p1, p2], grid_stroke);
             }
             for x_val in 0..=w {
-                let p1 = project_3d(x_val as f32, 0.0 + self.three_d_grid_y, li as f32);
-                let p2 = project_3d(x_val as f32, h as f32 + self.three_d_grid_y, li as f32);
+                let p1 = project_3d(x_val as f32, 0.0, li as f32);
+                let p2 = project_3d(x_val as f32, h as f32, li as f32);
                 painter.line_segment([p1, p2], grid_stroke);
+            }
+            
+            // Vertical grid (wall) at Y = three_d_grid_y, moved by left/right arrows
+            let grid_y_offset = self.three_d_grid_y;
+            for z_val in 0..=num_layers {
+                let p1 = project_3d(0.0, grid_y_offset, z_val as f32);
+                let p2 = project_3d(w as f32, grid_y_offset, z_val as f32);
+                painter.line_segment([p1, p2], grid_stroke_vertical);
+            }
+            for x_val in 0..=w {
+                let p1 = project_3d(x_val as f32, grid_y_offset, 0.0);
+                let p2 = project_3d(x_val as f32, grid_y_offset, num_layers as f32);
+                painter.line_segment([p1, p2], grid_stroke_vertical);
             }
         }
 
