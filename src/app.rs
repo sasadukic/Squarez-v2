@@ -1603,6 +1603,7 @@ impl App {
         let mut new_vertices: Vec<crate::project::Vertex3D> = Vec::new();
         let mut new_faces: Vec<crate::project::Face3D> = Vec::new();
         let mut vertex_map: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+        let mut selected_faces_updated = Vec::new();
 
         let active_z = li as f32;
 
@@ -1645,6 +1646,7 @@ impl App {
                     }
                 }
                 
+                // Create side faces
                 for i in 0..face.vertex_indices.len() {
                     let next_i = (i + 1) % face.vertex_indices.len();
                     let v1_old = face.vertex_indices[i];
@@ -1658,9 +1660,13 @@ impl App {
                     });
                 }
                 
-                if let Some(orig_face) = self.project.active_mesh_mut().faces.get_mut(face_idx) {
-                    orig_face.vertex_indices = new_face_indices;
-                }
+                // Create top face
+                new_faces.push(crate::project::Face3D {
+                    vertex_indices: new_face_indices,
+                    color: face.color,
+                });
+                let new_top_face_idx = self.project.active_mesh().faces.len() + new_faces.len() - 1;
+                selected_faces_updated.push(new_top_face_idx);
             }
         }
         
@@ -1675,6 +1681,7 @@ impl App {
             self.project.active_mesh_mut().faces.push(face);
         }
         
+        self.selected_faces = selected_faces_updated;
         self.canvas_dirty = true;
     }
 
@@ -9185,13 +9192,28 @@ print("FAIL")
 
         let mesh = &frame.mesh;
 
-        // Draw edges
+        // Draw standalone edges (not part of any face)
+        let mut referenced_edges = std::collections::HashSet::new();
+        for face in &mesh.faces {
+            if face.vertex_indices.len() < 3 { continue; }
+            for i in 0..face.vertex_indices.len() {
+                let j = (i + 1) % face.vertex_indices.len();
+                let v1 = face.vertex_indices[i];
+                let v2 = face.vertex_indices[j];
+                let edge_key = if v1 < v2 { (v1, v2) } else { (v2, v1) };
+                referenced_edges.insert(edge_key);
+            }
+        }
+
         let edge_color = self.theme.accent;
         for edge in &mesh.edges {
-            if let (Some(v1), Some(v2)) = (mesh.vertices.get(edge.v1), mesh.vertices.get(edge.v2)) {
-                let p1 = project_3d(v1.x, v1.y, v1.z);
-                let p2 = project_3d(v2.x, v2.y, v2.z);
-                painter.line_segment([p1, p2], egui::Stroke::new(1.5, edge_color));
+            let key = if edge.v1 < edge.v2 { (edge.v1, edge.v2) } else { (edge.v2, edge.v1) };
+            if !referenced_edges.contains(&key) {
+                if let (Some(v1), Some(v2)) = (mesh.vertices.get(edge.v1), mesh.vertices.get(edge.v2)) {
+                    let p1 = project_3d(v1.x, v1.y, v1.z);
+                    let p2 = project_3d(v2.x, v2.y, v2.z);
+                    painter.line_segment([p1, p2], egui::Stroke::new(1.5, edge_color));
+                }
             }
         }
 
