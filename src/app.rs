@@ -9640,6 +9640,33 @@ print("FAIL")
                 let p2 = project_3d(grid_x_offset, y_step as f32, num_layers as f32);
                 painter.line_segment([p1, p2], grid_stroke_vertical);
             }
+            
+            // Draw grid position labels
+            let indicator_color = self.theme.accent;
+            
+            // Horizontal grid label (left side) - shows Z position
+            let h_label_pos = project_3d(0.0, 0.0, li as f32);
+            let h_label_end = egui::Pos2::new(h_label_pos.x - 25.0, h_label_pos.y);
+            painter.line_segment([h_label_end, h_label_pos], egui::Stroke::new(1.5, indicator_color));
+            painter.text(
+                egui::Pos2::new(h_label_end.x - 4.0, h_label_end.y - 6.0),
+                egui::Align2::RIGHT_TOP,
+                format!("Z: {}", li),
+                egui::FontId::new(10.0, egui::FontFamily::Proportional),
+                indicator_color,
+            );
+            
+            // Vertical grid label (at the grid position) - shows X position
+            let v_label_pos = project_3d(grid_x_offset, 0.0, 0.0);
+            let v_label_end = egui::Pos2::new(v_label_pos.x, v_label_pos.y - 25.0);
+            painter.line_segment([v_label_pos, v_label_end], egui::Stroke::new(1.5, indicator_color.gamma_multiply(0.5)));
+            painter.text(
+                egui::Pos2::new(v_label_end.x - 6.0, v_label_end.y - 4.0),
+                egui::Align2::RIGHT_CENTER,
+                format!("X: {:.0}", grid_x_offset),
+                egui::FontId::new(10.0, egui::FontFamily::Proportional),
+                indicator_color.gamma_multiply(0.5),
+            );
         }
 
         // Draw Unity-style 3D navigation view gizmo in the top-right corner
@@ -10735,11 +10762,16 @@ print("FAIL")
                     let w = self.project.canvas_width as f32;
                     let h = self.project.canvas_height as f32;
                     let num_layers = self.project.active_frame_ref().layers.len() as f32;
-                    let snap_threshold = 0.3;
                     
-                    let x3d = x3d.round().clamp(0.0, w);
+                    let mut x3d = x3d.round().clamp(0.0, w);
                     let y3d = y3d.round().clamp(0.0, h);
                     let z3d = z3d.round().clamp(0.0, num_layers);
+                    
+                    // Snap to vertical grid if close
+                    let grid_x = self.three_d_grid_x;
+                    if (x3d - grid_x).abs() < 0.5 {
+                        x3d = grid_x;
+                    }
 
                     // Check if clicking on an existing vertex (within threshold)
                     let threshold = 0.5;
