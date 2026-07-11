@@ -9592,10 +9592,12 @@ print("FAIL")
         if self.selected_vertices.is_empty() && self.selected_faces.is_empty() {
             if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
                 self.three_d_grid_y -= 1.0;
+                self.three_d_grid_y = self.three_d_grid_y.clamp(0.0, h as f32);
                 self.canvas_dirty = true;
             }
             if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowRight)) {
                 self.three_d_grid_y += 1.0;
+                self.three_d_grid_y = self.three_d_grid_y.clamp(0.0, h as f32);
                 self.canvas_dirty = true;
             }
         }
