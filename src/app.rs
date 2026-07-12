@@ -9369,20 +9369,21 @@ print("FAIL")
 
         // Handle vertex/face selection with click and drag translation
         if self.three_d_select_mode.is_some() {
-            if let Some(click_pos) = ui.ctx().input(|i| i.pointer.interact_pos()) {
-                let is_over_extrude_btn = self.three_d_select_mode == Some(ThreeDSelectMode::Face)
-                    && !self.selected_faces.is_empty()
-                    && egui::Rect::from_min_size(
-                        egui::Pos2::new(canvas_rect.min.x + 15.0, canvas_rect.max.y - 35.0),
-                        egui::Vec2::new(90.0, 24.0),
-                    ).contains(click_pos);
+            let click_pos = ui.ctx().input(|i| i.pointer.hover_pos());
+            let is_over_extrude_btn = self.three_d_select_mode == Some(ThreeDSelectMode::Face)
+                && !self.selected_faces.is_empty()
+                && egui::Rect::from_min_size(
+                    egui::Pos2::new(canvas_rect.min.x + 15.0, canvas_rect.max.y - 35.0),
+                    egui::Vec2::new(90.0, 24.0),
+                ).contains(click_pos.unwrap_or(egui::Pos2::new(-1.0, -1.0)));
 
-                if canvas_rect.contains(click_pos) && ui.ctx().input(|i| i.pointer.primary_clicked()) && !is_over_extrude_btn {
+            if let Some(cp) = click_pos {
+                if canvas_rect.contains(cp) && ui.ctx().input(|i| i.pointer.primary_clicked()) && !is_over_extrude_btn {
                     // Find closest vertex
                     let mut closest_vertex: Option<(usize, f32)> = None;
                     for (idx, vertex) in mesh.vertices.iter().enumerate() {
                         let pos = project_3d(vertex.x, vertex.y, vertex.z);
-                        let dist = (pos - click_pos).length();
+                        let dist = (pos - cp).length();
                         let threshold = 10.0 / self.canvas.zoom; // 10 pixels threshold
                         
                         if dist < threshold {
@@ -9401,7 +9402,7 @@ print("FAIL")
                             .filter_map(|&v_idx| mesh.vertices.get(v_idx).map(|v| project_3d(v.x, v.y, v.z)))
                             .collect();
                         
-                        if points.len() >= 3 && self.is_point_in_polygon(click_pos, &points) {
+                        if points.len() >= 3 && self.is_point_in_polygon(cp, &points) {
                             // Calculate average depth of the face in camera space (rz2)
                             let avg_depth = face.vertex_indices.iter()
                                 .filter_map(|&v_idx| mesh.vertices.get(v_idx))
@@ -9485,7 +9486,7 @@ print("FAIL")
 
                     // Initialize drag translation state if we have a selection
                     if !self.selected_vertices.is_empty() || !self.selected_faces.is_empty() {
-                        let click_3d = self.screen_to_3d_coord(click_pos, canvas_rect);
+                        let click_3d = self.screen_to_3d_coord(cp, canvas_rect);
                         self.drag_translate_start_3d = Some(click_3d);
                         
                         let mut vertices_to_move = std::collections::HashSet::new();
