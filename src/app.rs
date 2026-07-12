@@ -9293,9 +9293,19 @@ print("FAIL")
         for (idx, face, _) in &sorted_faces {
             if face.vertex_indices.len() < 3 { continue; }
 
-            let points: Vec<egui::Pos2> = face.vertex_indices.iter()
+            let mut points: Vec<egui::Pos2> = face.vertex_indices.iter()
                 .filter_map(|&idx| mesh.vertices.get(idx).map(|v| project_3d(v.x, v.y, v.z)))
                 .collect();
+
+            // Ensure counter-clockwise winding in screen space (fix flipped normals)
+            let mut signed_area = 0.0;
+            for i in 0..points.len() {
+                let j = (i + 1) % points.len();
+                signed_area += points[i].x * points[j].y - points[j].x * points[i].y;
+            }
+            if signed_area < 0.0 {
+                points.reverse();
+            }
 
                 // Draw face polygon
                 if points.len() >= 3 {
