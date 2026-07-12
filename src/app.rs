@@ -9369,22 +9369,21 @@ print("FAIL")
 
         // Handle vertex/face selection with click and drag translation
         if self.three_d_select_mode.is_some() {
-            let click_pos = ui.ctx().input(|i| i.pointer.hover_pos());
             let is_over_extrude_btn = self.three_d_select_mode == Some(ThreeDSelectMode::Face)
                 && !self.selected_faces.is_empty()
                 && egui::Rect::from_min_size(
                     egui::Pos2::new(canvas_rect.min.x + 15.0, canvas_rect.max.y - 35.0),
                     egui::Vec2::new(90.0, 24.0),
-                ).contains(click_pos.unwrap_or(egui::Pos2::new(-1.0, -1.0)));
+                ).contains(ui.ctx().input(|i| i.pointer.interact_pos()).unwrap_or(egui::Pos2::new(-1.0, -1.0)));
 
-            if let Some(cp) = click_pos {
+            if let Some(cp) = ui.ctx().input(|i| i.pointer.interact_pos()) {
                 if canvas_rect.contains(cp) && ui.ctx().input(|i| i.pointer.primary_clicked()) && !is_over_extrude_btn {
                     // Find closest vertex
                     let mut closest_vertex: Option<(usize, f32)> = None;
                     for (idx, vertex) in mesh.vertices.iter().enumerate() {
                         let pos = project_3d(vertex.x, vertex.y, vertex.z);
                         let dist = (pos - cp).length();
-                        let threshold = 10.0 / self.canvas.zoom; // 10 pixels threshold
+                        let threshold = 12.0; // 12 pixels threshold
                         
                         if dist < threshold {
                             if closest_vertex.is_none() || dist < closest_vertex.unwrap().1 {
