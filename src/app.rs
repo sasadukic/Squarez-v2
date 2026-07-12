@@ -9511,7 +9511,7 @@ print("FAIL")
             let mouse_down = ui.ctx().input(|i| i.pointer.primary_down());
             if mouse_down {
                 if let (Some(start_3d), Some(initials)) = (&self.drag_translate_start_3d, &self.drag_translate_initial_vertices) {
-                    if let Some(curr_pos) = ui.ctx().input(|i| i.pointer.interact_pos()) {
+                    if let Some(curr_pos) = ui.ctx().input(|i| i.pointer.hover_pos()) {
                         let (cx, cy, cz) = self.screen_to_3d_coord(curr_pos, canvas_rect);
                         let snap_cx = cx.round();
                         let snap_cy = cy.round();
