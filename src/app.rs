@@ -9116,18 +9116,20 @@ print("FAIL")
             }
         }
 
-        // Active layer adjustment keyboard handlers
-        let total_layers = self.project.animations[ai].frames[fi].layers.len();
-        if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
-            if self.project.active_layer + 1 < total_layers {
-                self.project.active_layer += 1;
-                self.canvas_dirty = true;
+        // Active layer adjustment keyboard handlers (not in 3D mode)
+        if self.project.mode != crate::project::ProjectMode::ThreeD {
+            let total_layers = self.project.animations[ai].frames[fi].layers.len();
+            if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+                if self.project.active_layer + 1 < total_layers {
+                    self.project.active_layer += 1;
+                    self.canvas_dirty = true;
+                }
             }
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
-            if self.project.active_layer > 0 {
-                self.project.active_layer -= 1;
-                self.canvas_dirty = true;
+            if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+                if self.project.active_layer > 0 {
+                    self.project.active_layer -= 1;
+                    self.canvas_dirty = true;
+                }
             }
         }
     }
