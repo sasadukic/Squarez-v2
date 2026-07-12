@@ -9293,9 +9293,23 @@ print("FAIL")
         for (idx, face, _) in &sorted_faces {
             if face.vertex_indices.len() < 3 { continue; }
 
-            let points: Vec<egui::Pos2> = face.vertex_indices.iter()
+            let mut points: Vec<egui::Pos2> = face.vertex_indices.iter()
                 .filter_map(|&idx| mesh.vertices.get(idx).map(|v| project_3d(v.x, v.y, v.z)))
                 .collect();
+
+                // Sort vertices by angle around centroid to ensure convex winding order
+                if points.len() > 3 {
+                    let mut cx = 0.0;
+                    let mut cy = 0.0;
+                    for p in &points { cx += p.x; cy += p.y; }
+                    cx /= points.len() as f32;
+                    cy /= points.len() as f32;
+                    points.sort_by(|a, b| {
+                        let angle_a = (a.y - cy).atan2(a.x - cx);
+                        let angle_b = (b.y - cy).atan2(b.x - cx);
+                        angle_a.partial_cmp(&angle_b).unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                }
 
                 // Draw face polygon
                 if points.len() >= 3 {
