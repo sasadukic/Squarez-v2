@@ -9545,7 +9545,7 @@ print("FAIL")
 
         // Handle keyboard input for moving selected vertices/faces
         if !self.selected_vertices.is_empty() || !self.selected_faces.is_empty() {
-            let step = 1.0 / self.canvas.zoom; // Move by 1 pixel at current zoom
+            let step = 1.0; // Move by 1 grid unit
             
             let mut dx = 0.0;
             let mut dy = 0.0;
@@ -9554,37 +9554,39 @@ print("FAIL")
 
             if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowUp)) {
                 key_pressed = true;
-                if self.three_d_view_mode == 0 {
-                    dy = step;
-                } else {
-                    dz = step;
+                match self.three_d_view_mode {
+                    0 => dy = -1.0,
+                    1 | 2 | 3 | 4 => dz = 1.0,
+                    _ => {}
                 }
             }
             if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowDown)) {
                 key_pressed = true;
-                if self.three_d_view_mode == 0 {
-                    dy = -step;
-                } else {
-                    dz = -step;
+                match self.three_d_view_mode {
+                    0 => dy = 1.0,
+                    1 | 2 | 3 | 4 => dz = -1.0,
+                    _ => {}
                 }
             }
             if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
                 key_pressed = true;
                 match self.three_d_view_mode {
-                    0 | 1 => dx = -step,
-                    2 => dy = -step,
-                    3 => dx = step,
-                    4 => dy = step,
+                    0 => dx = -1.0,
+                    1 => dx = -1.0,
+                    2 => dy = -1.0,
+                    3 => dx = 1.0,
+                    4 => dy = 1.0,
                     _ => {}
                 }
             }
             if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowRight)) {
                 key_pressed = true;
                 match self.three_d_view_mode {
-                    0 | 1 => dx = step,
-                    2 => dy = step,
-                    3 => dx = -step,
-                    4 => dy = -step,
+                    0 => dx = 1.0,
+                    1 => dx = 1.0,
+                    2 => dy = 1.0,
+                    3 => dx = -1.0,
+                    4 => dy = -1.0,
                     _ => {}
                 }
             }
@@ -9592,9 +9594,9 @@ print("FAIL")
             if key_pressed {
                 for &idx in &self.selected_vertices {
                     if let Some(vertex) = self.project.active_mesh_mut().vertices.get_mut(idx) {
-                        vertex.x += dx;
-                        vertex.y += dy;
-                        vertex.z += dz;
+                        vertex.x = (vertex.x + dx).round().clamp(0.0, w as f32);
+                        vertex.y = (vertex.y + dy).round().clamp(0.0, h as f32);
+                        vertex.z = (vertex.z + dz).round().clamp(0.0, num_layers as f32);
                     }
                 }
                 for &idx in &self.selected_faces {
@@ -9603,26 +9605,12 @@ print("FAIL")
                         .unwrap_or_default();
                     for v_idx in v_indices {
                         if let Some(vertex) = self.project.active_mesh_mut().vertices.get_mut(v_idx) {
-                            vertex.x += dx;
-                            vertex.y += dy;
-                            vertex.z += dz;
+                            vertex.x = (vertex.x + dx).round().clamp(0.0, w as f32);
+                            vertex.y = (vertex.y + dy).round().clamp(0.0, h as f32);
+                            vertex.z = (vertex.z + dz).round().clamp(0.0, num_layers as f32);
                         }
                     }
                 }
-                self.canvas_dirty = true;
-            }
-        }
-
-        // Vertical grid movement with left/right arrows (3D mode, only when nothing selected)
-        if self.selected_vertices.is_empty() && self.selected_faces.is_empty() {
-            if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
-                self.three_d_grid_x -= 1.0;
-                self.three_d_grid_x = self.three_d_grid_x.clamp(0.0, w as f32);
-                self.canvas_dirty = true;
-            }
-            if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowRight)) {
-                self.three_d_grid_x += 1.0;
-                self.three_d_grid_x = self.three_d_grid_x.clamp(0.0, w as f32);
                 self.canvas_dirty = true;
             }
         }
