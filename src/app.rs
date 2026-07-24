@@ -9133,18 +9133,62 @@ print("FAIL")
             self.sprite_stack_grid_btn_rect = None;
         }
 
-        // Draw active layer grid plane on top of voxels so it remains visible (non-3D mode only)
-        if self.sprite_stack_show_grid && self.project.mode != crate::project::ProjectMode::ThreeD {
-            let grid_stroke = egui::Stroke::new(0.5, self.theme.accent.gamma_multiply(0.4));
-            for y_val in 0..=h {
-                let p1 = project_3d(0.0, y_val as f32, li as f32);
-                let p2 = project_3d(w as f32, y_val as f32, li as f32);
-                painter.line_segment([p1, p2], grid_stroke);
-            }
-            for x_val in 0..=w {
-                let p1 = project_3d(x_val as f32, 0.0, li as f32);
-                let p2 = project_3d(x_val as f32, h as f32, li as f32);
-                painter.line_segment([p1, p2], grid_stroke);
+        // Draw active layer grid plane
+        if self.sprite_stack_show_grid {
+            let grid_stroke = egui::Stroke::new(0.5, self.theme.accent.gamma_multiply(0.3));
+            if self.project.mode == crate::project::ProjectMode::ThreeD {
+                match self.three_d_drawing_plane {
+                    ThreeDDrawingPlane::TopBottom => {
+                        for y_val in 0..=h {
+                            let p1 = project_3d(0.0, y_val as f32, li as f32);
+                            let p2 = project_3d(w as f32, y_val as f32, li as f32);
+                            painter.line_segment([p1, p2], grid_stroke);
+                        }
+                        for x_val in 0..=w {
+                            let p1 = project_3d(x_val as f32, 0.0, li as f32);
+                            let p2 = project_3d(x_val as f32, h as f32, li as f32);
+                            painter.line_segment([p1, p2], grid_stroke);
+                        }
+                    }
+                    ThreeDDrawingPlane::FrontBack => {
+                        let y_val = (li as f32).clamp(0.0, h as f32);
+                        for z_val in 0..=(num_layers as usize) {
+                            let p1 = project_3d(0.0, y_val, z_val as f32);
+                            let p2 = project_3d(w as f32, y_val, z_val as f32);
+                            painter.line_segment([p1, p2], grid_stroke);
+                        }
+                        for x_val in 0..=w {
+                            let p1 = project_3d(x_val as f32, y_val, 0.0);
+                            let p2 = project_3d(x_val as f32, y_val, num_layers as f32);
+                            painter.line_segment([p1, p2], grid_stroke);
+                        }
+                    }
+                    ThreeDDrawingPlane::LeftRight => {
+                        let x_val = (li as f32).clamp(0.0, w as f32);
+                        for z_val in 0..=(num_layers as usize) {
+                            let p1 = project_3d(x_val, 0.0, z_val as f32);
+                            let p2 = project_3d(x_val, h as f32, z_val as f32);
+                            painter.line_segment([p1, p2], grid_stroke);
+                        }
+                        for y_val in 0..=h {
+                            let p1 = project_3d(x_val, y_val as f32, 0.0);
+                            let p2 = project_3d(x_val, y_val as f32, num_layers as f32);
+                            painter.line_segment([p1, p2], grid_stroke);
+                        }
+                    }
+                }
+            } else {
+                let grid_stroke_flat = egui::Stroke::new(0.5, self.theme.accent.gamma_multiply(0.4));
+                for y_val in 0..=h {
+                    let p1 = project_3d(0.0, y_val as f32, li as f32);
+                    let p2 = project_3d(w as f32, y_val as f32, li as f32);
+                    painter.line_segment([p1, p2], grid_stroke_flat);
+                }
+                for x_val in 0..=w {
+                    let p1 = project_3d(x_val as f32, 0.0, li as f32);
+                    let p2 = project_3d(x_val as f32, h as f32, li as f32);
+                    painter.line_segment([p1, p2], grid_stroke_flat);
+                }
             }
         }
 
@@ -9617,49 +9661,55 @@ print("FAIL")
 
         // Handle keyboard input for moving selected vertices/faces
         if !self.selected_vertices.is_empty() || !self.selected_faces.is_empty() {
-            let step = 1.0; // Move by 1 grid unit
-            
             let mut dx = 0.0;
             let mut dy = 0.0;
             let mut dz = 0.0;
             let mut key_pressed = false;
 
+            let shift_held = ui.ctx().input(|i| i.modifiers.shift);
+
             if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowUp)) {
                 key_pressed = true;
-                match self.three_d_view_mode {
-                    0 => dy = -1.0,
-                    1 | 2 | 3 | 4 => dz = 1.0,
-                    _ => {}
+                match self.three_d_drawing_plane {
+                    ThreeDDrawingPlane::TopBottom => {
+                        if shift_held { dz = 1.0; } else { dy = -1.0; }
+                    }
+                    ThreeDDrawingPlane::FrontBack => {
+                        if shift_held { dy = 1.0; } else { dz = 1.0; }
+                    }
+                    ThreeDDrawingPlane::LeftRight => {
+                        if shift_held { dx = 1.0; } else { dz = 1.0; }
+                    }
                 }
             }
             if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowDown)) {
                 key_pressed = true;
-                match self.three_d_view_mode {
-                    0 => dy = 1.0,
-                    1 | 2 | 3 | 4 => dz = -1.0,
-                    _ => {}
+                match self.three_d_drawing_plane {
+                    ThreeDDrawingPlane::TopBottom => {
+                        if shift_held { dz = -1.0; } else { dy = 1.0; }
+                    }
+                    ThreeDDrawingPlane::FrontBack => {
+                        if shift_held { dy = -1.0; } else { dz = -1.0; }
+                    }
+                    ThreeDDrawingPlane::LeftRight => {
+                        if shift_held { dx = -1.0; } else { dz = -1.0; }
+                    }
                 }
             }
             if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
                 key_pressed = true;
-                match self.three_d_view_mode {
-                    0 => dx = -1.0,
-                    1 => dx = -1.0,
-                    2 => dy = -1.0,
-                    3 => dx = 1.0,
-                    4 => dy = 1.0,
-                    _ => {}
+                match self.three_d_drawing_plane {
+                    ThreeDDrawingPlane::TopBottom => dx = -1.0,
+                    ThreeDDrawingPlane::FrontBack => dx = -1.0,
+                    ThreeDDrawingPlane::LeftRight => dy = -1.0,
                 }
             }
             if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowRight)) {
                 key_pressed = true;
-                match self.three_d_view_mode {
-                    0 => dx = 1.0,
-                    1 => dx = 1.0,
-                    2 => dy = 1.0,
-                    3 => dx = -1.0,
-                    4 => dy = -1.0,
-                    _ => {}
+                match self.three_d_drawing_plane {
+                    ThreeDDrawingPlane::TopBottom => dx = 1.0,
+                    ThreeDDrawingPlane::FrontBack => dx = 1.0,
+                    ThreeDDrawingPlane::LeftRight => dy = 1.0,
                 }
             }
 
