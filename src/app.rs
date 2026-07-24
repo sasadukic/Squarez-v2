@@ -9020,34 +9020,38 @@ print("FAIL")
         painter.line_segment([cb[f3], ct[f3]], front_stroke);
 
         // Draw horizontal line showing what layer is currently being drawn on
-        if self.project.mode != crate::project::ProjectMode::ThreeD {
-            let pl_corners = [
-                project_3d(0.0, 0.0, li as f32),
-                project_3d(w as f32, 0.0, li as f32),
-                project_3d(w as f32, h as f32, li as f32),
-                project_3d(0.0, h as f32, li as f32),
-            ];
-            let mut right_most_p = pl_corners[0];
-            for &p in &pl_corners {
-                if p.x > right_most_p.x {
-                    right_most_p = p;
-                }
+        let pl_corners = [
+            project_3d(0.0, 0.0, li as f32),
+            project_3d(w as f32, 0.0, li as f32),
+            project_3d(w as f32, h as f32, li as f32),
+            project_3d(0.0, h as f32, li as f32),
+        ];
+        let mut right_most_p = pl_corners[0];
+        for &p in &pl_corners {
+            if p.x > right_most_p.x {
+                right_most_p = p;
             }
-            let line_start = right_most_p;
-            let line_end = egui::Pos2::new(right_most_p.x + 25.0, right_most_p.y);
-            let indicator_color = self.theme.accent;
-            painter.line_segment([line_start, line_end], egui::Stroke::new(1.5, indicator_color));
+        }
+        let line_start = right_most_p;
+        let line_end = egui::Pos2::new(right_most_p.x + 25.0, right_most_p.y);
+        let indicator_color = self.theme.accent;
+        painter.line_segment([line_start, line_end], egui::Stroke::new(1.5, indicator_color));
 
-            let active_layer_name: std::borrow::Cow<'_, str> = self.project.animations[ai].frames[fi].layers[li].name.as_str().into();
-            let label_pos = egui::Pos2::new(line_end.x + 4.0, line_end.y - 6.0);
-            painter.text(
-                label_pos,
-                egui::Align2::LEFT_TOP,
-                &active_layer_name,
-                egui::FontId::new(10.0, egui::FontFamily::Proportional),
-                indicator_color,
-            );
+        let active_layer_name: std::borrow::Cow<'_, str> = if self.project.mode == crate::project::ProjectMode::ThreeD {
+            format!("{}", li).into()
+        } else {
+            self.project.animations[ai].frames[fi].layers[li].name.as_str().into()
+        };
+        let label_pos = egui::Pos2::new(line_end.x + 4.0, line_end.y - 6.0);
+        painter.text(
+            label_pos,
+            egui::Align2::LEFT_TOP,
+            &active_layer_name,
+            egui::FontId::new(10.0, egui::FontFamily::Proportional),
+            indicator_color,
+        );
 
+        if self.project.mode != crate::project::ProjectMode::ThreeD {
             // Put visibility toggle button right after the name
             let font_id = egui::FontId::new(10.0, egui::FontFamily::Proportional);
             let galley = ctx.fonts(|f| f.layout_no_wrap(active_layer_name.to_string(), font_id, indicator_color));
@@ -9117,8 +9121,8 @@ print("FAIL")
             }
         }
 
-        // Active layer adjustment keyboard handlers (not in 3D mode)
-        if self.project.mode != crate::project::ProjectMode::ThreeD {
+        // Active layer adjustment keyboard handlers
+        if self.project.mode != crate::project::ProjectMode::ThreeD || (self.selected_vertices.is_empty() && self.selected_faces.is_empty()) {
             let total_layers = self.project.animations[ai].frames[fi].layers.len();
             if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
                 if self.project.active_layer + 1 < total_layers {
