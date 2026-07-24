@@ -14155,7 +14155,7 @@ impl eframe::App for App {
                 if ctx.input(|i| i.key_pressed(egui::Key::Num2)) {
                     self.three_d_drawing_plane = ThreeDDrawingPlane::FrontBack;
                     self.three_d_rotation_x = 0.0;
-                    self.three_d_rotation_y = std::f32::consts::PI;
+                    self.three_d_rotation_y = 0.0;
                     self.three_d_view_mode = 3;
                     self.three_d_perspective = false;
                     self.canvas_dirty = true;
@@ -14163,7 +14163,7 @@ impl eframe::App for App {
                 if ctx.input(|i| i.key_pressed(egui::Key::Num3)) {
                     self.three_d_drawing_plane = ThreeDDrawingPlane::LeftRight;
                     self.three_d_rotation_x = 0.0;
-                    self.three_d_rotation_y = std::f32::consts::FRAC_PI_2;
+                    self.three_d_rotation_y = 0.0;
                     self.three_d_view_mode = 4;
                     self.three_d_perspective = false;
                     self.canvas_dirty = true;
@@ -14171,7 +14171,7 @@ impl eframe::App for App {
                 if ctx.input(|i| i.key_pressed(egui::Key::Num4)) {
                     self.three_d_drawing_plane = ThreeDDrawingPlane::LeftRight;
                     self.three_d_rotation_x = 0.0;
-                    self.three_d_rotation_y = -std::f32::consts::FRAC_PI_2;
+                    self.three_d_rotation_y = 0.0;
                     self.three_d_view_mode = 2;
                     self.three_d_perspective = false;
                     self.canvas_dirty = true;
