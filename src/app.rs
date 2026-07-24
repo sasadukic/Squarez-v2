@@ -9133,62 +9133,18 @@ print("FAIL")
             self.sprite_stack_grid_btn_rect = None;
         }
 
-        // Draw active layer grid plane
-        if self.sprite_stack_show_grid {
-            let grid_stroke = egui::Stroke::new(1.0, self.theme.accent.gamma_multiply(0.8));
-            if self.project.mode == crate::project::ProjectMode::ThreeD {
-                match self.three_d_drawing_plane {
-                    ThreeDDrawingPlane::TopBottom => {
-                        for y_val in 0..=h {
-                            let p1 = project_3d(0.0, y_val as f32, li as f32);
-                            let p2 = project_3d(w as f32, y_val as f32, li as f32);
-                            painter.line_segment([p1, p2], grid_stroke);
-                        }
-                        for x_val in 0..=w {
-                            let p1 = project_3d(x_val as f32, 0.0, li as f32);
-                            let p2 = project_3d(x_val as f32, h as f32, li as f32);
-                            painter.line_segment([p1, p2], grid_stroke);
-                        }
-                    }
-                    ThreeDDrawingPlane::FrontBack => {
-                        let y_val = (li as f32).clamp(0.0, h as f32);
-                        for z_val in 0..=(num_layers as usize) {
-                            let p1 = project_3d(0.0, y_val, z_val as f32);
-                            let p2 = project_3d(w as f32, y_val, z_val as f32);
-                            painter.line_segment([p1, p2], grid_stroke);
-                        }
-                        for x_val in 0..=w {
-                            let p1 = project_3d(x_val as f32, y_val, 0.0);
-                            let p2 = project_3d(x_val as f32, y_val, num_layers as f32);
-                            painter.line_segment([p1, p2], grid_stroke);
-                        }
-                    }
-                    ThreeDDrawingPlane::LeftRight => {
-                        let x_val = (li as f32).clamp(0.0, w as f32);
-                        for z_val in 0..=(num_layers as usize) {
-                            let p1 = project_3d(x_val, 0.0, z_val as f32);
-                            let p2 = project_3d(x_val, h as f32, z_val as f32);
-                            painter.line_segment([p1, p2], grid_stroke);
-                        }
-                        for y_val in 0..=h {
-                            let p1 = project_3d(x_val, y_val as f32, 0.0);
-                            let p2 = project_3d(x_val, y_val as f32, num_layers as f32);
-                            painter.line_segment([p1, p2], grid_stroke);
-                        }
-                    }
-                }
-            } else {
-                let grid_stroke_flat = egui::Stroke::new(0.5, self.theme.accent.gamma_multiply(0.4));
-                for y_val in 0..=h {
-                    let p1 = project_3d(0.0, y_val as f32, li as f32);
-                    let p2 = project_3d(w as f32, y_val as f32, li as f32);
-                    painter.line_segment([p1, p2], grid_stroke_flat);
-                }
-                for x_val in 0..=w {
-                    let p1 = project_3d(x_val as f32, 0.0, li as f32);
-                    let p2 = project_3d(x_val as f32, h as f32, li as f32);
-                    painter.line_segment([p1, p2], grid_stroke_flat);
-                }
+        // Draw active layer grid plane on top of voxels so it remains visible (non-3D mode only)
+        if self.sprite_stack_show_grid && self.project.mode != crate::project::ProjectMode::ThreeD {
+            let grid_stroke_flat = egui::Stroke::new(0.5, self.theme.accent.gamma_multiply(0.4));
+            for y_val in 0..=h {
+                let p1 = project_3d(0.0, y_val as f32, li as f32);
+                let p2 = project_3d(w as f32, y_val as f32, li as f32);
+                painter.line_segment([p1, p2], grid_stroke_flat);
+            }
+            for x_val in 0..=w {
+                let p1 = project_3d(x_val as f32, 0.0, li as f32);
+                let p2 = project_3d(x_val as f32, h as f32, li as f32);
+                painter.line_segment([p1, p2], grid_stroke_flat);
             }
         }
 
@@ -9201,56 +9157,6 @@ print("FAIL")
                 self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 3) % 4;
             }
             self.canvas_dirty = true;
-        }
-        if self.project.mode == crate::project::ProjectMode::ThreeD {
-            if ctx.input(|i| i.key_pressed(egui::Key::Num1)) {
-                self.three_d_drawing_plane = ThreeDDrawingPlane::FrontBack;
-                self.three_d_rotation_x = 0.0;
-                self.three_d_rotation_y = 0.0;
-                self.three_d_view_mode = 1;
-                self.three_d_perspective = false;
-                self.canvas_dirty = true;
-            }
-            if ctx.input(|i| i.key_pressed(egui::Key::Num2)) {
-                self.three_d_drawing_plane = ThreeDDrawingPlane::FrontBack;
-                self.three_d_rotation_x = 0.0;
-                self.three_d_rotation_y = std::f32::consts::PI;
-                self.three_d_view_mode = 3;
-                self.three_d_perspective = false;
-                self.canvas_dirty = true;
-            }
-            if ctx.input(|i| i.key_pressed(egui::Key::Num3)) {
-                self.three_d_drawing_plane = ThreeDDrawingPlane::LeftRight;
-                self.three_d_rotation_x = 0.0;
-                self.three_d_rotation_y = std::f32::consts::FRAC_PI_2;
-                self.three_d_view_mode = 4;
-                self.three_d_perspective = false;
-                self.canvas_dirty = true;
-            }
-            if ctx.input(|i| i.key_pressed(egui::Key::Num4)) {
-                self.three_d_drawing_plane = ThreeDDrawingPlane::LeftRight;
-                self.three_d_rotation_x = 0.0;
-                self.three_d_rotation_y = -std::f32::consts::FRAC_PI_2;
-                self.three_d_view_mode = 2;
-                self.three_d_perspective = false;
-                self.canvas_dirty = true;
-            }
-            if ctx.input(|i| i.key_pressed(egui::Key::Num5)) {
-                self.three_d_drawing_plane = ThreeDDrawingPlane::TopBottom;
-                self.three_d_rotation_x = std::f32::consts::FRAC_PI_2;
-                self.three_d_rotation_y = 0.0;
-                self.three_d_view_mode = 0;
-                self.three_d_perspective = false;
-                self.canvas_dirty = true;
-            }
-            if ctx.input(|i| i.key_pressed(egui::Key::Num6)) {
-                self.three_d_drawing_plane = ThreeDDrawingPlane::TopBottom;
-                self.three_d_rotation_x = -std::f32::consts::FRAC_PI_2;
-                self.three_d_rotation_y = 0.0;
-                self.three_d_view_mode = 0;
-                self.three_d_perspective = false;
-                self.canvas_dirty = true;
-            }
         }
         if ctx.input(|i| i.key_pressed(egui::Key::E)) && self.selected_faces.is_empty() {
             if self.project.mode == crate::project::ProjectMode::ThreeD {
@@ -14234,6 +14140,58 @@ impl eframe::App for App {
                     self.select_state.clear();
                 }
                 self.canvas_dirty = true;
+            }
+
+            // 3D camera side snapping key shortcuts
+            if self.project.mode == crate::project::ProjectMode::ThreeD {
+                if ctx.input(|i| i.key_pressed(egui::Key::Num1)) {
+                    self.three_d_drawing_plane = ThreeDDrawingPlane::FrontBack;
+                    self.three_d_rotation_x = 0.0;
+                    self.three_d_rotation_y = 0.0;
+                    self.three_d_view_mode = 1;
+                    self.three_d_perspective = false;
+                    self.canvas_dirty = true;
+                }
+                if ctx.input(|i| i.key_pressed(egui::Key::Num2)) {
+                    self.three_d_drawing_plane = ThreeDDrawingPlane::FrontBack;
+                    self.three_d_rotation_x = 0.0;
+                    self.three_d_rotation_y = std::f32::consts::PI;
+                    self.three_d_view_mode = 3;
+                    self.three_d_perspective = false;
+                    self.canvas_dirty = true;
+                }
+                if ctx.input(|i| i.key_pressed(egui::Key::Num3)) {
+                    self.three_d_drawing_plane = ThreeDDrawingPlane::LeftRight;
+                    self.three_d_rotation_x = 0.0;
+                    self.three_d_rotation_y = std::f32::consts::FRAC_PI_2;
+                    self.three_d_view_mode = 4;
+                    self.three_d_perspective = false;
+                    self.canvas_dirty = true;
+                }
+                if ctx.input(|i| i.key_pressed(egui::Key::Num4)) {
+                    self.three_d_drawing_plane = ThreeDDrawingPlane::LeftRight;
+                    self.three_d_rotation_x = 0.0;
+                    self.three_d_rotation_y = -std::f32::consts::FRAC_PI_2;
+                    self.three_d_view_mode = 2;
+                    self.three_d_perspective = false;
+                    self.canvas_dirty = true;
+                }
+                if ctx.input(|i| i.key_pressed(egui::Key::Num5)) {
+                    self.three_d_drawing_plane = ThreeDDrawingPlane::TopBottom;
+                    self.three_d_rotation_x = std::f32::consts::FRAC_PI_2;
+                    self.three_d_rotation_y = 0.0;
+                    self.three_d_view_mode = 0;
+                    self.three_d_perspective = false;
+                    self.canvas_dirty = true;
+                }
+                if ctx.input(|i| i.key_pressed(egui::Key::Num6)) {
+                    self.three_d_drawing_plane = ThreeDDrawingPlane::TopBottom;
+                    self.three_d_rotation_x = -std::f32::consts::FRAC_PI_2;
+                    self.three_d_rotation_y = 0.0;
+                    self.three_d_view_mode = 0;
+                    self.three_d_perspective = false;
+                    self.canvas_dirty = true;
+                }
             }
         }
 
