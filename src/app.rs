@@ -9997,6 +9997,33 @@ print("FAIL")
             label_color,
         );
 
+        // Draw active view name text below perspective button
+        let active_view_name = match self.three_d_view_mode {
+            1 => "Front View",
+            2 => "Right View",
+            3 => "Back View",
+            4 => "Left View",
+            0 => {
+                let rot_x = self.three_d_rotation_x;
+                if (rot_x - std::f32::consts::FRAC_PI_2).abs() < 0.1 {
+                    "Top View"
+                } else if (rot_x + std::f32::consts::FRAC_PI_2).abs() < 0.1 {
+                    "Bottom View"
+                } else {
+                    "Orbit View"
+                }
+            }
+            _ => "Orbit View",
+        };
+        let view_label_pos = egui::Pos2::new(gizmo_center.x, gizmo_center.y + 60.0);
+        painter.text(
+            view_label_pos,
+            egui::Align2::CENTER_CENTER,
+            active_view_name,
+            egui::FontId::new(9.5, egui::FontFamily::Proportional),
+            self.theme.accent,
+        );
+
         // Handle clicking on a face or empty space
         if ui.input(|i| i.pointer.primary_clicked()) {
             let now = ui.input(|i| i.time);
