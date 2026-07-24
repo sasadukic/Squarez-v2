@@ -8540,6 +8540,7 @@ print("FAIL")
 
         let dx = (pos.x - center_pos.x) / self.canvas.zoom;
         let dy = (pos.y - center_pos.y) / self.canvas.zoom;
+        let dy_world = -dy;
 
         if self.three_d_view_mode == 0 {
             // Mode 0: Orthographic top/orbit view
@@ -8575,7 +8576,7 @@ print("FAIL")
 
                         let a2 = sin_y * sin_x;
                         let b2 = cos_y * sin_x;
-                        let r2 = -dy - sy_val * cos_x;
+                        let r2 = dy_world - sy_val * cos_x;
 
                         let sx_s = (r1 * b2 - b1 * r2) / det;
                         let sz_s = (a1 * r2 - r1 * a2) / det;
@@ -8603,16 +8604,16 @@ print("FAIL")
                         1 | 3 => {
                             let sz_val = if self.three_d_view_mode == 1 { cy } else { -cy };
                             let sx_solved = if cos_y.abs() > 1e-5 { (dx + sz_val * sin_y) / cos_y } else { 0.0 };
-                            let sy_solved = if cos_x.abs() > 1e-5 { (dy - (sx_solved * sin_y + sz_val * cos_y) * sin_x) / cos_x } else { 0.0 };
+                            let sy_solved = if cos_x.abs() > 1e-5 { (dy_world - (sx_solved * sin_y + sz_val * cos_y) * sin_x) / cos_x } else { 0.0 };
                             (sx_solved, sy_solved, sz_val)
                         }
                         2 | 4 => {
                             let sx_val = if self.three_d_view_mode == 2 { cy } else { -cy };
                             let sz_solved = if sin_y.abs() > 1e-5 { (sx_val * cos_y - dx) / sin_y } else { 0.0 };
-                            let sy_solved = if cos_x.abs() > 1e-5 { (dy - (sx_val * sin_y + sz_solved * cos_y) * sin_x) / cos_x } else { 0.0 };
+                            let sy_solved = if cos_x.abs() > 1e-5 { (dy_world - (sx_val * sin_y + sz_solved * cos_y) * sin_x) / cos_x } else { 0.0 };
                             (sx_val, sy_solved, sz_solved)
                         }
-                        _ => (dx, dy, cy),
+                        _ => (dx, dy_world, cy),
                     }
                 }
                 ThreeDDrawingPlane::LeftRight => {
@@ -8621,16 +8622,16 @@ print("FAIL")
                         1 | 3 => {
                             let sx_val = if self.three_d_view_mode == 1 { cx } else { -cx };
                             let sz_solved = if sin_y.abs() > 1e-5 { (sx_val * cos_y - dx) / sin_y } else { 0.0 };
-                            let sy_solved = if cos_x.abs() > 1e-5 { (dy - (sx_val * sin_y + sz_solved * cos_y) * sin_x) / cos_x } else { 0.0 };
+                            let sy_solved = if cos_x.abs() > 1e-5 { (dy_world - (sx_val * sin_y + sz_solved * cos_y) * sin_x) / cos_x } else { 0.0 };
                             (sx_val, sy_solved, sz_solved)
                         }
                         2 | 4 => {
                             let sz_val = if self.three_d_view_mode == 2 { -cx } else { cx };
                             let sx_solved = if cos_y.abs() > 1e-5 { (dx + sz_val * sin_y) / cos_y } else { 0.0 };
-                            let sy_solved = if cos_x.abs() > 1e-5 { (dy - (sx_solved * sin_y + sz_val * cos_y) * sin_x) / cos_x } else { 0.0 };
+                            let sy_solved = if cos_x.abs() > 1e-5 { (dy_world - (sx_solved * sin_y + sz_val * cos_y) * sin_x) / cos_x } else { 0.0 };
                             (sx_solved, sy_solved, sz_val)
                         }
-                        _ => (cx, dy, dx),
+                        _ => (cx, dy_world, dx),
                     }
                 }
             };
@@ -9723,8 +9724,8 @@ print("FAIL")
             let rx = sx * cos_y - sz * sin_y;
             let rz = sx * sin_y + sz * cos_y;
 
-            let ry = sy * cos_x - rz * sin_x;
-            let rz2 = sy * sin_x + rz * cos_x;
+            let ry = sy * cos_x + rz * sin_x;
+            let rz2 = rz * cos_x - sy * sin_x;
 
             (rx, -ry, rz2)
         };
