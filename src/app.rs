@@ -9020,56 +9020,57 @@ print("FAIL")
         painter.line_segment([cb[f3], ct[f3]], front_stroke);
 
         // Draw horizontal line showing what layer is currently being drawn on
-        let pl_corners = [
-            project_3d(0.0, 0.0, li as f32),
-            project_3d(w as f32, 0.0, li as f32),
-            project_3d(w as f32, h as f32, li as f32),
-            project_3d(0.0, h as f32, li as f32),
-        ];
-        let mut right_most_p = pl_corners[0];
-        for &p in &pl_corners {
-            if p.x > right_most_p.x {
-                right_most_p = p;
+        if self.project.mode != crate::project::ProjectMode::ThreeD {
+            let pl_corners = [
+                project_3d(0.0, 0.0, li as f32),
+                project_3d(w as f32, 0.0, li as f32),
+                project_3d(w as f32, h as f32, li as f32),
+                project_3d(0.0, h as f32, li as f32),
+            ];
+            let mut right_most_p = pl_corners[0];
+            for &p in &pl_corners {
+                if p.x > right_most_p.x {
+                    right_most_p = p;
+                }
             }
-        }
-        let line_start = right_most_p;
-        let line_end = egui::Pos2::new(right_most_p.x + 25.0, right_most_p.y);
-        let indicator_color = self.theme.accent;
-        painter.line_segment([line_start, line_end], egui::Stroke::new(1.5, indicator_color));
+            let line_start = right_most_p;
+            let line_end = egui::Pos2::new(right_most_p.x + 25.0, right_most_p.y);
+            let indicator_color = self.theme.accent;
+            painter.line_segment([line_start, line_end], egui::Stroke::new(1.5, indicator_color));
 
-        let active_layer_name: std::borrow::Cow<'_, str> = if self.project.mode == crate::project::ProjectMode::ThreeD {
-            format!("{}", li).into()
+            let active_layer_name: std::borrow::Cow<'_, str> = self.project.animations[ai].frames[fi].layers[li].name.as_str().into();
+            let label_pos = egui::Pos2::new(line_end.x + 4.0, line_end.y - 6.0);
+            painter.text(
+                label_pos,
+                egui::Align2::LEFT_TOP,
+                &active_layer_name,
+                egui::FontId::new(10.0, egui::FontFamily::Proportional),
+                indicator_color,
+            );
+
+            // Put visibility toggle button right after the name
+            let font_id = egui::FontId::new(10.0, egui::FontFamily::Proportional);
+            let galley = ctx.fonts(|f| f.layout_no_wrap(active_layer_name.to_string(), font_id, indicator_color));
+            let text_w = galley.size().x;
+            let btn_pos = egui::Pos2::new(label_pos.x + text_w + 6.0, line_end.y - 10.0);
+
+            let btn_rect = egui::Rect::from_min_size(btn_pos, egui::Vec2::splat(20.0));
+            self.sprite_stack_grid_btn_rect = Some(btn_rect);
+            let resp = ui.interact(btn_rect, egui::Id::new("sprite_stack_grid_vis_toggle"), egui::Sense::click());
+            let tint = if resp.hovered() { egui::Color32::WHITE } else { self.theme.fg_desc };
+            let vis_icon = if self.sprite_stack_show_grid {
+                egui::include_image!("../assets/icons/visibility.svg")
+            } else {
+                egui::include_image!("../assets/icons/visibility_off.svg")
+            };
+            ui.put(btn_rect, egui::Image::new(vis_icon).tint(tint).fit_to_exact_size(egui::Vec2::splat(14.0)));
+            let resp = resp.on_hover_text("Toggle Grid Plane Visibility");
+            if resp.clicked() {
+                self.sprite_stack_show_grid = !self.sprite_stack_show_grid;
+                self.canvas_dirty = true;
+            }
         } else {
-            self.project.animations[ai].frames[fi].layers[li].name.as_str().into()
-        };
-        let label_pos = egui::Pos2::new(line_end.x + 4.0, line_end.y - 6.0);
-        painter.text(
-            label_pos,
-            egui::Align2::LEFT_TOP,
-            &active_layer_name,
-            egui::FontId::new(10.0, egui::FontFamily::Proportional),
-            indicator_color,
-        );
-
-        // Put visibility toggle button right after the name
-        let font_id = egui::FontId::new(10.0, egui::FontFamily::Proportional);
-        let galley = ctx.fonts(|f| f.layout_no_wrap(active_layer_name.to_string(), font_id, indicator_color));
-        let text_w = galley.size().x;        let btn_pos = egui::Pos2::new(label_pos.x + text_w + 6.0, line_end.y - 10.0);
-
-        let btn_rect = egui::Rect::from_min_size(btn_pos, egui::Vec2::splat(20.0));
-        self.sprite_stack_grid_btn_rect = Some(btn_rect);
-        let resp = ui.interact(btn_rect, egui::Id::new("sprite_stack_grid_vis_toggle"), egui::Sense::click());
-        let tint = if resp.hovered() { egui::Color32::WHITE } else { self.theme.fg_desc };
-        let vis_icon = if self.sprite_stack_show_grid {
-            egui::include_image!("../assets/icons/visibility.svg")
-        } else {
-            egui::include_image!("../assets/icons/visibility_off.svg")
-        };
-        ui.put(btn_rect, egui::Image::new(vis_icon).tint(tint).fit_to_exact_size(egui::Vec2::splat(14.0)));
-        let resp = resp.on_hover_text("Toggle Grid Plane Visibility");
-        if resp.clicked() {
-            self.sprite_stack_show_grid = !self.sprite_stack_show_grid;
-            self.canvas_dirty = true;
+            self.sprite_stack_grid_btn_rect = None;
         }
 
         // Draw active layer grid plane on top of voxels so it remains visible (non-3D mode only)
@@ -9617,51 +9618,7 @@ print("FAIL")
             }
         }
 
-        // Draw grid on top of everything so it's always visible
-        if self.sprite_stack_show_grid {
-            let grid_stroke = egui::Stroke::new(0.8, self.theme.accent.gamma_multiply(0.7));
-            let grid_stroke_vertical = egui::Stroke::new(0.8, self.theme.accent.gamma_multiply(0.35));
-            
-            // Horizontal grid (floor) at active layer Z, moved by up/down arrows
-            for y_val in 0..=h {
-                let p1 = project_3d(0.0, y_val as f32, li as f32);
-                let p2 = project_3d(w as f32, y_val as f32, li as f32);
-                painter.line_segment([p1, p2], grid_stroke);
-            }
-            for x_val in 0..=w {
-                let p1 = project_3d(x_val as f32, 0.0, li as f32);
-                let p2 = project_3d(x_val as f32, h as f32, li as f32);
-                painter.line_segment([p1, p2], grid_stroke);
-            }
-            
-            // Vertical grid (wall) on the right side at x = grid_x, moved left/right by arrow keys
-            let grid_x_offset = self.three_d_grid_x;
-            // Draw vertical lines in Y-Z plane at x = grid_x_offset
-            for z_val in 0..=num_layers {
-                let p1 = project_3d(grid_x_offset, 0.0, z_val as f32);
-                let p2 = project_3d(grid_x_offset, h as f32, z_val as f32);
-                painter.line_segment([p1, p2], grid_stroke_vertical);
-            }
-            // Draw horizontal lines in Y-Z plane at x = grid_x_offset
-            for y_step in 0..=h {
-                let p1 = project_3d(grid_x_offset, y_step as f32, 0.0);
-                let p2 = project_3d(grid_x_offset, y_step as f32, num_layers as f32);
-                painter.line_segment([p1, p2], grid_stroke_vertical);
-            }
-            
-            // Draw vertical grid X label: line goes LEFT from the wall at the front-top corner
-            let indicator_color = self.theme.accent;
-            let v_corner = project_3d(grid_x_offset, 0.0, num_layers as f32);
-            let v_label_end = egui::Pos2::new(v_corner.x - 25.0, v_corner.y);
-            painter.line_segment([v_label_end, v_corner], egui::Stroke::new(1.5, indicator_color.gamma_multiply(0.5)));
-            painter.text(
-                egui::Pos2::new(v_label_end.x - 4.0, v_label_end.y - 6.0),
-                egui::Align2::RIGHT_TOP,
-                format!("{}", grid_x_offset as u32),
-                egui::FontId::new(10.0, egui::FontFamily::Proportional),
-                indicator_color.gamma_multiply(0.5),
-            );
-        }
+
 
         // Draw Unity-style 3D navigation view gizmo in the top-right corner
         let gizmo_center = egui::Pos2::new(canvas_rect.max.x - 65.0, canvas_rect.min.y + 65.0);
@@ -10749,33 +10706,15 @@ print("FAIL")
             ActiveTool::Pencil => {
                 // In 3D mode, pencil places vertices and creates edges
                 if self.project.mode == crate::project::ProjectMode::ThreeD {
-                    // Try to get 3D coordinates for both horizontal and vertical planes
                     let (x3d_h, y3d_h, z3d_h) = self.screen_to_3d_coord(pos, canvas_rect);
                     
                     let w = self.project.canvas_width as f32;
                     let h = self.project.canvas_height as f32;
                     let num_layers = self.project.active_frame_ref().layers.len() as f32;
                     
-                    // Try vertical plane intersection (X = grid_x)
-                    let grid_x = self.three_d_grid_x;
-                    let center_pos = canvas_rect.center() + self.canvas.offset;
-                    let dx = (pos.x - center_pos.x) / self.canvas.zoom;
-                    let dy = (pos.y - center_pos.y) / self.canvas.zoom;
-                    
-                    // Compute what (y, z) would be on the vertical plane at X = grid_x
-                    let (v_y, v_z) = self.screen_to_grid_plane_coord(pos, canvas_rect, grid_x);
-                    
-                    // Choose horizontal or vertical based on which plane the click is closer to
-                    let (mut x3d, mut y3d, mut z3d) = (x3d_h.round().clamp(0.0, w), y3d_h.round().clamp(0.0, h), z3d_h.round().clamp(0.0, num_layers));
-                    
-                    // Check if clicking near the vertical grid
-                    let grid_x_rounded = grid_x.round();
-                    if (x3d_h - grid_x_rounded).abs() < 1.0 {
-                        // Use vertical plane coordinates
-                        x3d = grid_x_rounded;
-                        y3d = v_y.round().clamp(0.0, h);
-                        z3d = v_z.round().clamp(0.0, num_layers);
-                    }
+                    let x3d = x3d_h.round().clamp(0.0, w);
+                    let y3d = y3d_h.round().clamp(0.0, h);
+                    let z3d = z3d_h.round().clamp(0.0, num_layers);
 
                     // Check if clicking on an existing vertex (within threshold)
                     let threshold = 0.5;
