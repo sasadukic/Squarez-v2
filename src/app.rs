@@ -54,6 +54,13 @@ pub enum ThreeDSelectMode {
     Face,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ThreeDDrawingPlane {
+    TopBottom, // Z is constant
+    FrontBack, // Y is constant
+    LeftRight, // X is constant
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum MirrorStream {
     Original,
@@ -294,6 +301,7 @@ pub struct App {
     pub three_d_rotation_y: f32, // rotation around Y axis (yaw)
     pub three_d_grid_y: f32, // grid Y offset for 3D mode (horizontal floor Y movement)
     pub three_d_grid_x: f32, // grid X offset for 3D mode (vertical wall X movement)
+    pub three_d_drawing_plane: ThreeDDrawingPlane,
     // 3D selection state
     pub selected_vertices: Vec<usize>, // indices of selected vertices
     pub selected_faces: Vec<usize>, // indices of selected faces
@@ -1011,6 +1019,7 @@ impl App {
             three_d_rotation_y: -0.785,
             three_d_grid_y: 0.0,
             three_d_grid_x: 0.0,
+            three_d_drawing_plane: ThreeDDrawingPlane::TopBottom,
             selected_vertices: Vec::new(),
             selected_faces: Vec::new(),
             three_d_select_mode: None,
@@ -8532,97 +8541,109 @@ print("FAIL")
         let dx = (pos.x - center_pos.x) / self.canvas.zoom;
         let dy = (pos.y - center_pos.y) / self.canvas.zoom;
 
-        let (cx, cy, cz) = if self.three_d_view_mode > 0 {
+        if self.three_d_view_mode == 0 {
+            // Mode 0: Orthographic top/orbit view
+            match self.three_d_drawing_plane {
+                ThreeDDrawingPlane::TopBottom => {
+                    let z = li.clamp(0.0, num_layers);
+                    (dx + w / 2.0, -dy + h / 2.0, z)
+                }
+                ThreeDDrawingPlane::FrontBack => {
+                    let y = li.clamp(0.0, h);
+                    (dx + w / 2.0, y, -dy + num_layers / 2.0)
+                }
+                ThreeDDrawingPlane::LeftRight => {
+                    let x = li.clamp(0.0, w);
+                    (x, -dy + h / 2.0, dx + num_layers / 2.0)
+                }
+            }
+        } else {
             let cos_x = self.three_d_rotation_x.cos();
             let sin_x = self.three_d_rotation_x.sin();
             let cos_y = self.three_d_rotation_y.cos();
             let sin_y = self.three_d_rotation_y.sin();
 
-            let sy_const = li - num_layers / 2.0;
-            let K = match self.three_d_view_mode {
-                1 => li - h / 2.0,
-                2 => -(li - w / 2.0),
-                3 => -(li - h / 2.0),
-                4 => li - w / 2.0,
-                _ => li - h / 2.0,
-            };
+            let (sx, sy, sz) = match self.three_d_drawing_plane {
+                ThreeDDrawingPlane::TopBottom => {
+                    let cz = li - num_layers / 2.0;
+                    let sy_val = cz;
+                    let det = sin_x;
+                    let (sx_solved, sz_solved) = if det.abs() > 1e-5 {
+                        let a1 = cos_y;
+                        let b1 = -sin_y;
+                        let r1 = dx;
 
-            let (sx, sz) = if self.three_d_perspective {
-                let D = 1000.0;
-                
-                let A1 = D * cos_y - dx * cos_x * sin_y;
-                let B1 = -(D * sin_y + dx * cos_x * cos_y);
-                let R1 = dx * (D - sy_const * sin_x);
+                        let a2 = sin_y * sin_x;
+                        let b2 = cos_y * sin_x;
+                        let r2 = -dy - sy_val * cos_x;
 
-                let A2 = (D * sin_x + dy * cos_x) * sin_y;
-                let B2 = (D * sin_x + dy * cos_x) * cos_y;
-                let R2 = -dy * D - (D * cos_x - dy * sin_x) * sy_const;
-
-                let det = A1 * B2 - B1 * A2;
-                if det.abs() > 1e-5 {
-                    let sx_solved = (R1 * B2 - B1 * R2) / det;
-                    let sz_solved = (A1 * R2 - R1 * A2) / det;
-                    (sx_solved, sz_solved)
-                } else {
-                    let C = 1.0 - K * cos_y * cos_x / D;
-                    let A1_f = cos_y - dx * sin_y * cos_x / D;
-                    let B1_f = dx * sin_x / D;
-                    let R1_f = dx * C + K * sin_y;
-                    
-                    let A2_f = sin_y * sin_x + dy * sin_y * cos_x / D;
-                    let B2_f = cos_x - dy * sin_x / D;
-                    let R2_f = -dy * C - K * cos_y * sin_x;
-                    
-                    let det_f = A1_f * B2_f - B1_f * A2_f;
-                    if det_f.abs() > 1e-5 {
-                        let sx_solved = (R1_f * B2_f - B1_f * R2_f) / det_f;
-                        let sy_solved = (A1_f * R2_f - R1_f * A2_f) / det_f;
-                        (sx_solved, sy_solved)
+                        let sx_s = (r1 * b2 - b1 * r2) / det;
+                        let sz_s = (a1 * r2 - r1 * a2) / det;
+                        (sx_s, sz_s)
                     } else {
-                        (dx, K)
+                        let k = match self.three_d_view_mode {
+                            1 => li - h / 2.0,
+                            2 => -(li - w / 2.0),
+                            3 => -(li - h / 2.0),
+                            4 => li - w / 2.0,
+                            _ => li - h / 2.0,
+                        };
+                        let sx_s = if cos_y.abs() > 1e-5 {
+                            (dx + k * sin_y) / cos_y
+                        } else {
+                            dx
+                        };
+                        (sx_s, k)
+                    };
+                    (sx_solved, sy_val, sz_solved)
+                }
+                ThreeDDrawingPlane::FrontBack => {
+                    let cy = li.clamp(0.0, h) - h / 2.0;
+                    match self.three_d_view_mode {
+                        1 | 3 => {
+                            let sz_val = if self.three_d_view_mode == 1 { cy } else { -cy };
+                            let sx_solved = if cos_y.abs() > 1e-5 { (dx + sz_val * sin_y) / cos_y } else { 0.0 };
+                            let sy_solved = if cos_x.abs() > 1e-5 { (dy - (sx_solved * sin_y + sz_val * cos_y) * sin_x) / cos_x } else { 0.0 };
+                            (sx_solved, sy_solved, sz_val)
+                        }
+                        2 | 4 => {
+                            let sx_val = if self.three_d_view_mode == 2 { cy } else { -cy };
+                            let sz_solved = if sin_y.abs() > 1e-5 { (sx_val * cos_y - dx) / sin_y } else { 0.0 };
+                            let sy_solved = if cos_x.abs() > 1e-5 { (dy - (sx_val * sin_y + sz_solved * cos_y) * sin_x) / cos_x } else { 0.0 };
+                            (sx_val, sy_solved, sz_solved)
+                        }
+                        _ => (dx, dy, cy),
                     }
                 }
-            } else {
-                let det = sin_x;
-                if det.abs() > 1e-5 {
-                    let A1 = cos_y;
-                    let B1 = -sin_y;
-                    let R1 = dx;
-
-                    let A2 = sin_y * sin_x;
-                    let B2 = cos_y * sin_x;
-                    let R2 = -dy - sy_const * cos_x;
-
-                    let sx_solved = (R1 * B2 - B1 * R2) / det;
-                    let sz_solved = (A1 * R2 - R1 * A2) / det;
-                    (sx_solved, sz_solved)
-                } else {
-                    let sx_solved = if cos_y.abs() > 1e-5 {
-                        (dx + K * sin_y) / cos_y
-                    } else {
-                        dx
-                    };
-                    (sx_solved, K)
+                ThreeDDrawingPlane::LeftRight => {
+                    let cx = li.clamp(0.0, w) - w / 2.0;
+                    match self.three_d_view_mode {
+                        1 | 3 => {
+                            let sx_val = if self.three_d_view_mode == 1 { cx } else { -cx };
+                            let sz_solved = if sin_y.abs() > 1e-5 { (sx_val * cos_y - dx) / sin_y } else { 0.0 };
+                            let sy_solved = if cos_x.abs() > 1e-5 { (dy - (sx_val * sin_y + sz_solved * cos_y) * sin_x) / cos_x } else { 0.0 };
+                            (sx_val, sy_solved, sz_solved)
+                        }
+                        2 | 4 => {
+                            let sz_val = if self.three_d_view_mode == 2 { -cx } else { cx };
+                            let sx_solved = if cos_y.abs() > 1e-5 { (dx + sz_val * sin_y) / cos_y } else { 0.0 };
+                            let sy_solved = if cos_x.abs() > 1e-5 { (dy - (sx_solved * sin_y + sz_val * cos_y) * sin_x) / cos_x } else { 0.0 };
+                            (sx_solved, sy_solved, sz_val)
+                        }
+                        _ => (cx, dy, dx),
+                    }
                 }
             };
 
-            match self.three_d_view_mode {
-                1 => (sx, sz, sy_const),
-                2 => (-sz, sx, sy_const),
-                3 => (-sx, -sz, sy_const),
-                4 => (sz, -sx, sy_const),
-                _ => (sx, sz, sy_const),
-            }
-        } else {
-            // Orthographic view (mode 0): simple 2D projection
-            // x maps to screen x, y maps to screen y (inverted)
-            (dx, -dy, li - num_layers / 2.0)
-        };
-
-        let x = cx + w / 2.0;
-        let y = cy + h / 2.0;
-        let z = cz + num_layers / 2.0;
-        (x, y, z)
+            let (cx_rec, cy_rec, cz_rec) = match self.three_d_view_mode {
+                1 => (sx, sz, sy),
+                2 => (-sz, sx, sy),
+                3 => (-sx, -sz, sy),
+                4 => (sz, -sx, sy),
+                _ => (sx, sz, sy),
+            };
+            (cx_rec + w / 2.0, cy_rec + h / 2.0, cz_rec + num_layers / 2.0)
+        }
     }
 
     fn screen_to_voxel_coord_unconstrained(&self, pos: egui::Pos2, canvas_rect: egui::Rect) -> (f32, f32) {
@@ -9020,12 +9041,41 @@ print("FAIL")
         painter.line_segment([cb[f3], ct[f3]], front_stroke);
 
         // Draw horizontal line showing what layer is currently being drawn on
-        let pl_corners = [
-            project_3d(0.0, 0.0, li as f32),
-            project_3d(w as f32, 0.0, li as f32),
-            project_3d(w as f32, h as f32, li as f32),
-            project_3d(0.0, h as f32, li as f32),
-        ];
+        let pl_corners = if self.project.mode == crate::project::ProjectMode::ThreeD {
+            match self.three_d_drawing_plane {
+                ThreeDDrawingPlane::TopBottom => [
+                    project_3d(0.0, 0.0, li as f32),
+                    project_3d(w as f32, 0.0, li as f32),
+                    project_3d(w as f32, h as f32, li as f32),
+                    project_3d(0.0, h as f32, li as f32),
+                ],
+                ThreeDDrawingPlane::FrontBack => {
+                    let y_val = (li as f32).clamp(0.0, h as f32);
+                    [
+                        project_3d(0.0, y_val, 0.0),
+                        project_3d(w as f32, y_val, 0.0),
+                        project_3d(w as f32, y_val, num_layers as f32),
+                        project_3d(0.0, y_val, num_layers as f32),
+                    ]
+                }
+                ThreeDDrawingPlane::LeftRight => {
+                    let x_val = (li as f32).clamp(0.0, w as f32);
+                    [
+                        project_3d(x_val, 0.0, 0.0),
+                        project_3d(x_val, h as f32, 0.0),
+                        project_3d(x_val, h as f32, num_layers as f32),
+                        project_3d(x_val, 0.0, num_layers as f32),
+                    ]
+                }
+            }
+        } else {
+            [
+                project_3d(0.0, 0.0, li as f32),
+                project_3d(w as f32, 0.0, li as f32),
+                project_3d(w as f32, h as f32, li as f32),
+                project_3d(0.0, h as f32, li as f32),
+            ]
+        };
         let mut right_most_p = pl_corners[0];
         for &p in &pl_corners {
             if p.x > right_most_p.x {
@@ -9038,7 +9088,12 @@ print("FAIL")
         painter.line_segment([line_start, line_end], egui::Stroke::new(1.5, indicator_color));
 
         let active_layer_name: std::borrow::Cow<'_, str> = if self.project.mode == crate::project::ProjectMode::ThreeD {
-            format!("{}", li).into()
+            let axis_name = match self.three_d_drawing_plane {
+                ThreeDDrawingPlane::TopBottom => "Z",
+                ThreeDDrawingPlane::FrontBack => "Y",
+                ThreeDDrawingPlane::LeftRight => "X",
+            };
+            format!("{}: {}", axis_name, li).into()
         } else {
             self.project.animations[ai].frames[fi].layers[li].name.as_str().into()
         };
@@ -9123,9 +9178,18 @@ print("FAIL")
 
         // Active layer adjustment keyboard handlers
         if self.project.mode != crate::project::ProjectMode::ThreeD || (self.selected_vertices.is_empty() && self.selected_faces.is_empty()) {
-            let total_layers = self.project.animations[ai].frames[fi].layers.len();
+            let limit = if self.project.mode == crate::project::ProjectMode::ThreeD {
+                match self.three_d_drawing_plane {
+                    ThreeDDrawingPlane::TopBottom => self.project.animations[ai].frames[fi].layers.len(),
+                    ThreeDDrawingPlane::FrontBack => h as usize,
+                    ThreeDDrawingPlane::LeftRight => w as usize,
+                }
+            } else {
+                self.project.animations[ai].frames[fi].layers.len()
+            };
+
             if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
-                if self.project.active_layer + 1 < total_layers {
+                if self.project.active_layer + 1 < limit {
                     self.project.active_layer += 1;
                     self.canvas_dirty = true;
                 }
@@ -9624,7 +9688,7 @@ print("FAIL")
 
 
 
-        // Draw Unity-style 3D navigation view gizmo in the top-right corner
+        // Draw 3D view cube in the top-right corner
         let gizmo_center = egui::Pos2::new(canvas_rect.max.x - 65.0, canvas_rect.min.y + 65.0);
         let gizmo_rect = egui::Rect::from_center_size(gizmo_center, egui::Vec2::splat(100.0));
 
@@ -9642,7 +9706,7 @@ print("FAIL")
             }
         }
 
-        let project_gizmo_axis = |gx: f32, gy: f32, gz: f32| -> (f32, f32, f32) {
+        let project_gizmo_vertex = |gx: f32, gy: f32, gz: f32| -> (f32, f32, f32) {
             let (sx, sy, sz) = match self.three_d_view_mode {
                 1 => (gx, gz, gy),
                 2 => (gy, gz, -gx),
@@ -9665,88 +9729,159 @@ print("FAIL")
             (rx, -ry, rz2)
         };
 
-        struct GizmoAxis {
-            name: &'static str,
-            dir: (f32, f32, f32),
-            color: egui::Color32,
-            target_view_mode: u8,
-            target_rot: (f32, f32),
-            screen_pos: egui::Pos2,
-            depth: f32,
-            is_positive: bool,
-        }
-
-        let mut axes = vec![
-            GizmoAxis { name: "X", dir: (1.0, 0.0, 0.0), color: egui::Color32::from_rgb(235, 64, 52), target_view_mode: 2, target_rot: (0.0, -std::f32::consts::FRAC_PI_2), screen_pos: egui::Pos2::ZERO, depth: 0.0, is_positive: true },
-            GizmoAxis { name: "-X", dir: (-1.0, 0.0, 0.0), color: egui::Color32::from_rgb(200, 200, 200), target_view_mode: 4, target_rot: (0.0, std::f32::consts::FRAC_PI_2), screen_pos: egui::Pos2::ZERO, depth: 0.0, is_positive: false },
-            GizmoAxis { name: "Y", dir: (0.0, 1.0, 0.0), color: egui::Color32::from_rgb(52, 235, 82), target_view_mode: 0, target_rot: (std::f32::consts::FRAC_PI_2, 0.0), screen_pos: egui::Pos2::ZERO, depth: 0.0, is_positive: true },
-            GizmoAxis { name: "-Y", dir: (0.0, -1.0, 0.0), color: egui::Color32::from_rgb(200, 200, 200), target_view_mode: 0, target_rot: (-std::f32::consts::FRAC_PI_2, 0.0), screen_pos: egui::Pos2::ZERO, depth: 0.0, is_positive: false },
-            GizmoAxis { name: "Z", dir: (0.0, 0.0, 1.0), color: egui::Color32::from_rgb(52, 156, 235), target_view_mode: 1, target_rot: (0.0, 0.0), screen_pos: egui::Pos2::ZERO, depth: 0.0, is_positive: true },
-            GizmoAxis { name: "-Z", dir: (0.0, 0.0, -1.0), color: egui::Color32::from_rgb(200, 200, 200), target_view_mode: 3, target_rot: (0.0, std::f32::consts::PI), screen_pos: egui::Pos2::ZERO, depth: 0.0, is_positive: false },
+        // 3D View Cube Vertices
+        let local_verts = [
+            (-1.0, -1.0, -1.0), // 0
+            ( 1.0, -1.0, -1.0), // 1
+            ( 1.0,  1.0, -1.0), // 2
+            (-1.0,  1.0, -1.0), // 3
+            (-1.0, -1.0,  1.0), // 4
+            ( 1.0, -1.0,  1.0), // 5
+            ( 1.0,  1.0,  1.0), // 6
+            (-1.0,  1.0,  1.0), // 7
         ];
 
-        for axis in &mut axes {
-            let (rx, ry, rz) = project_gizmo_axis(axis.dir.0, axis.dir.1, axis.dir.2);
-            axis.screen_pos = gizmo_center + egui::Vec2::new(rx, ry) * 30.0;
-            axis.depth = rz;
+        let mut projected_verts = Vec::new();
+        for &v in &local_verts {
+            let (rx, ry, rz) = project_gizmo_vertex(v.0, v.1, v.2);
+            let screen_pos = gizmo_center + egui::Vec2::new(rx, ry) * 16.0; // scale factor
+            projected_verts.push((screen_pos, rz));
         }
 
-        // Sort axes back-to-front
-        axes.sort_by(|a, b| b.depth.partial_cmp(&a.depth).unwrap_or(std::cmp::Ordering::Equal));
+        struct CubeFace {
+            name: &'static str,
+            verts: [usize; 4],
+            normal: (f32, f32, f32),
+            plane: ThreeDDrawingPlane,
+            target_view_mode: u8,
+            target_rot: (f32, f32),
+            color: egui::Color32,
+        }
+
+        let faces = vec![
+            CubeFace { name: "TOP", verts: [4, 5, 6, 7], normal: (0.0, 0.0, 1.0), plane: ThreeDDrawingPlane::TopBottom, target_view_mode: 0, target_rot: (std::f32::consts::FRAC_PI_2, 0.0), color: egui::Color32::from_rgb(180, 190, 255) },
+            CubeFace { name: "BOTTOM", verts: [3, 2, 1, 0], normal: (0.0, 0.0, -1.0), plane: ThreeDDrawingPlane::TopBottom, target_view_mode: 0, target_rot: (-std::f32::consts::FRAC_PI_2, 0.0), color: egui::Color32::from_rgb(150, 160, 220) },
+            CubeFace { name: "FRONT", verts: [7, 6, 2, 3], normal: (0.0, 1.0, 0.0), plane: ThreeDDrawingPlane::FrontBack, target_view_mode: 1, target_rot: (0.0, 0.0), color: egui::Color32::from_rgb(255, 180, 180) },
+            CubeFace { name: "BACK", verts: [0, 1, 5, 4], normal: (0.0, -1.0, 0.0), plane: ThreeDDrawingPlane::FrontBack, target_view_mode: 3, target_rot: (0.0, std::f32::consts::PI), color: egui::Color32::from_rgb(220, 150, 150) },
+            CubeFace { name: "LEFT", verts: [4, 7, 3, 0], normal: (-1.0, 0.0, 0.0), plane: ThreeDDrawingPlane::LeftRight, target_view_mode: 4, target_rot: (0.0, std::f32::consts::FRAC_PI_2), color: egui::Color32::from_rgb(180, 255, 180) },
+            CubeFace { name: "RIGHT", verts: [1, 2, 6, 5], normal: (1.0, 0.0, 0.0), plane: ThreeDDrawingPlane::LeftRight, target_view_mode: 2, target_rot: (0.0, -std::f32::consts::FRAC_PI_2), color: egui::Color32::from_rgb(150, 220, 150) },
+        ];
+
+        let mut sorted_faces: Vec<(usize, &CubeFace, f32)> = faces.iter().enumerate()
+            .map(|(idx, face)| {
+                let depth = (projected_verts[face.verts[0]].1 +
+                             projected_verts[face.verts[1]].1 +
+                             projected_verts[face.verts[2]].1 +
+                             projected_verts[face.verts[3]].1) / 4.0;
+                (idx, face, depth)
+            })
+            .collect();
+
+        // Sort by depth descending: back-most first (drawn first), front-most last (drawn last)
+        sorted_faces.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
 
         let pointer_pos = ui.input(|i| i.pointer.interact_pos());
-        let mut hovered_axis_idx: Option<usize> = None;
+        
+        let point_in_quad = |p: egui::Pos2, q: &[egui::Pos2; 4]| -> bool {
+            let mut sign = None;
+            for i in 0..4 {
+                let a = q[i];
+                let b = q[(i + 1) % 4];
+                let ab = b - a;
+                let ap = p - a;
+                let cross = ab.x * ap.y - ab.y * ap.x;
+                if cross.abs() > 1e-5 {
+                    let current_sign = cross.is_sign_positive();
+                    if let Some(s) = sign {
+                        if s != current_sign {
+                            return false;
+                        }
+                    } else {
+                        sign = Some(current_sign);
+                    }
+                }
+            }
+            true
+        };
+
+        let mut hovered_face_idx: Option<usize> = None;
         if let Some(pos) = pointer_pos {
             if gizmo_rect.contains(pos) {
-                for (idx, axis) in axes.iter().enumerate() {
-                    let dist = (pos - axis.screen_pos).length();
-                    let radius = if axis.is_positive { 8.0 } else { 5.0 };
-                    if dist <= radius {
-                        hovered_axis_idx = Some(idx);
+                // Check faces from front-most to back-most
+                for &(idx, face, _) in sorted_faces.iter().rev() {
+                    let points = [
+                        projected_verts[face.verts[0]].0,
+                        projected_verts[face.verts[1]].0,
+                        projected_verts[face.verts[2]].0,
+                        projected_verts[face.verts[3]].0,
+                    ];
+                    if point_in_quad(pos, &points) {
+                        hovered_face_idx = Some(idx);
                         break;
                     }
                 }
             }
         }
 
-        // Draw axes
-        for (idx, axis) in axes.iter().enumerate() {
-            let is_hovered = hovered_axis_idx == Some(idx);
-            let line_color = if axis.is_positive {
-                axis.color.gamma_multiply(0.8)
-            } else {
-                axis.color.gamma_multiply(0.4)
-            };
-            
-            let stroke_width = if is_hovered { 2.5 } else { 1.5 };
-            painter.line_segment([gizmo_center, axis.screen_pos], egui::Stroke::new(stroke_width, line_color));
+        // Draw the cube faces
+        for &(_idx, face, _) in &sorted_faces {
+            let points = vec![
+                projected_verts[face.verts[0]].0,
+                projected_verts[face.verts[1]].0,
+                projected_verts[face.verts[2]].0,
+                projected_verts[face.verts[3]].0,
+            ];
 
-            let tip_radius = if axis.is_positive {
-                if is_hovered { 9.0 } else { 7.0 }
+            let is_selected = face.plane == self.three_d_drawing_plane;
+            let is_hovered = hovered_face_idx == Some(_idx);
+
+            // Dynamic shading based on face normal
+            let normal_3d = face.normal;
+            let light_dir = (0.5, 0.7, 1.0);
+            let dp = normal_3d.0 * light_dir.0 + normal_3d.1 * light_dir.1 + normal_3d.2 * light_dir.2;
+            let shade_factor = (dp + 1.0) / 2.0;
+
+            let base_color = if is_selected {
+                self.theme.accent.gamma_multiply(0.8)
             } else {
-                if is_hovered { 6.0 } else { 4.5 }
+                egui::Color32::from_gray((160.0 + shade_factor * 60.0) as u8)
             };
-            
-            painter.circle_filled(axis.screen_pos, tip_radius, axis.color);
-            
-            if axis.is_positive {
-                painter.text(
-                    axis.screen_pos,
-                    egui::Align2::CENTER_CENTER,
-                    axis.name,
-                    egui::FontId::new(8.0, egui::FontFamily::Proportional),
-                    self.theme.bg,
-                );
-            }
+
+            let face_color = if is_hovered {
+                base_color.linear_multiply(1.2)
+            } else {
+                base_color
+            };
+
+            let stroke_color = self.theme.border;
+            painter.add(egui::Shape::convex_polygon(
+                points.clone(),
+                face_color,
+                egui::Stroke::new(1.0, stroke_color),
+            ));
+
+            // Draw face label text
+            let mut cx_sum = 0.0;
+            let mut cy_sum = 0.0;
+            for p in &points { cx_sum += p.x; cy_sum += p.y; }
+            let centroid = egui::Pos2::new(cx_sum / 4.0, cy_sum / 4.0);
+
+            let text_color = if is_selected {
+                self.theme.bg
+            } else {
+                self.theme.fg_desc
+            };
+
+            painter.text(
+                centroid,
+                egui::Align2::CENTER_CENTER,
+                face.name,
+                egui::FontId::new(9.0, egui::FontFamily::Proportional),
+                text_color,
+            );
         }
 
-        // Draw center button (cube representation)
-        let center_hovered = pointer_pos.map(|pos| (pos - gizmo_center).length() <= 8.0).unwrap_or(false);
-        let center_color = if center_hovered { self.theme.surface } else { self.theme.panel };
-        painter.circle_filled(gizmo_center, 6.0, center_color);
-        painter.circle_stroke(gizmo_center, 6.0, egui::Stroke::new(1.0, self.theme.border));
-
-        // Draw Perspective/Orthographic text button below the gizmo
+        // Draw Perspective/Orthographic text button below the view cube
         let persp_text_pos = egui::Pos2::new(gizmo_center.x, gizmo_center.y + 45.0);
         let persp_text_rect = egui::Rect::from_center_size(persp_text_pos, egui::Vec2::new(80.0, 16.0));
         let persp_text_resp = ui.interact(persp_text_rect, egui::Id::new("three_d_persp_text_btn"), egui::Sense::click());
@@ -9761,31 +9896,29 @@ print("FAIL")
             label_color,
         );
 
-        // Handle clicking on an axis tip or controls
+        // Handle clicking on a face or empty space
         if ui.input(|i| i.pointer.primary_clicked()) {
             let now = ui.input(|i| i.time);
-            if let Some(idx) = hovered_axis_idx {
-                let axis = &axes[idx];
-                self.three_d_rotation_x = axis.target_rot.0;
-                self.three_d_rotation_y = axis.target_rot.1;
-                self.three_d_view_mode = axis.target_view_mode;
-                self.three_d_perspective = false; // Snap to orthographic
-                self.last_gizmo_click_time = -1.0;
+            if let Some(idx) = hovered_face_idx {
+                let face = &faces[idx];
+                self.three_d_drawing_plane = face.plane;
+                self.three_d_rotation_x = face.target_rot.0;
+                self.three_d_rotation_y = face.target_rot.1;
+                self.three_d_view_mode = face.target_view_mode;
+                self.three_d_perspective = false;
                 self.canvas_dirty = true;
-            } else if center_hovered {
+                self.last_gizmo_click_time = now;
+            } else if gizmo_rect.contains(pointer_pos.unwrap_or(egui::Pos2::new(-1.0, -1.0))) && !persp_text_rect.contains(pointer_pos.unwrap_or(egui::Pos2::new(-1.0, -1.0))) {
                 let since_last = now - self.last_gizmo_click_time;
                 self.last_gizmo_click_time = now;
                 if since_last < 0.4 {
-                    // Double-click center → reset to default view
+                    // Double-click empty space → reset to default isometric view
                     self.three_d_rotation_x = -0.615;
                     self.three_d_rotation_y = -0.785;
                     self.three_d_view_mode = 1;
                     self.three_d_perspective = false;
-                    self.three_d_grid_y = 0.0;
-                    self.three_d_grid_x = self.project.canvas_width as f32;
+                    self.three_d_drawing_plane = ThreeDDrawingPlane::TopBottom;
                     self.project.active_layer = 0;
-                } else {
-                    self.three_d_perspective = !self.three_d_perspective;
                 }
                 self.canvas_dirty = true;
             } else if persp_text_resp.clicked() {
