@@ -8796,7 +8796,48 @@ print("FAIL")
         painter.line_segment([ct[back_idx], ct[b3]], back_stroke);
         painter.line_segment([cb[back_idx], ct[back_idx]], back_stroke);
 
-
+        if self.project.mode == crate::project::ProjectMode::ThreeD {
+            let grid_stroke = egui::Stroke::new(1.0, self.theme.muted.gamma_multiply(0.2));
+            // Z planes (bottom Z=0, top Z=num_layers)
+            for &z_f in &[0.0, num_layers as f32] {
+                for y in 1..h {
+                    let p1 = project_3d(0.0, y as f32, z_f);
+                    let p2 = project_3d(w as f32, y as f32, z_f);
+                    painter.line_segment([p1, p2], grid_stroke);
+                }
+                for x in 1..w {
+                    let p1 = project_3d(x as f32, 0.0, z_f);
+                    let p2 = project_3d(x as f32, h as f32, z_f);
+                    painter.line_segment([p1, p2], grid_stroke);
+                }
+            }
+            // X planes (left X=0, right X=w)
+            for &x_f in &[0.0, w as f32] {
+                for y in 1..h {
+                    let p1 = project_3d(x_f, y as f32, 0.0);
+                    let p2 = project_3d(x_f, y as f32, num_layers as f32);
+                    painter.line_segment([p1, p2], grid_stroke);
+                }
+                for z in 1..num_layers {
+                    let p1 = project_3d(x_f, 0.0, z as f32);
+                    let p2 = project_3d(x_f, h as f32, z as f32);
+                    painter.line_segment([p1, p2], grid_stroke);
+                }
+            }
+            // Y planes (front Y=0, back Y=h)
+            for &y_f in &[0.0, h as f32] {
+                for x in 1..w {
+                    let p1 = project_3d(x as f32, y_f, 0.0);
+                    let p2 = project_3d(x as f32, y_f, num_layers as f32);
+                    painter.line_segment([p1, p2], grid_stroke);
+                }
+                for z in 1..num_layers {
+                    let p1 = project_3d(0.0, y_f, z as f32);
+                    let p2 = project_3d(w as f32, y_f, z as f32);
+                    painter.line_segment([p1, p2], grid_stroke);
+                }
+            }
+        }
 
         // Draw voxels in back-to-front order (depth sorting)
         let x_range: Vec<u32> = match self.sprite_stack_rotation_90 % 4 {
@@ -9437,6 +9478,87 @@ print("FAIL")
             }
         }
 
+        // Draw red guide lines and coordinates for selected vertices
+        if self.project.mode == crate::project::ProjectMode::ThreeD {
+            let guide_stroke = egui::Stroke::new(1.0, egui::Color32::RED);
+            let guide_stroke_secondary = egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 0, 0, 100));
+            
+            for &idx in &self.selected_vertices {
+                if let Some(vertex) = mesh.vertices.get(idx) {
+                    let vx = vertex.x;
+                    let vy = vertex.y;
+                    let vz = vertex.z;
+
+                    // Projections onto planes
+                    let p_vertex = project_3d(vx, vy, vz);
+                    let p_z0 = project_3d(vx, vy, 0.0);
+                    let p_zmax = project_3d(vx, vy, num_layers as f32);
+                    let p_y0 = project_3d(vx, 0.0, vz);
+                    let p_ymax = project_3d(vx, h as f32, vz);
+                    let p_x0 = project_3d(0.0, vy, vz);
+                    let p_xmax = project_3d(w as f32, vy, vz);
+
+                    // Draw guides to bounding box planes
+                    painter.line_segment([p_vertex, p_z0], guide_stroke);
+                    painter.line_segment([p_vertex, p_zmax], guide_stroke);
+                    painter.line_segment([p_vertex, p_y0], guide_stroke);
+                    painter.line_segment([p_vertex, p_ymax], guide_stroke);
+                    painter.line_segment([p_vertex, p_x0], guide_stroke);
+                    painter.line_segment([p_vertex, p_xmax], guide_stroke);
+
+                    // Secondary guides on the floor plane (Z=0) to show X/Y projection limits
+                    let p_x0_z0 = project_3d(0.0, vy, 0.0);
+                    let p_y0_z0 = project_3d(vx, 0.0, 0.0);
+                    let p_xmax_z0 = project_3d(w as f32, vy, 0.0);
+                    let p_ymax_z0 = project_3d(vx, h as f32, 0.0);
+                    painter.line_segment([p_z0, p_x0_z0], guide_stroke_secondary);
+                    painter.line_segment([p_z0, p_y0_z0], guide_stroke_secondary);
+                    painter.line_segment([p_z0, p_xmax_z0], guide_stroke_secondary);
+                    painter.line_segment([p_z0, p_ymax_z0], guide_stroke_secondary);
+
+                    // Display coordinates next to the vertex
+                    let coord_text = format!("X: {:.0}\nY: {:.0}\nZ: {:.0}", vx, vy, vz);
+                    let font_id = egui::FontId::new(10.0, egui::FontFamily::Monospace);
+                    let text_color = egui::Color32::WHITE;
+                    
+                    let text_pos = p_vertex + egui::Vec2::new(10.0, -40.0);
+                    let text_rect = painter.text(
+                        text_pos,
+                        egui::Align2::LEFT_TOP,
+                        &coord_text,
+                        font_id.clone(),
+                        text_color,
+                    );
+                    
+                    let bg_rect = text_rect.expand(4.0);
+                    
+                    // Draw drop shadow: Offset: [0, 14], Color: (0, 0, 0, 89), CornerRadius: 6, No Outline
+                    let shadow_rect = bg_rect.translate(egui::Vec2::new(0.0, 14.0));
+                    painter.rect_filled(
+                        shadow_rect,
+                        egui::CornerRadius::same(6),
+                        egui::Color32::from_rgba_unmultiplied(0, 0, 0, 89)
+                    );
+                    
+                    // Draw main background box: CornerRadius: 6, No Outline
+                    painter.rect_filled(
+                        bg_rect,
+                        egui::CornerRadius::same(6),
+                        egui::Color32::from_rgba_unmultiplied(20, 20, 20, 230)
+                    );
+                    
+                    // Re-draw text on top of background
+                    painter.text(
+                        text_pos,
+                        egui::Align2::LEFT_TOP,
+                        &coord_text,
+                        font_id,
+                        text_color,
+                    );
+                }
+            }
+        }
+
         // Handle vertex/face selection with click and drag translation
         if self.three_d_select_mode.is_some() {
             let is_over_extrude_btn = self.three_d_select_mode == Some(ThreeDSelectMode::Face)
@@ -9626,47 +9748,27 @@ print("FAIL")
 
             if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowUp)) {
                 key_pressed = true;
-                match self.three_d_drawing_plane {
-                    ThreeDDrawingPlane::TopBottom => {
-                        if shift_held { dz = 1.0; } else { dy = -1.0; }
-                    }
-                    ThreeDDrawingPlane::FrontBack => {
-                        if shift_held { dy = 1.0; } else { dz = 1.0; }
-                    }
-                    ThreeDDrawingPlane::LeftRight => {
-                        if shift_held { dx = 1.0; } else { dz = 1.0; }
-                    }
+                if shift_held {
+                    dz = 1.0;
+                } else {
+                    dy = 1.0;
                 }
             }
             if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowDown)) {
                 key_pressed = true;
-                match self.three_d_drawing_plane {
-                    ThreeDDrawingPlane::TopBottom => {
-                        if shift_held { dz = -1.0; } else { dy = 1.0; }
-                    }
-                    ThreeDDrawingPlane::FrontBack => {
-                        if shift_held { dy = -1.0; } else { dz = -1.0; }
-                    }
-                    ThreeDDrawingPlane::LeftRight => {
-                        if shift_held { dx = -1.0; } else { dz = -1.0; }
-                    }
+                if shift_held {
+                    dz = -1.0;
+                } else {
+                    dy = -1.0;
                 }
             }
             if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
                 key_pressed = true;
-                match self.three_d_drawing_plane {
-                    ThreeDDrawingPlane::TopBottom => dx = -1.0,
-                    ThreeDDrawingPlane::FrontBack => dx = -1.0,
-                    ThreeDDrawingPlane::LeftRight => dy = -1.0,
-                }
+                dx = -1.0;
             }
             if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowRight)) {
                 key_pressed = true;
-                match self.three_d_drawing_plane {
-                    ThreeDDrawingPlane::TopBottom => dx = 1.0,
-                    ThreeDDrawingPlane::FrontBack => dx = 1.0,
-                    ThreeDDrawingPlane::LeftRight => dy = 1.0,
-                }
+                dx = 1.0;
             }
 
             if key_pressed {
