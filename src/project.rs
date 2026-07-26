@@ -20,9 +20,6 @@ pub enum Anchor {
 pub enum ProjectMode {
     Normal,
     SpriteStack,
-    ThreeD,
-    Blob,
-    Wang,
 }
 
 impl Default for ProjectMode {
@@ -36,9 +33,6 @@ impl ProjectMode {
         match self {
             Self::Normal => "Normal",
             Self::SpriteStack => "Sprite Stack",
-            Self::ThreeD => "3D",
-            Self::Blob => "Blob",
-            Self::Wang => "Wang",
         }
     }
 }

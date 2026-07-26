@@ -1328,7 +1328,7 @@ impl App {
     }
 
     fn on_project_changed(&mut self) {
-        if self.project.mode == crate::project::ProjectMode::SpriteStack || self.project.mode == crate::project::ProjectMode::ThreeD {
+        if self.project.mode == crate::project::ProjectMode::SpriteStack || false {
             self.ui_state.collapse_palette = false;
             self.ui_state.collapse_color = false;
             self.ui_state.collapse_preview = false;
@@ -1349,7 +1349,7 @@ impl App {
 
             self.pending_zoom_fit = true;
             // Initialize 3D grid positions when switching to 3D mode
-            if self.project.mode == crate::project::ProjectMode::ThreeD {
+            if false {
                 self.three_d_grid_x = self.project.canvas_width as f32;
             }
         } else {
@@ -1540,7 +1540,7 @@ impl App {
     }
 
     fn active_tool_index(&self) -> usize {
-        let is_3d = self.project.mode == crate::project::ProjectMode::ThreeD;
+        let is_3d = false;
         match self.active_tool {
             ActiveTool::Pencil | ActiveTool::Eraser           => 0, // pen group
             ActiveTool::Fill   | ActiveTool::Eyedropper       => 1, // bucket group
@@ -1555,7 +1555,7 @@ impl App {
     }
 
     fn is_group_selected(&self, slot: usize) -> bool {
-        let is_3d = self.project.mode == crate::project::ProjectMode::ThreeD;
+        let is_3d = false;
         match slot {
             0 => matches!(self.active_tool, ActiveTool::Pencil | ActiveTool::Eraser),
             1 => matches!(self.active_tool, ActiveTool::Fill | ActiveTool::Eyedropper),
@@ -1733,7 +1733,7 @@ impl App {
             }
         }
         // Clear drawing chain when switching tools in 3D mode
-        if self.project.mode == crate::project::ProjectMode::ThreeD {
+        if false {
             self.drawing_chain.clear();
         }
         self.clear_transient_state();
@@ -2594,7 +2594,7 @@ impl App {
                             TopMenu::Layer => {
                                 let ai = self.project.active_animation;
                                 let mut fi = self.project.active_frame;
-                                let reached_limit = (self.project.mode == crate::project::ProjectMode::SpriteStack || self.project.mode == crate::project::ProjectMode::ThreeD)
+                                let reached_limit = (self.project.mode == crate::project::ProjectMode::SpriteStack || false)
                                     && self.project.sprite_stack_max_layers.map_or(false, |max| {
                                         self.project.animations[ai].frames[fi].layers.len() >= max as usize
                                     });
@@ -2840,7 +2840,7 @@ impl App {
                 ui.spacing_mut().item_spacing = Vec2::ZERO;
 
                 // Vertically center the button stack in the full screen
-                let is_3d = self.project.mode == crate::project::ProjectMode::ThreeD;
+                let is_3d = false;
                 let tool_count = if is_3d { 6.0 } else { 5.0 };
                 let tools_h = tool_count * 38.0;
                 let top_pad = ((ctx.screen_rect().height() - tools_h) / 2.0 - TOP_BAR_HEIGHT).max(0.0);
@@ -2921,7 +2921,7 @@ impl App {
                 }
 
                 // Slot 3: Select group (RectSelect/Move) or 3D tools
-                let is_3d = self.project.mode == crate::project::ProjectMode::ThreeD;
+                let is_3d = false;
                 
                 if is_3d {
                     // In 3D mode, show vertex select and face select tools
@@ -4281,7 +4281,7 @@ impl App {
         let ai = self.project.active_animation;
         let fi = self.project.active_frame;
 
-        let reached_limit = (self.project.mode == crate::project::ProjectMode::SpriteStack || self.project.mode == crate::project::ProjectMode::ThreeD)
+        let reached_limit = (self.project.mode == crate::project::ProjectMode::SpriteStack || false)
             && self.project.sprite_stack_max_layers.map_or(false, |max| {
                 self.project.animations[ai].frames[fi].layers.len() >= max as usize
             });
@@ -5503,7 +5503,7 @@ impl App {
 
                     ui.horizontal(|ui| {
                         ui.style_mut().spacing.item_spacing = Vec2::ZERO;
-                            let reached_limit = (self.project.mode == crate::project::ProjectMode::SpriteStack || self.project.mode == crate::project::ProjectMode::ThreeD)
+                            let reached_limit = (self.project.mode == crate::project::ProjectMode::SpriteStack || false)
                                 && self.project.sprite_stack_max_layers.map_or(false, |max| {
                                     layer_count >= max as usize
                                 });
@@ -6192,7 +6192,7 @@ impl App {
                         Pos2::new(canvas_rect.min.x + 38.0, canvas_rect.min.y + TOP_BAR_HEIGHT),
                         Pos2::new(canvas_rect.max.x, canvas_rect.max.y),
                     );
-                    if self.project.mode == crate::project::ProjectMode::SpriteStack || self.project.mode == crate::project::ProjectMode::ThreeD {
+                    if self.project.mode == crate::project::ProjectMode::SpriteStack || false {
                         let w = self.project.canvas_width as f32;
                         let h = self.project.canvas_height as f32;
                         let num_layers = self.project.active_frame_ref().layers.len() as f32;
@@ -6207,7 +6207,7 @@ impl App {
                 let painter = ui.painter_at(canvas_rect);
                 if self.project.mode == crate::project::ProjectMode::SpriteStack {
                     self.draw_3d_voxel_workspace(ui, &painter, canvas_rect);
-                } else if self.project.mode == crate::project::ProjectMode::ThreeD {
+                } else if false {
                     self.draw_3d_workspace(ui, &painter, canvas_rect);
                 } else {
                     self.canvas.draw(
@@ -6252,7 +6252,7 @@ impl App {
                         self.canvas.handle_input(ui, canvas_rect);
 
                         // Handle Right-click drag to rotate 3D camera
-                        if self.project.mode == crate::project::ProjectMode::ThreeD {
+                        if false {
                             let is_hovered = ui.input(|i| i.pointer.hover_pos().map(|pos| canvas_rect.contains(pos)).unwrap_or(false));
                             let over_gizmo = ui.input(|i| i.pointer.hover_pos().map(|pos| {
                                 pos.x >= canvas_rect.max.x - 120.0 && pos.y <= canvas_rect.min.y + 160.0
@@ -6279,7 +6279,7 @@ impl App {
                 }
 
                 let art_rect = self.canvas.art_rect(canvas_rect, disp_w, disp_h);
-                if self.project.mode != crate::project::ProjectMode::SpriteStack && self.project.mode != crate::project::ProjectMode::ThreeD {
+                if self.project.mode != crate::project::ProjectMode::SpriteStack && true {
                     painter.rect_stroke(
                         art_rect,
                         0.0,
@@ -6623,7 +6623,7 @@ impl App {
                 }
 
                 // Render info overlay box in the top-left corner of the canvas (under logo, next to tools)
-                if self.project.mode != crate::project::ProjectMode::SpriteStack && self.project.mode != crate::project::ProjectMode::ThreeD {
+                if self.project.mode != crate::project::ProjectMode::SpriteStack && true {
                     let hover_canvas = ctx.pointer_hover_pos()
                         .and_then(|p| self.get_canvas_coords(p, canvas_rect))
                         .filter(|&(hx, hy)| hx < disp_w && hy < disp_h);
@@ -6670,7 +6670,7 @@ impl App {
                     false
                 };
 
-                let hovering_over_3d_controls = if self.project.mode == crate::project::ProjectMode::ThreeD {
+                let hovering_over_3d_controls = if false {
                     ui.ctx().input(|i| {
                         i.pointer.hover_pos().map(|pos| {
                             pos.x >= canvas_rect.max.x - 120.0 && pos.y <= canvas_rect.min.y + 130.0
@@ -7836,7 +7836,7 @@ print("FAIL")
     }
 
     fn draw_preview_content(&mut self, ui: &mut egui::Ui) {
-        if self.project.mode == crate::project::ProjectMode::SpriteStack || self.project.mode == crate::project::ProjectMode::ThreeD {
+        if self.project.mode == crate::project::ProjectMode::SpriteStack || false {
             let frame = self.project.active_frame_ref();
             let w = self.project.canvas_width;
             let h = self.project.canvas_height;
@@ -8192,7 +8192,7 @@ print("FAIL")
                             .fit_to_exact_size(icon_size),
                     );
 
-                if self.project.mode == crate::project::ProjectMode::SpriteStack || self.project.mode == crate::project::ProjectMode::ThreeD {
+                if self.project.mode == crate::project::ProjectMode::SpriteStack || false {
                         let btn_size = Vec2::new(30.0, 15.0);
                         let btn_rect = egui::Rect::from_center_size(
                             egui::Pos2::new(rect.right() - 32.0, rect.center().y),
@@ -8492,7 +8492,7 @@ print("FAIL")
     fn get_canvas_coords(&self, pos: egui::Pos2, canvas_rect: egui::Rect) -> Option<(u32, u32)> {
         let w = self.project.canvas_width;
         let h = self.project.canvas_height;
-        if self.project.mode == crate::project::ProjectMode::SpriteStack || self.project.mode == crate::project::ProjectMode::ThreeD {
+        if self.project.mode == crate::project::ProjectMode::SpriteStack || false {
             self.screen_to_voxel_coord(pos, canvas_rect)
         } else {
             self.canvas.screen_to_canvas(pos, canvas_rect, w, h)
@@ -8500,10 +8500,10 @@ print("FAIL")
     }
 
     fn get_canvas_coords_i32(&self, pos: egui::Pos2, canvas_rect: egui::Rect) -> (i32, i32) {
-        if self.project.mode == crate::project::ProjectMode::SpriteStack || self.project.mode == crate::project::ProjectMode::ThreeD {
+        if self.project.mode == crate::project::ProjectMode::SpriteStack || false {
             let (xf, yf) = self.screen_to_voxel_coord_unconstrained(pos, canvas_rect);
             // In 3D mode, snap to grid corners (round to nearest integer)
-            if self.project.mode == crate::project::ProjectMode::ThreeD {
+            if false {
                 (xf.round() as i32, yf.round() as i32)
             } else {
                 (xf.floor() as i32, yf.floor() as i32)
@@ -8516,10 +8516,10 @@ print("FAIL")
     }
 
     fn get_canvas_coords_f32(&self, pos: egui::Pos2, canvas_rect: egui::Rect) -> (f32, f32) {
-        if self.project.mode == crate::project::ProjectMode::SpriteStack || self.project.mode == crate::project::ProjectMode::ThreeD {
+        if self.project.mode == crate::project::ProjectMode::SpriteStack || false {
             let (xf, yf) = self.screen_to_voxel_coord_unconstrained(pos, canvas_rect);
             // In 3D mode, snap to grid corners (round to nearest integer)
-            if self.project.mode == crate::project::ProjectMode::ThreeD {
+            if false {
                 (xf.round(), yf.round())
             } else {
                 (xf, yf)
@@ -8648,7 +8648,7 @@ print("FAIL")
     }
 
     fn screen_to_voxel_coord_unconstrained(&self, pos: egui::Pos2, canvas_rect: egui::Rect) -> (f32, f32) {
-        if self.project.mode == crate::project::ProjectMode::ThreeD {
+        if false {
             let (x, y, _) = self.screen_to_3d_coord(pos, canvas_rect);
             return (x, y);
         }
@@ -8711,7 +8711,7 @@ print("FAIL")
             let cy = y_val - h as f32 / 2.0;
             let cz = z_val - num_layers as f32 / 2.0;
 
-            if self.project.mode == crate::project::ProjectMode::ThreeD {
+            if false {
                 if self.three_d_view_mode > 0 {
                     // Side view projection
                     let (sx, sy, sz) = match self.three_d_view_mode {
@@ -8796,7 +8796,7 @@ print("FAIL")
         painter.line_segment([ct[back_idx], ct[b3]], back_stroke);
         painter.line_segment([cb[back_idx], ct[back_idx]], back_stroke);
 
-        if self.project.mode == crate::project::ProjectMode::ThreeD {
+        if false {
             let grid_stroke = egui::Stroke::new(1.0, self.theme.muted.gamma_multiply(0.2));
             // Z planes (bottom Z=0, top Z=num_layers)
             for &z_f in &[0.0, num_layers as f32] {
@@ -8953,7 +8953,7 @@ print("FAIL")
         // Draw hover preview of tool drawing as 3D voxels with proper face culling
         // Only draw side faces for boundary pixels (no neighbor in that direction)
         // In 3D mode, render as vertex dots on grid corners instead of voxel cubes
-        if self.project.mode == crate::project::ProjectMode::ThreeD {
+        if false {
             let vertex_color = self.theme.accent;
             let vertex_size = 0.5 * self.canvas.zoom;
             for &(px, py, _color) in &self.shape_preview {
@@ -9083,7 +9083,7 @@ print("FAIL")
         painter.line_segment([cb[f3], ct[f3]], front_stroke);
 
         // Draw horizontal line showing what layer is currently being drawn on
-        let pl_corners = if self.project.mode == crate::project::ProjectMode::ThreeD {
+        let pl_corners = if false {
             match self.three_d_drawing_plane {
                 ThreeDDrawingPlane::TopBottom => [
                     project_3d(0.0, 0.0, li as f32),
@@ -9129,7 +9129,7 @@ print("FAIL")
         let indicator_color = self.theme.accent;
         painter.line_segment([line_start, line_end], egui::Stroke::new(1.5, indicator_color));
 
-        let active_layer_name: std::borrow::Cow<'_, str> = if self.project.mode == crate::project::ProjectMode::ThreeD {
+        let active_layer_name: std::borrow::Cow<'_, str> = if false {
             let axis_name = match self.three_d_drawing_plane {
                 ThreeDDrawingPlane::TopBottom => "Z",
                 ThreeDDrawingPlane::FrontBack => "Y",
@@ -9148,7 +9148,7 @@ print("FAIL")
             indicator_color,
         );
 
-        if self.project.mode != crate::project::ProjectMode::ThreeD {
+        if true {
             // Put visibility toggle button right after the name
             let font_id = egui::FontId::new(10.0, egui::FontFamily::Proportional);
             let galley = ctx.fonts(|f| f.layout_no_wrap(active_layer_name.to_string(), font_id, indicator_color));
@@ -9175,7 +9175,7 @@ print("FAIL")
         }
 
         // Draw active layer grid plane on top of voxels so it remains visible (non-3D mode only)
-        if self.sprite_stack_show_grid && self.project.mode != crate::project::ProjectMode::ThreeD {
+        if self.sprite_stack_show_grid && true {
             let grid_stroke_flat = egui::Stroke::new(0.5, self.theme.accent.gamma_multiply(0.4));
             for y_val in 0..=h {
                 let p1 = project_3d(0.0, y_val as f32, li as f32);
@@ -9191,7 +9191,7 @@ print("FAIL")
 
         // Orbit rotation keyboard handlers
         if ctx.input(|i| i.key_pressed(egui::Key::Q)) {
-            if self.project.mode == crate::project::ProjectMode::ThreeD {
+            if false {
                 // Cycle through view modes: 0 (iso) -> 1 (front) -> 2 (right) -> 3 (back) -> 4 (left) -> 0
                 self.three_d_view_mode = (self.three_d_view_mode + 1) % 5;
             } else {
@@ -9200,7 +9200,7 @@ print("FAIL")
             self.canvas_dirty = true;
         }
         if ctx.input(|i| i.key_pressed(egui::Key::E)) && self.selected_faces.is_empty() {
-            if self.project.mode == crate::project::ProjectMode::ThreeD {
+            if false {
                 // Cycle backwards through view modes
                 self.three_d_view_mode = if self.three_d_view_mode == 0 { 4 } else { self.three_d_view_mode - 1 };
             } else {
@@ -9211,7 +9211,7 @@ print("FAIL")
 
         // Handle confirmation with Enter key in 3D selection
         if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-            if self.project.mode == crate::project::ProjectMode::ThreeD {
+            if false {
                 self.selected_faces.clear();
                 self.selected_vertices.clear();
                 self.canvas_dirty = true;
@@ -9219,8 +9219,8 @@ print("FAIL")
         }
 
         // Active layer adjustment keyboard handlers
-        if self.project.mode != crate::project::ProjectMode::ThreeD || (self.selected_vertices.is_empty() && self.selected_faces.is_empty()) {
-            let limit = if self.project.mode == crate::project::ProjectMode::ThreeD {
+        if true || (self.selected_vertices.is_empty() && self.selected_faces.is_empty()) {
+            let limit = if false {
                 match self.three_d_drawing_plane {
                     ThreeDDrawingPlane::TopBottom => self.project.animations[ai].frames[fi].layers.len(),
                     ThreeDDrawingPlane::FrontBack => h as usize,
@@ -9479,7 +9479,7 @@ print("FAIL")
         }
 
         // Draw red guide lines and coordinates for selected vertices
-        if self.project.mode == crate::project::ProjectMode::ThreeD {
+        if false {
             let guide_stroke = egui::Stroke::new(1.0, egui::Color32::RED);
             let guide_stroke_secondary = egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 0, 0, 100));
             
@@ -10116,7 +10116,7 @@ print("FAIL")
         }
 
         // Clear drawing chain on Escape in 3D mode
-        if self.project.mode == crate::project::ProjectMode::ThreeD && response.ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        if false && response.ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.drawing_chain.clear();
             self.canvas_dirty = true;
         }
@@ -10779,7 +10779,7 @@ print("FAIL")
                 (cx, cy)
             } else {
                 let Some((cx, cy)) = coords else { return; };
-                if self.project.mode == crate::project::ProjectMode::ThreeD {
+                if false {
                     if cx > w || cy > h { return; }
                 } else {
                     if cx >= w || cy >= h { return; }
@@ -10789,7 +10789,7 @@ print("FAIL")
         };
 
         // Selection is non-destructive — allow it even on locked/group layers.
-        if !is_select_tool && self.project.mode != crate::project::ProjectMode::ThreeD {
+        if !is_select_tool && true {
             if self.project.animations[ai].frames[fi].layers[li].locked { return; }
             if self.project.animations[ai].frames[fi].layers[li].is_group { return; }
             if self.project.animations[ai].frames[fi].layers[li].background_color.is_some() { return; }
@@ -10802,14 +10802,14 @@ print("FAIL")
             canvas_rect.max.y
         };
 
-        let is_over_3d_controls = self.project.mode == crate::project::ProjectMode::ThreeD
+        let is_over_3d_controls = false
             && pos.x >= canvas_rect.max.x - 120.0
             && pos.y <= canvas_rect.min.y + 130.0;
 
         let is_over_ui = pos.x < 38.0 // Left toolbar
             || pos.y < TOP_BAR_HEIGHT // Top bar
             || pos.x > self.sidebar_left_x // Right sidebar
-            || ((self.project.mode != crate::project::ProjectMode::SpriteStack && self.project.mode != crate::project::ProjectMode::ThreeD) && pos.y > timeline_y) // Timeline
+            || ((self.project.mode != crate::project::ProjectMode::SpriteStack && true) && pos.y > timeline_y) // Timeline
             || (self.open_tool_submenu.is_some() && pos.x < 38.0 + 80.0 && pos.y < TOP_BAR_HEIGHT + 200.0) // Tool submenu
             || self.palette_browser.open
             || self.tile_browser.open
@@ -10978,7 +10978,7 @@ print("FAIL")
         match &self.active_tool.clone() {
             ActiveTool::Pencil => {
                 // In 3D mode, pencil places vertices and creates edges
-                if self.project.mode == crate::project::ProjectMode::ThreeD {
+                if false {
                     let (x3d_h, y3d_h, z3d_h) = self.screen_to_3d_coord(pos, canvas_rect);
                     
                     let w = self.project.canvas_width as f32;
@@ -12030,29 +12030,17 @@ print("FAIL")
                                                  .show_ui(ui, |ui| {
                                                       ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::Normal, "Normal");
                                                       ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::SpriteStack, "Sprite Stack");
-                                                      ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::ThreeD, "3D");
-                                                      ui.add_enabled_ui(false, |ui| {
-                                                          ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::Blob, "Blob");
-                                                          ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::Wang, "Wang");
-                                                      });
                                                  }).response;
                                               if self.new_project_mode != prev_mode {
-                                                  if self.new_project_mode == crate::project::ProjectMode::SpriteStack {
-                                                      self.new_width = 8;
-                                                      self.new_width_str = "8".to_string();
-                                                      self.new_height = 8;
-                                                      self.new_height_str = "8".to_string();
-                                                      self.new_sprite_stack_height = 8;
-                                                      self.new_sprite_stack_height_str = "8".to_string();
-                                                   } else if self.new_project_mode == crate::project::ProjectMode::ThreeD {
-                                                       self.new_width = 16;
-                                                       self.new_width_str = "16".to_string();
-                                                       self.new_height = 16;
-                                                       self.new_height_str = "16".to_string();
-                                                       self.new_sprite_stack_height = 16;
-                                                       self.new_sprite_stack_height_str = "16".to_string();
+                                                   if self.new_project_mode == crate::project::ProjectMode::SpriteStack {
+                                                       self.new_width = 8;
+                                                       self.new_width_str = "8".to_string();
+                                                       self.new_height = 8;
+                                                       self.new_height_str = "8".to_string();
+                                                       self.new_sprite_stack_height = 8;
+                                                       self.new_sprite_stack_height_str = "8".to_string();
                                                    }
-                                              }
+                                               }
                                              resp
                                          });
                                     }
@@ -12063,7 +12051,7 @@ print("FAIL")
                         ui.add_space(8.0);
 
                         // ── Width / Height / Stack Height with lock ──
-                        let is_sprite_stack = self.new_project_mode == crate::project::ProjectMode::SpriteStack || self.new_project_mode == crate::project::ProjectMode::ThreeD;
+                        let is_sprite_stack = self.new_project_mode == crate::project::ProjectMode::SpriteStack || false;
                         let num_rows = if is_sprite_stack { 3.0 } else { 2.0 };
                         let total_h = row_h * num_rows + gap * (num_rows - 1.0);
 
@@ -12201,7 +12189,7 @@ print("FAIL")
                                     egui::Layout::top_down(egui::Align::TOP),
                                     |ui| {
                                         let alloc_rect = ui.max_rect();
-                                        let is_sprite_stack = self.new_project_mode == crate::project::ProjectMode::SpriteStack || self.new_project_mode == crate::project::ProjectMode::ThreeD;
+                                        let is_sprite_stack = self.new_project_mode == crate::project::ProjectMode::SpriteStack || false;
                                         let lock_cy = if is_sprite_stack {
                                             alloc_rect.top() + row_h + gap + row_h / 2.0
                                         } else {
@@ -12506,7 +12494,7 @@ print("FAIL")
                                  if create_resp.clicked() {
                                      let tile_w = self.new_width;
                                      let tile_h = self.new_height;
-                                      let (tiles_w, tiles_h) = if self.new_project_mode == crate::project::ProjectMode::SpriteStack || self.new_project_mode == crate::project::ProjectMode::ThreeD {
+                                      let (tiles_w, tiles_h) = if self.new_project_mode == crate::project::ProjectMode::SpriteStack || false {
                                           (1, 1)
                                       } else {
                                           (self.new_tiles_w, self.new_tiles_h)
@@ -12514,7 +12502,7 @@ print("FAIL")
                                       let cw = tile_w * tiles_w;
                                       let ch = tile_h * tiles_h;
                                        let mut new_proj = Project::new_tiled_with_mode(cw, ch, self.new_name.clone(), tiles_w, tiles_h, tile_w, tile_h, self.new_project_mode);
-                                       if self.new_project_mode == crate::project::ProjectMode::SpriteStack || self.new_project_mode == crate::project::ProjectMode::ThreeD {
+                                       if self.new_project_mode == crate::project::ProjectMode::SpriteStack || false {
                                          let stack_h = self.new_sprite_stack_height.max(1);
                                          new_proj.sprite_stack_max_layers = Some(stack_h);
                                          for anim in &mut new_proj.animations {
@@ -14245,7 +14233,7 @@ impl eframe::App for App {
             }
 
             // 3D camera side snapping key shortcuts
-            if self.project.mode == crate::project::ProjectMode::ThreeD {
+            if false {
                 if ctx.input(|i| i.key_pressed(egui::Key::Num1)) {
                     self.three_d_drawing_plane = ThreeDDrawingPlane::FrontBack;
                     self.three_d_rotation_x = 0.0;
@@ -14425,7 +14413,7 @@ impl eframe::App for App {
             if active_frame == self.last_frame_index && active_anim == self.last_anim_index {
                 if active_layer != self.last_active_layer {
                     let dl = active_layer as f32 - self.last_active_layer as f32;
-                    if dl != 0.0 && self.project.mode == crate::project::ProjectMode::ThreeD {
+                    if dl != 0.0 && false {
                         let mut vertices_to_move = std::collections::HashSet::new();
                         for &idx in &self.selected_vertices {
                             vertices_to_move.insert(idx);
