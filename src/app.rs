@@ -1477,14 +1477,21 @@ impl App {
         false
     }
 
+    /// Directory for autosave recovery files of never-saved projects.
+    fn recovery_dir() -> std::path::PathBuf {
+        std::env::var_os("HOME")
+            .map(|h| std::path::PathBuf::from(h).join(".squarez").join("recovery"))
+            .unwrap_or_else(|| std::env::temp_dir().join("squarez_recovery"))
+    }
+
     fn autosave_all_tabs(&mut self) {
         if let Some(ref path) = self.current_path {
             if save_sqr(&self.project, path).is_ok() {
                 self.active_modified = false;
             }
         } else {
-            let backup_dir = std::path::Path::new("/Users/sasadukic/.gemini/antigravity/recovery");
-            let _ = std::fs::create_dir_all(backup_dir);
+            let backup_dir = Self::recovery_dir();
+            let _ = std::fs::create_dir_all(&backup_dir);
             let backup_path = backup_dir.join("recovery_active.sqr");
             let _ = save_sqr(&self.project, &backup_path);
         }
@@ -1495,8 +1502,8 @@ impl App {
                     tab.modified = false;
                 }
             } else {
-                let backup_dir = std::path::Path::new("/Users/sasadukic/.gemini/antigravity/recovery");
-                let _ = std::fs::create_dir_all(backup_dir);
+                let backup_dir = Self::recovery_dir();
+                let _ = std::fs::create_dir_all(&backup_dir);
                 let backup_path = backup_dir.join(format!("recovery_inactive_{}.sqr", i));
                 let _ = save_sqr(&tab.project, &backup_path);
             }
@@ -1948,6 +1955,18 @@ impl App {
         Frame::new().fill(self.theme.panel).inner_margin(Margin::same(0))
     }
 
+    /// Whether a panel currently occupies a slot in the right sidebar.
+    /// Tiles only shows for tiled projects; Preview leaves the sidebar while popped out.
+    fn panel_visible_in_sidebar(&self, p: Panel) -> bool {
+        if p == Panel::Tiles && !self.project.is_tiled() {
+            false
+        } else if p == Panel::Preview && self.preview_popped_out {
+            false
+        } else {
+            self.ui_state.is_visible(p)
+        }
+    }
+
     fn draw_top_bar(&mut self, ctx: &egui::Context) {
         let file_icons_w: f32 = 0.0;
         let tabs_x  = BRAND_WIDTH + file_icons_w;
@@ -1955,14 +1974,7 @@ impl App {
 
         // ── Compute tab sizes before entering the Area ────────────────────
         let all_narrow = self.sidebar_order.iter().all(|&p| {
-            let visible_in_sidebar = if p == Panel::Tiles && !self.project.is_tiled() {
-                false
-            } else if p == Panel::Preview && self.preview_popped_out {
-                false
-            } else {
-                self.ui_state.is_visible(p)
-            };
-            !visible_in_sidebar || self.ui_state.is_collapsed(p)
+            !self.panel_visible_in_sidebar(p) || self.ui_state.is_collapsed(p)
         });
         let sidebar_w     = if all_narrow { 38.0 } else { 176.0 };
         let max_tab_area_w = (screen_w - tabs_x - sidebar_w).max(0.0);
@@ -1989,7 +2001,7 @@ impl App {
         egui::Area::new("top_bar".into())
             .fixed_pos(Pos2::ZERO)
             .show(ctx, |ui| {
-                ui.set_enabled(!self.show_new_dialog);
+                if self.show_new_dialog { ui.disable(); }
                 let theme = self.theme.clone();
 
                 ui.painter().rect_filled(bar_rect, 0.0, theme.panel);
@@ -2834,7 +2846,7 @@ impl App {
             .fixed_pos(Pos2::new(0.0, TOP_BAR_HEIGHT))
             .default_width(38.0)
             .show(ctx, |ui| {
-                ui.set_enabled(!self.show_new_dialog);
+                if self.show_new_dialog { ui.disable(); }
                 ui.set_max_width(38.0);
                 ui.set_width(38.0);
                 ui.spacing_mut().item_spacing = Vec2::ZERO;
@@ -3069,7 +3081,7 @@ impl App {
             .order(egui::Order::Foreground)
             .fixed_pos(pos)
             .show(ctx, |ui| {
-                ui.set_enabled(!self.show_new_dialog);
+                if self.show_new_dialog { ui.disable(); }
                 Frame::new()
                     .fill(theme.panel)
                     .shadow(egui::Shadow {
@@ -3117,15 +3129,7 @@ impl App {
     fn draw_right_sidebar(&mut self, ctx: &egui::Context) {
         let sidebar_order = self.sidebar_order.clone();
 
-        let any_visible = sidebar_order.iter().any(|&p| {
-            if p == Panel::Tiles && !self.project.is_tiled() {
-                false
-            } else if p == Panel::Preview && self.preview_popped_out {
-                false
-            } else {
-                self.ui_state.is_visible(p)
-            }
-        });
+        let any_visible = sidebar_order.iter().any(|&p| self.panel_visible_in_sidebar(p));
 
         if !any_visible {
             self.sidebar_left_x = ctx.screen_rect().right();
@@ -3135,14 +3139,7 @@ impl App {
 
         // Narrow mode: every visible panel is collapsed (only icon rows visible)
         let all_narrow = sidebar_order.iter().all(|&p| {
-            let visible_in_sidebar = if p == Panel::Tiles && !self.project.is_tiled() {
-                false
-            } else if p == Panel::Preview && self.preview_popped_out {
-                false
-            } else {
-                self.ui_state.is_visible(p)
-            };
-            !visible_in_sidebar || self.ui_state.is_collapsed(p)
+            !self.panel_visible_in_sidebar(p) || self.ui_state.is_collapsed(p)
         });
         let sidebar_w = if all_narrow { 38.0 } else { 176.0 };
 
@@ -3154,7 +3151,7 @@ impl App {
             .frame(Frame::new().fill(self.theme.panel))
             .show_separator_line(false)
             .show(ctx, |ui| {
-                ui.set_enabled(!self.show_new_dialog);
+                if self.show_new_dialog { ui.disable(); }
                 ui.set_width(sidebar_w);
                 ui.set_max_width(sidebar_w);
                 ui.spacing_mut().item_spacing = Vec2::ZERO;
@@ -3172,11 +3169,7 @@ impl App {
 
                         let mut first = true;
                         for &panel in sidebar_order.iter() {
-                            // Tiles panel is only meaningful when the project has more than one tile.
-                            if panel == Panel::Tiles && !self.project.is_tiled() {
-                                continue;
-                            }
-                            if !self.ui_state.is_visible(panel) || (panel == Panel::Preview && self.preview_popped_out) {
+                            if !self.panel_visible_in_sidebar(panel) {
                                 continue;
                             }
 
@@ -5234,7 +5227,7 @@ impl App {
                 ui.set_height(timeline_h);
                 ui.set_max_width(screen_rect.width() - sidebar_w);
                 Frame::new().fill(Color32::TRANSPARENT).inner_margin(Margin { left: 10, right: 10, top: 10, bottom: 0 }).show(ui, |ui| {
-                    ui.set_enabled(!self.show_new_dialog);
+                    if self.show_new_dialog { ui.disable(); }
                 // Floating scrollbar: invisible at rest, fades in on hover, sits in bottom gap
                 ui.style_mut().spacing.scroll = egui::style::ScrollStyle {
                     bar_width: 9.0,
@@ -9191,56 +9184,26 @@ print("FAIL")
 
         // Orbit rotation keyboard handlers
         if ctx.input(|i| i.key_pressed(egui::Key::Q)) {
-            if false {
-                // Cycle through view modes: 0 (iso) -> 1 (front) -> 2 (right) -> 3 (back) -> 4 (left) -> 0
-                self.three_d_view_mode = (self.three_d_view_mode + 1) % 5;
-            } else {
-                self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 3) % 4;
-            }
+            self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 3) % 4;
             self.canvas_dirty = true;
         }
         if ctx.input(|i| i.key_pressed(egui::Key::E)) && self.selected_faces.is_empty() {
-            if false {
-                // Cycle backwards through view modes
-                self.three_d_view_mode = if self.three_d_view_mode == 0 { 4 } else { self.three_d_view_mode - 1 };
-            } else {
-                self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 1) % 4;
-            }
+            self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 1) % 4;
             self.canvas_dirty = true;
         }
 
-        // Handle confirmation with Enter key in 3D selection
-        if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-            if false {
-                self.selected_faces.clear();
-                self.selected_vertices.clear();
+        // Active layer adjustment keyboard handlers
+        let limit = self.project.animations[ai].frames[fi].layers.len();
+        if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+            if self.project.active_layer + 1 < limit {
+                self.project.active_layer += 1;
                 self.canvas_dirty = true;
             }
         }
-
-        // Active layer adjustment keyboard handlers
-        if true || (self.selected_vertices.is_empty() && self.selected_faces.is_empty()) {
-            let limit = if false {
-                match self.three_d_drawing_plane {
-                    ThreeDDrawingPlane::TopBottom => self.project.animations[ai].frames[fi].layers.len(),
-                    ThreeDDrawingPlane::FrontBack => h as usize,
-                    ThreeDDrawingPlane::LeftRight => w as usize,
-                }
-            } else {
-                self.project.animations[ai].frames[fi].layers.len()
-            };
-
-            if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
-                if self.project.active_layer + 1 < limit {
-                    self.project.active_layer += 1;
-                    self.canvas_dirty = true;
-                }
-            }
-            if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
-                if self.project.active_layer > 0 {
-                    self.project.active_layer -= 1;
-                    self.canvas_dirty = true;
-                }
+        if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+            if self.project.active_layer > 0 {
+                self.project.active_layer -= 1;
+                self.canvas_dirty = true;
             }
         }
     }
@@ -10115,12 +10078,6 @@ print("FAIL")
             }
         }
 
-        // Clear drawing chain on Escape in 3D mode
-        if false && response.ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.drawing_chain.clear();
-            self.canvas_dirty = true;
-        }
-
         let w = self.project.canvas_width;
         let h = self.project.canvas_height;
         let ai = self.project.active_animation;
@@ -10779,17 +10736,13 @@ print("FAIL")
                 (cx, cy)
             } else {
                 let Some((cx, cy)) = coords else { return; };
-                if false {
-                    if cx > w || cy > h { return; }
-                } else {
-                    if cx >= w || cy >= h { return; }
-                }
+                if cx >= w || cy >= h { return; }
                 (cx, cy)
             }
         };
 
         // Selection is non-destructive — allow it even on locked/group layers.
-        if !is_select_tool && true {
+        if !is_select_tool {
             if self.project.animations[ai].frames[fi].layers[li].locked { return; }
             if self.project.animations[ai].frames[fi].layers[li].is_group { return; }
             if self.project.animations[ai].frames[fi].layers[li].background_color.is_some() { return; }
@@ -10802,19 +10755,14 @@ print("FAIL")
             canvas_rect.max.y
         };
 
-        let is_over_3d_controls = false
-            && pos.x >= canvas_rect.max.x - 120.0
-            && pos.y <= canvas_rect.min.y + 130.0;
-
         let is_over_ui = pos.x < 38.0 // Left toolbar
             || pos.y < TOP_BAR_HEIGHT // Top bar
             || pos.x > self.sidebar_left_x // Right sidebar
-            || ((self.project.mode != crate::project::ProjectMode::SpriteStack && true) && pos.y > timeline_y) // Timeline
+            || (self.project.mode != crate::project::ProjectMode::SpriteStack && pos.y > timeline_y) // Timeline
             || (self.open_tool_submenu.is_some() && pos.x < 38.0 + 80.0 && pos.y < TOP_BAR_HEIGHT + 200.0) // Tool submenu
             || self.palette_browser.open
             || self.tile_browser.open
-            || self.any_modal_open()
-            || is_over_3d_controls;
+            || self.any_modal_open();
 
         let press_started = (response.drag_started_by(egui::PointerButton::Primary) || (response.ctx.input(|i| i.pointer.primary_pressed()) && response.hovered()))
             && !is_over_ui;
@@ -14404,44 +14352,11 @@ impl eframe::App for App {
         self.draw_anim_tile_menu(ctx);
         self.draw_tab_resize_menu(ctx);
 
-        // Track active layer, frame, and animation changes to automatically translate selected vertices in 3D
+        // Track active layer, frame, and animation changes
         if self.project_created {
-            let active_layer = self.project.active_layer;
-            let active_frame = self.project.active_frame;
-            let active_anim = self.project.active_animation;
-
-            if active_frame == self.last_frame_index && active_anim == self.last_anim_index {
-                if active_layer != self.last_active_layer {
-                    let dl = active_layer as f32 - self.last_active_layer as f32;
-                    if dl != 0.0 && false {
-                        let mut vertices_to_move = std::collections::HashSet::new();
-                        for &idx in &self.selected_vertices {
-                            vertices_to_move.insert(idx);
-                        }
-                        for &face_idx in &self.selected_faces {
-                            if let Some(face) = self.project.active_mesh().faces.get(face_idx) {
-                                for &v_idx in &face.vertex_indices {
-                                    vertices_to_move.insert(v_idx);
-                                }
-                            }
-                        }
-                        
-                        if !vertices_to_move.is_empty() {
-                            let max_l = self.project.active_frame_ref().layers.len() as f32;
-                            for idx in vertices_to_move {
-                                if let Some(vertex) = self.project.active_mesh_mut().vertices.get_mut(idx) {
-                                    vertex.z = (vertex.z + dl).clamp(0.0, max_l);
-                                }
-                            }
-                            self.canvas_dirty = true;
-                        }
-                    }
-                }
-            }
-            
-            self.last_active_layer = active_layer;
-            self.last_frame_index = active_frame;
-            self.last_anim_index = active_anim;
+            self.last_active_layer = self.project.active_layer;
+            self.last_frame_index = self.project.active_frame;
+            self.last_anim_index = self.project.active_animation;
         }
 
         if self.playback.is_playing {

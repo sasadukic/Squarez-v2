@@ -136,7 +136,7 @@ pub fn draw_palette_browser(
                     .inner_margin(Margin::ZERO),
             )
             .show(ctx, |ui| {
-                ui.set_enabled(browser.save_dialog_colors.is_none());
+                if browser.save_dialog_colors.is_some() { ui.disable(); }
                 ui.set_width(win_w);
 
                 ui.add_space(8.0);

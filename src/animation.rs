@@ -23,9 +23,7 @@ impl PlaybackState {
         let interval = std::time::Duration::from_secs_f32(1.0 / fps.max(1) as f32);
         if self.last_tick.elapsed() >= interval {
             let end = clip_start + clip_len - 1;
-            if *current_frame < clip_start || *current_frame > end {
-                *current_frame = clip_start;
-            } else if *current_frame >= end {
+            if *current_frame < clip_start || *current_frame >= end {
                 *current_frame = clip_start;
             } else {
                 *current_frame += 1;
