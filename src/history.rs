@@ -116,9 +116,9 @@ impl UndoStack {
     }
 }
 
-enum Direction { Forward, Backward }
+pub enum Direction { Forward, Backward }
 
-fn apply_command(project: &mut Project, color_state: Option<&mut ColorState>, cmd: &Command, dir: Direction) {
+pub fn apply_command(project: &mut Project, color_state: Option<&mut ColorState>, cmd: &Command, dir: Direction) {
     match cmd {
         Command::PaintPixels { animation_id, frame_id, layer_id, edits } => {
             if project.is_tiled() {

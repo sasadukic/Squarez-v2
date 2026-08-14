@@ -292,3 +292,139 @@ fn fill_stays_inside_island() {
     let again = fill_island(&mut layer, isl, 0, 0, [255, 0, 0, 255]);
     assert!(again.is_empty());
 }
+
+// ── Modeling op tests ────────────────────────────────────────────────────────
+
+use squarez::history::{apply_command, Command, Direction};
+use squarez::project::{Project, ProjectMode};
+use squarez::three_d::edit::{
+    add_primitive, delete_faces, delete_vertices, extrude_faces, move_vertices, Primitive,
+    NEW_FACE_COLOR,
+};
+
+#[test]
+fn extrude_top_face_adds_cap_and_sides() {
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands((128, 128)).unwrap();
+    let layer = Layer::new("Texture".to_string(), 128, 128);
+    // face 1 is the +Y top in Mesh::cube
+    let top = 1u32;
+    let old_island = mesh.faces[top as usize].island;
+    let out = extrude_faces(&mesh, &layer, &[top], (128, 128)).expect("fits");
+
+    assert_eq!(out.mesh.vertices.len(), 12);
+    assert_eq!(out.mesh.faces.len(), 10);
+    assert_eq!(out.select_faces, vec![top]);
+    // Cap reuses the original island; sides got fresh gray-filled islands.
+    assert_eq!(out.mesh.faces[top as usize].island, old_island);
+    assert!(out.pixel_edits.iter().all(|&(_, _, _, new)| new == NEW_FACE_COLOR));
+    assert!(!out.pixel_edits.is_empty());
+    out.mesh.validate().expect("valid after extrude");
+
+    // Cap sits 1 unit above the original top (y = 9), normals still outward.
+    let cap = &out.mesh.faces[top as usize];
+    for &vi in &cap.verts {
+        assert_eq!(out.mesh.vertices[vi as usize][1], 9.0);
+    }
+    let n = out.mesh.face_normal(cap);
+    assert!(n[1] > 0.0, "cap normal should stay +Y");
+}
+
+#[test]
+fn move_vertex_resizes_island_with_blit() {
+    let mut mesh = Mesh::plane(8);
+    mesh.allocate_all_islands((64, 64)).unwrap();
+    let mut layer = Layer::new("Texture".to_string(), 64, 64);
+    // Give the old island recognizable content: column stripes by x.
+    let old = mesh.faces[0].island;
+    for j in 0..old.h as u32 {
+        for i in 0..old.w as u32 {
+            layer.set_pixel(old.x as u32 + i, old.y as u32 + j, [i as u8, j as u8, 0, 255]);
+        }
+    }
+    // Stretch the plane 1 unit in -X: footprint becomes 9x8.
+    let out = move_vertices(&mesh, &layer, &[0, 1], [-1, 0, 0], (64, 64)).expect("fits");
+    let new = out.mesh.faces[0].island;
+    assert_eq!((new.w, new.h), (9, 8));
+    assert_ne!(new, old, "island must move to a fresh slot");
+    // Blit: every dest texel sampled from src via nearest-neighbor.
+    for &(x, y, _, c) in &out.pixel_edits {
+        assert!(x >= new.x as u32 && x < (new.x + new.w) as u32);
+        assert!(y >= new.y as u32 && y < (new.y + new.h) as u32);
+        let i = x - new.x as u32;
+        let j = y - new.y as u32;
+        let si = (i * old.w as u32) / new.w as u32;
+        let sj = (j * old.h as u32) / new.h as u32;
+        assert_eq!(c, [si as u8, sj as u8, 0, 255], "blit mismatch at dest ({}, {})", i, j);
+    }
+    // Geometry actually moved.
+    assert_eq!(out.mesh.vertices[0][0], mesh.vertices[0][0] - 1.0);
+}
+
+#[test]
+fn delete_face_keeps_shared_vertices() {
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands((128, 128)).unwrap();
+    let out = delete_faces(&mesh, &[0]);
+    assert_eq!(out.mesh.faces.len(), 5);
+    assert_eq!(out.mesh.vertices.len(), 8, "all cube verts still used by other faces");
+    out.mesh.validate().expect("valid after face delete");
+}
+
+#[test]
+fn delete_vertex_removes_its_faces_and_orphans() {
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands((128, 128)).unwrap();
+    let out = delete_vertices(&mesh, &[0]);
+    // v0 belongs to bottom, back, left — three faces removed.
+    assert_eq!(out.mesh.faces.len(), 3);
+    assert_eq!(out.mesh.vertices.len(), 7, "v0 gone, everything else still referenced");
+    out.mesh.validate().expect("valid after vertex delete");
+}
+
+#[test]
+fn add_primitive_stacks_above_existing() {
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands((128, 128)).unwrap();
+    let layer = Layer::new("Texture".to_string(), 128, 128);
+    let out = add_primitive(&mesh, &layer, Primitive::Cube, (128, 128)).expect("fits");
+    assert_eq!(out.mesh.vertices.len(), 16);
+    assert_eq!(out.mesh.faces.len(), 12);
+    assert_eq!(out.select_faces.len(), 6);
+    // New cube's lowest point sits above the old cube's top (8 + 2).
+    let min_y = out.mesh.vertices[8..].iter().map(|v| v[1]).fold(f32::MAX, f32::min);
+    assert_eq!(min_y, 10.0);
+    out.mesh.validate().expect("valid after add");
+}
+
+#[test]
+fn mesh_edit_command_replays_both_directions() {
+    let mut project = Project::new_with_mode(64, 64, "m".to_string(), ProjectMode::ThreeD);
+    let mut before = Mesh::cube(8);
+    before.allocate_all_islands((64, 64)).unwrap();
+    project.mesh3d = Some(before.clone());
+    project.animations[0].frames[0].layers[0].set_pixel(3, 3, [9, 9, 9, 255]);
+
+    let layer = project.animations[0].frames[0].layers[0].clone();
+    let out = extrude_faces(&before, &layer, &[1], (64, 64)).expect("fits");
+    let cmd = Command::MeshEdit {
+        before: before.clone(),
+        after: out.mesh.clone(),
+        layer_id: 0,
+        pixel_edits: out.pixel_edits.clone(),
+    };
+
+    apply_command(&mut project, None, &cmd, Direction::Forward);
+    assert_eq!(project.mesh3d.as_ref(), Some(&out.mesh));
+    if let Some(&(x, y, _, new)) = out.pixel_edits.first() {
+        assert_eq!(project.animations[0].frames[0].layers[0].get_pixel(x, y), new);
+    }
+
+    apply_command(&mut project, None, &cmd, Direction::Backward);
+    assert_eq!(project.mesh3d.as_ref(), Some(&before));
+    if let Some(&(x, y, old, _)) = out.pixel_edits.first() {
+        assert_eq!(project.animations[0].frames[0].layers[0].get_pixel(x, y), old);
+    }
+    // Untouched pixel survives the roundtrip.
+    assert_eq!(project.animations[0].frames[0].layers[0].get_pixel(3, 3), [9, 9, 9, 255]);
+}

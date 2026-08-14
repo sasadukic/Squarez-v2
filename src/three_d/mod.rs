@@ -4,12 +4,22 @@
 // module tree; src/app.rs only dispatches into it.
 
 pub mod camera;
+pub mod edit;
 pub mod mesh;
 pub mod paint;
 pub mod render;
 pub mod workspace;
 
 use crate::project::{Layer, Rgba};
+
+/// An in-flight vertex-move gesture: mesh snapshot at drag start plus the
+/// accumulated raw and currently-applied (grid-snapped) world deltas.
+#[derive(Debug, Clone)]
+pub struct VertexDrag {
+    pub start_mesh: mesh::Mesh,
+    pub raw: [f32; 3],
+    pub applied: [i32; 3],
+}
 
 /// Per-tab UI state for the 3D workspace: camera, selection, and in-flight
 /// gesture data. Parked/swapped alongside the tab like the undo stack.
@@ -19,6 +29,7 @@ pub struct ThreeDState {
     pub sel_verts: Vec<u32>,
     pub sel_faces: Vec<u32>,
     pub hover_face: Option<u32>,
+    pub drag: Option<VertexDrag>,
     /// Pixel edits accumulated during the current paint stroke.
     pub stroke_edits: Vec<(u32, u32, Rgba, Rgba)>,
     /// Texels already recorded this stroke (one undo entry per texel).
@@ -37,6 +48,7 @@ impl Default for ThreeDState {
             sel_verts: Vec::new(),
             sel_faces: Vec::new(),
             hover_face: None,
+            drag: None,
             stroke_edits: Vec::new(),
             stroke_painted: std::collections::HashSet::new(),
             last_paint: None,
@@ -51,6 +63,7 @@ impl ThreeDState {
         self.sel_verts.clear();
         self.sel_faces.clear();
         self.hover_face = None;
+        self.drag = None;
         self.stroke_edits.clear();
         self.stroke_painted.clear();
         self.last_paint = None;

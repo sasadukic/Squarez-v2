@@ -2697,7 +2697,7 @@ impl App {
 
                 // Vertically center the button stack in the full screen
                 let is_3d = self.project.mode.is_three_d();
-                let tool_count = if is_3d { 3.0 } else { 5.0 };
+                let tool_count = 5.0;
                 let tools_h = tool_count * 38.0;
                 let top_pad = ((ctx.screen_rect().height() - tools_h) / 2.0 - TOP_BAR_HEIGHT).max(0.0);
                 ui.add_space(top_pad);
@@ -2760,7 +2760,31 @@ impl App {
 
                 let mut shape_rect: Option<egui::Rect> = None;
                 let mut select_rect: Option<egui::Rect> = None;
-                if !is_3d {
+                if is_3d {
+                    // Slot 2: Vertex tool, Slot 3: Face tool (no groups)
+                    let vertex_resp = tool_btn_raw(
+                        ui,
+                        &self.theme,
+                        self.active_tool == ActiveTool::VertexSelect,
+                        tool_icon(&ActiveTool::VertexSelect),
+                    )
+                    .on_hover_text(tool_tooltip_text(&ActiveTool::VertexSelect));
+                    if vertex_resp.clicked() && !self.any_modal_open() {
+                        self.set_active_tool(ActiveTool::VertexSelect);
+                        self.open_tool_submenu = None;
+                    }
+                    let face_resp = tool_btn_raw(
+                        ui,
+                        &self.theme,
+                        self.active_tool == ActiveTool::FaceSelect,
+                        tool_icon(&ActiveTool::FaceSelect),
+                    )
+                    .on_hover_text(tool_tooltip_text(&ActiveTool::FaceSelect));
+                    if face_resp.clicked() && !self.any_modal_open() {
+                        self.set_active_tool(ActiveTool::FaceSelect);
+                        self.open_tool_submenu = None;
+                    }
+                } else {
                     // Slot 2: Shape group (Rectangle/Ellipse/Line)
                     let shape_icon = tool_icon(&self.shape_group_current);
                     let shape_resp = tool_btn_raw(ui, &self.theme, self.is_group_selected(2), shape_icon)

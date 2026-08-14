@@ -87,6 +87,20 @@ impl Camera3D {
         self.view(d)
     }
 
+    /// Inverse of `view`: rotate a view-space direction back into world space.
+    /// Used to map screen-parallel mouse deltas onto world axes.
+    pub fn unview(&self, v: [f32; 3]) -> [f32; 3] {
+        let (sy, cy) = self.yaw.sin_cos();
+        let (sx, cx) = self.pitch.sin_cos();
+        // inverse pitch
+        let y1 = v[1] * cx + v[2] * sx;
+        let z1 = -v[1] * sx + v[2] * cx;
+        // inverse yaw
+        let x2 = v[0] * cy - z1 * sy;
+        let z2 = v[0] * sy + z1 * cy;
+        [x2, y1, z2]
+    }
+
     /// Project a world point to a screen position plus depth
     /// (larger depth = closer to the camera).
     pub fn project(&self, p: [f32; 3], rect: Rect) -> (Pos2, f32) {
