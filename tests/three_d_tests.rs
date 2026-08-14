@@ -221,3 +221,74 @@ fn scene_uvs_stay_inside_island() {
         }
     }
 }
+
+// ── Painting tests ───────────────────────────────────────────────────────────
+
+use squarez::project::Layer;
+use squarez::three_d::paint::{fill_island, pick};
+
+/// In a snap view at integer zoom, picking must be texel-exact: the screen
+/// pixel block covering texel (i, j) maps back to exactly that texel.
+#[test]
+fn pick_is_pixel_perfect_in_snap_view() {
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands((64, 64)).unwrap();
+    let zoom = 4.0;
+    let cam = cam_at(SnapView::Front, zoom);
+    let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 400.0));
+    let scene = build_scene(&mesh, &cam, rect, (64, 64));
+    assert_eq!(scene.visible_faces.len(), 1);
+    let fi = scene.visible_faces[0] as usize;
+    let isl = mesh.faces[fi].island;
+    let c = rect.center();
+
+    for i in 0..8u32 {
+        for j in 0..8u32 {
+            // World point at the center of texel (i, j): the front face spans
+            // x in [-4, 4], y in [0, 8]; u = x - min_u, v = y - min_v.
+            let wx = -4.0 + i as f32 + 0.5;
+            let wy = j as f32 + 0.5;
+            let p = Pos2::new(c.x + wx * zoom, c.y - wy * zoom);
+            let hit = pick(&scene, p, &mesh, (64, 64)).expect("hit expected");
+            assert_eq!(hit.face as usize, fi);
+            assert_eq!(
+                hit.texel,
+                ((isl.x as u32 + i) as i64, (isl.y as u32 + j) as i64),
+                "texel mismatch at ({}, {})", i, j
+            );
+        }
+    }
+}
+
+#[test]
+fn pick_misses_outside_model() {
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands((64, 64)).unwrap();
+    let cam = cam_at(SnapView::Front, 4.0);
+    let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 400.0));
+    let scene = build_scene(&mesh, &cam, rect, (64, 64));
+    assert!(pick(&scene, Pos2::new(2.0, 2.0), &mesh, (64, 64)).is_none());
+}
+
+#[test]
+fn fill_stays_inside_island() {
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands((64, 64)).unwrap();
+    let mut layer = Layer::new("Texture".to_string(), 64, 64);
+    // Uniform transparent atlas; fill face 0's island with red.
+    let isl = mesh.faces[0].island;
+    let edits = fill_island(&mut layer, isl, 0, 0, [255, 0, 0, 255]);
+    assert_eq!(edits.len(), 64, "expected the whole 8x8 island filled");
+    for &(x, y, _, new) in &edits {
+        assert!(x >= isl.x as u32 && x < (isl.x + isl.w) as u32, "x {} escaped island", x);
+        assert!(y >= isl.y as u32 && y < (isl.y + isl.h) as u32, "y {} escaped island", y);
+        assert_eq!(new, [255, 0, 0, 255]);
+    }
+    // A second fill with the same color is a no-op.
+    for &(x, y, _, new) in &edits {
+        let _ = (x, y, new);
+        layer.set_pixel(x, y, new);
+    }
+    let again = fill_island(&mut layer, isl, 0, 0, [255, 0, 0, 255]);
+    assert!(again.is_empty());
+}

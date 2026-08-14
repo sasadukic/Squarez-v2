@@ -5,6 +5,7 @@
 
 pub mod camera;
 pub mod mesh;
+pub mod paint;
 pub mod render;
 pub mod workspace;
 
@@ -20,6 +21,8 @@ pub struct ThreeDState {
     pub hover_face: Option<u32>,
     /// Pixel edits accumulated during the current paint stroke.
     pub stroke_edits: Vec<(u32, u32, Rgba, Rgba)>,
+    /// Texels already recorded this stroke (one undo entry per texel).
+    pub stroke_painted: std::collections::HashSet<(u32, u32)>,
     /// (face index, island texel) of the previous paint event, for
     /// stroke continuity within one face.
     pub last_paint: Option<(u32, (i64, i64))>,
@@ -35,6 +38,7 @@ impl Default for ThreeDState {
             sel_faces: Vec::new(),
             hover_face: None,
             stroke_edits: Vec::new(),
+            stroke_painted: std::collections::HashSet::new(),
             last_paint: None,
             last_mouse_wheel_time: 0.0,
         }
@@ -48,6 +52,7 @@ impl ThreeDState {
         self.sel_faces.clear();
         self.hover_face = None;
         self.stroke_edits.clear();
+        self.stroke_painted.clear();
         self.last_paint = None;
     }
 }

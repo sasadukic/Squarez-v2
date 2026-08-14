@@ -4,14 +4,17 @@
 // zoom, snap views — painting and modeling arrive in later phases) and
 // renders the textured model with grid + wireframe overlays.
 
-use egui::{PointerButton, Rect, Vec2};
+use egui::{PointerButton, Rect, Stroke, Vec2};
 
 use super::camera::SnapView;
-use super::render;
+use super::{paint, render};
 use super::ThreeDState;
 use crate::canvas::CanvasState;
+use crate::color::ColorState;
+use crate::history::UndoStack;
 use crate::project::Project;
 use crate::theme::Theme;
+use crate::tools::ActiveTool;
 
 /// What the 3D workspace wants the app to do after this frame.
 #[derive(Debug, Clone, Copy, Default)]
@@ -22,15 +25,19 @@ pub struct Output {
     pub modified: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw(
     state: &mut ThreeDState,
     project: &mut Project,
+    undo: &mut UndoStack,
+    color_state: &mut ColorState,
+    active_tool: &ActiveTool,
     canvas: &CanvasState,
     theme: &Theme,
     ui: &mut egui::Ui,
     canvas_rect: Rect,
 ) -> Output {
-    let output = Output::default();
+    let mut output = Output::default();
     let painter = ui.painter_at(canvas_rect);
     let cam = &mut state.camera;
 
@@ -105,23 +112,51 @@ pub fn draw(
     render::paint_grid(&painter, cam, canvas_rect, theme);
 
     let atlas = (project.canvas_width, project.canvas_height);
+    let cam_copy = *cam;
     if let Some(mesh) = project.mesh3d.as_ref() {
-        let scene = render::build_scene(mesh, cam, canvas_rect, atlas);
+        let scene = render::build_scene(mesh, &cam_copy, canvas_rect, atlas);
         if let Some(texture) = canvas.texture.as_ref() {
             render::paint_scene(&painter, &scene, texture.id());
         }
-        render::paint_wireframe(&painter, mesh, &scene, cam, canvas_rect, theme);
+        render::paint_wireframe(&painter, mesh, &scene, &cam_copy, canvas_rect, theme);
+
+        // ── Painting on the model ───────────────────────────────────────────
+        let paint_result = paint::handle(
+            state, project, undo, color_state, active_tool, &scene, &response, ui,
+        );
+        output.canvas_dirty |= paint_result.canvas_dirty;
+        output.modified |= paint_result.modified;
+
+        // Hovered-face outline (only for paint tools, and not mid-navigation)
+        if paint::is_paint_tool(active_tool) {
+            if let Some(fi) = state.hover_face {
+                if let Some(mesh) = project.mesh3d.as_ref() {
+                    if let Some(face) = mesh.faces.get(fi as usize) {
+                        let stroke = Stroke::new(1.5, theme.accent);
+                        let k = face.verts.len();
+                        for i in 0..k {
+                            let (a, _) = cam_copy
+                                .project(mesh.vertices[face.verts[i] as usize], canvas_rect);
+                            let (b, _) = cam_copy
+                                .project(mesh.vertices[face.verts[(i + 1) % k] as usize], canvas_rect);
+                            painter.line_segment([a, b], stroke);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // View label (bottom-left corner of the workspace)
-    let label = match cam.snapped() {
+    let cam_now = state.camera;
+    let label = match cam_now.snapped() {
         Some(v) => v.label().to_string(),
         None => "Orbit".to_string(),
     };
     painter.text(
         canvas_rect.left_bottom() + Vec2::new(8.0, -8.0),
         egui::Align2::LEFT_BOTTOM,
-        format!("{}  ·  {:.0}px/texel", label, cam.zoom),
+        format!("{}  ·  {:.0}px/texel", label, cam_now.zoom),
         egui::FontId::proportional(11.0),
         theme.fg_muted,
     );

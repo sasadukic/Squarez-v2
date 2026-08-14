@@ -6011,9 +6011,13 @@ impl App {
                     self.pending_zoom_fit = false;
                 }
                 if self.project.mode.is_three_d() {
+                    let active_tool = self.active_tool.clone();
                     let out = crate::three_d::workspace::draw(
                         &mut self.three_d,
                         &mut self.project,
+                        &mut self.undo_stack,
+                        &mut self.color_state,
+                        &active_tool,
                         &self.canvas,
                         &self.theme,
                         ui,
