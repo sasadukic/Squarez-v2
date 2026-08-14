@@ -12,11 +12,13 @@ pub mod workspace;
 
 use crate::project::{Layer, Rgba};
 
-/// An in-flight vertex-move gesture: mesh snapshot at drag start plus the
-/// accumulated raw and currently-applied (grid-snapped) world deltas.
+/// An in-flight move gesture (vertex drag or face drag): mesh snapshot at
+/// drag start, the vertices being moved, and the accumulated raw plus
+/// currently-applied (grid-snapped) world deltas.
 #[derive(Debug, Clone)]
 pub struct VertexDrag {
     pub start_mesh: mesh::Mesh,
+    pub verts: Vec<u32>,
     pub raw: [f32; 3],
     pub applied: [i32; 3],
 }

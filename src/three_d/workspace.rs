@@ -98,6 +98,21 @@ fn commit_edit(
     output.modified = true;
 }
 
+/// The unique vertices of the selected faces, sorted.
+fn face_selection_verts(sel_faces: &[u32], mesh: &Mesh) -> Vec<u32> {
+    let mut set = std::collections::HashSet::new();
+    for &fi in sel_faces {
+        if let Some(face) = mesh.faces.get(fi as usize) {
+            for &vi in &face.verts {
+                set.insert(vi);
+            }
+        }
+    }
+    let mut verts: Vec<u32> = set.into_iter().collect();
+    verts.sort_unstable();
+    verts
+}
+
 /// Nearest projected vertex within the hit radius.
 fn vertex_under(
     mesh: &Mesh,
@@ -306,6 +321,7 @@ pub fn draw(
                             if state.sel_verts.contains(&vi) {
                                 state.drag = Some(VertexDrag {
                                     start_mesh: mesh.clone(),
+                                    verts: state.sel_verts.clone(),
                                     raw: [0.0; 3],
                                     applied: [0; 3],
                                 });
@@ -328,8 +344,17 @@ pub fn draw(
                                 } else {
                                     state.sel_faces.push(hit.face);
                                 }
-                            } else {
+                            } else if !state.sel_faces.contains(&hit.face) {
                                 state.sel_faces = vec![hit.face];
+                            }
+                            // Pressing on a selected face starts a face move.
+                            if state.sel_faces.contains(&hit.face) {
+                                state.drag = Some(VertexDrag {
+                                    start_mesh: mesh.clone(),
+                                    verts: face_selection_verts(&state.sel_faces, mesh),
+                                    raw: [0.0; 3],
+                                    applied: [0; 3],
+                                });
                             }
                         }
                         None => {
@@ -342,8 +367,9 @@ pub fn draw(
             }
         }
 
-        // Live vertex drag: mutate geometry only; islands settle on release.
-        if is_vertex_tool && response.dragged_by(PointerButton::Primary) {
+        // Live move drag (vertex or face): mutate geometry only; islands
+        // settle on release.
+        if response.dragged_by(PointerButton::Primary) {
             let delta = response.drag_delta();
             if delta != Vec2::ZERO && state.drag.is_some() {
                 let zoom = cam_copy.zoom.max(0.001);
@@ -364,7 +390,7 @@ pub fn draw(
                 ];
                 if diff != [0, 0, 0] {
                     if let Some(mesh) = project.mesh3d.as_mut() {
-                        for &vi in &state.sel_verts {
+                        for &vi in &drag.verts {
                             if let Some(v) = mesh.vertices.get_mut(vi as usize) {
                                 v[0] += diff[0] as f32;
                                 v[1] += diff[1] as f32;
@@ -381,13 +407,20 @@ pub fn draw(
         if ui.input(|i| i.pointer.primary_released()) {
             if let Some(drag) = state.drag.take() {
                 if drag.applied != [0, 0, 0] {
-                    let sel = state.sel_verts.clone();
+                    let moved = drag.verts.clone();
                     let applied = drag.applied;
                     let before = drag.start_mesh.clone();
+                    let kept_faces = state.sel_faces.clone();
                     if let Some(outcome) = with_atlas_growth(project, li, |_, layer, atlas| {
-                        edit::move_vertices(&before, layer, &sel, applied, atlas)
+                        edit::move_vertices(&before, layer, &moved, applied, atlas)
                     }) {
                         commit_edit(state, project, undo, li, drag.start_mesh, outcome, &mut output);
+                        if is_face_tool {
+                            // Face indices are unchanged by a move — keep the
+                            // face selection instead of the moved-verts list.
+                            state.sel_faces = kept_faces;
+                            state.sel_verts.clear();
+                        }
                     } else {
                         // Could not settle islands — revert the whole move.
                         project.mesh3d = Some(drag.start_mesh);
@@ -488,16 +521,22 @@ pub fn draw(
         }
     }
 
-    // View label (bottom-left corner of the workspace)
+    // View label + tool hints (bottom-left corner of the workspace)
     let cam_now = state.camera;
     let label = match cam_now.snapped() {
         Some(v) => v.label().to_string(),
         None => "Orbit".to_string(),
     };
+    let hint = match active_tool {
+        ActiveTool::VertexSelect => "Vertex: click select · drag move · shift multi · Del delete",
+        ActiveTool::FaceSelect => "Face: click select · drag move · E extrude · Del delete",
+        t if paint::is_paint_tool(t) => "Paint on the model · RMB orbit · MMB pan · 1-6 snap views",
+        _ => "RMB orbit · MMB pan · scroll zoom · 1-6 snap views",
+    };
     painter.text(
         canvas_rect.left_bottom() + Vec2::new(8.0, -8.0),
         egui::Align2::LEFT_BOTTOM,
-        format!("{}  ·  {:.0}px/texel", label, cam_now.zoom),
+        format!("{}  ·  {:.0}px/texel   —   {}", label, cam_now.zoom, hint),
         egui::FontId::proportional(11.0),
         theme.fg_muted,
     );

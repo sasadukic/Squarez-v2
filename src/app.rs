@@ -12545,8 +12545,9 @@ impl eframe::App for App {
                 self.select_state.clear();
                 self.canvas_dirty = true;
             }
+            let is_3d = self.project.mode.is_three_d();
             let total = self.project.active_anim().frames.len();
-            if total > 0 {
+            if total > 0 && !self.project.mode.hides_timeline() {
                 if ctx.input(|i| i.key_pressed(egui::Key::A)) && !ctx.input(|i| i.modifiers.command || i.modifiers.ctrl) {
                     self.project.active_frame = (self.project.active_frame + total - 1) % total;
                     self.canvas_dirty = true;
@@ -12556,26 +12557,35 @@ impl eframe::App for App {
                     self.canvas_dirty = true;
                 }
             }
-            // Tool Shortcuts
+            // Tool Shortcuts (3D mode has its own tool set: no shapes/rect-select,
+            // E belongs to extrude while the Face tool is active, V/F switch tools)
             if !ctx.input(|i| i.modifiers.command || i.modifiers.ctrl || i.modifiers.alt) {
                 if ctx.input(|i| i.key_pressed(egui::Key::D)) {
                     self.set_active_tool(ActiveTool::Pencil);
                 }
-                if ctx.input(|i| i.key_pressed(egui::Key::E)) {
+                if ctx.input(|i| i.key_pressed(egui::Key::E))
+                    && !(is_3d && matches!(self.active_tool, ActiveTool::FaceSelect))
+                {
                     self.set_active_tool(ActiveTool::Eraser);
                 }
                 if ctx.input(|i| i.key_pressed(egui::Key::G)) {
                     self.set_active_tool(ActiveTool::Fill);
                 }
                 if ctx.input(|i| i.key_pressed(egui::Key::M)) {
-                    // Toggle select / eyedropper
-                    if matches!(self.active_tool, ActiveTool::RectSelect) {
+                    if is_3d {
+                        // Toggle eyedropper / pencil
+                        if matches!(self.active_tool, ActiveTool::Eyedropper) {
+                            self.set_active_tool(ActiveTool::Pencil);
+                        } else {
+                            self.set_active_tool(ActiveTool::Eyedropper);
+                        }
+                    } else if matches!(self.active_tool, ActiveTool::RectSelect) {
                         self.set_active_tool(ActiveTool::Eyedropper);
                     } else {
                         self.set_active_tool(ActiveTool::RectSelect);
                     }
                 }
-                if ctx.input(|i| i.key_pressed(egui::Key::S)) {
+                if ctx.input(|i| i.key_pressed(egui::Key::S)) && !is_3d {
                     // Cycle shapes
                     let next = match self.active_tool {
                         ActiveTool::Rectangle { .. } => ActiveTool::Ellipse { filled: false },
@@ -12583,6 +12593,14 @@ impl eframe::App for App {
                         _ => ActiveTool::Rectangle { filled: false },
                     };
                     self.set_active_tool(next);
+                }
+                if is_3d {
+                    if ctx.input(|i| i.key_pressed(egui::Key::V)) {
+                        self.set_active_tool(ActiveTool::VertexSelect);
+                    }
+                    if ctx.input(|i| i.key_pressed(egui::Key::F)) {
+                        self.set_active_tool(ActiveTool::FaceSelect);
+                    }
                 }
                 if ctx.input(|i| i.key_pressed(egui::Key::Z)) {
                     if matches!(self.active_tool, ActiveTool::Zoom) {
