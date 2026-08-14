@@ -1535,15 +1535,28 @@ impl App {
     }
 
     fn active_tool_index(&self) -> usize {
-        match self.active_tool {
-            ActiveTool::Pencil | ActiveTool::Eraser           => 0, // pen group
-            ActiveTool::Fill   | ActiveTool::Eyedropper       => 1, // bucket group
-            ActiveTool::Rectangle { .. }
-            | ActiveTool::Ellipse { .. }
-            | ActiveTool::Line                                => 2, // shape group
-            ActiveTool::VertexSelect | ActiveTool::EdgeSelect | ActiveTool::FaceSelect => 3,
-            ActiveTool::RectSelect | ActiveTool::MagicWand | ActiveTool::Move => 3, // select group
-            ActiveTool::Zoom                                  => 4,
+        if self.project.mode.is_three_d() {
+            // 3D toolbar layout: pen, bucket, vertex, edge, face, zoom.
+            match self.active_tool {
+                ActiveTool::Pencil | ActiveTool::Eraser     => 0,
+                ActiveTool::Fill   | ActiveTool::Eyedropper => 1,
+                ActiveTool::VertexSelect                    => 2,
+                ActiveTool::EdgeSelect                      => 3,
+                ActiveTool::FaceSelect                      => 4,
+                ActiveTool::Zoom                            => 5,
+                _                                           => 0,
+            }
+        } else {
+            match self.active_tool {
+                ActiveTool::Pencil | ActiveTool::Eraser           => 0, // pen group
+                ActiveTool::Fill   | ActiveTool::Eyedropper       => 1, // bucket group
+                ActiveTool::Rectangle { .. }
+                | ActiveTool::Ellipse { .. }
+                | ActiveTool::Line                                => 2, // shape group
+                ActiveTool::VertexSelect | ActiveTool::EdgeSelect | ActiveTool::FaceSelect => 3,
+                ActiveTool::RectSelect | ActiveTool::MagicWand | ActiveTool::Move => 3, // select group
+                ActiveTool::Zoom                                  => 4,
+            }
         }
     }
 
