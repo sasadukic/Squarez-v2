@@ -20,6 +20,7 @@ pub enum Anchor {
 pub enum ProjectMode {
     Normal,
     SpriteStack,
+    ThreeD,
 }
 
 impl Default for ProjectMode {
@@ -33,38 +34,18 @@ impl ProjectMode {
         match self {
             Self::Normal => "Normal",
             Self::SpriteStack => "Sprite Stack",
+            Self::ThreeD => "3D Model",
         }
     }
-}
 
-/// A 3D vertex in the project
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct Vertex3D {
-    pub x: f32,
-    pub y: f32,
-    pub z: f32,
-}
+    pub fn is_three_d(self) -> bool {
+        matches!(self, Self::ThreeD)
+    }
 
-/// An edge connecting two vertices
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Edge3D {
-    pub v1: usize,
-    pub v2: usize,
-}
-
-/// A face defined by 3 or more vertex indices
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Face3D {
-    pub vertex_indices: Vec<usize>,
-    pub color: Rgba,
-}
-
-/// 3D mesh data for ThreeD mode
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Mesh3D {
-    pub vertices: Vec<Vertex3D>,
-    pub edges: Vec<Edge3D>,
-    pub faces: Vec<Face3D>,
+    /// Modes that hide the animation timeline (single-frame documents).
+    pub fn hides_timeline(self) -> bool {
+        matches!(self, Self::ThreeD)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,6 +74,9 @@ pub struct Project {
     pub mode: ProjectMode,
     #[serde(default)]
     pub sprite_stack_max_layers: Option<u32>,
+    /// 3D model data for ThreeD-mode projects; None for all other modes.
+    #[serde(default)]
+    pub mesh3d: Option<crate::three_d::mesh::Mesh>,
 }
 
 fn default_id_counter() -> u64 { 1 }
@@ -131,6 +115,7 @@ impl Project {
             tile_h,
             mode: ProjectMode::Normal,
             sprite_stack_max_layers: None,
+            mesh3d: None,
         }
     }
 
@@ -207,7 +192,6 @@ impl Project {
                         Frame {
                             duration_ms: template.duration_ms,
                             layers,
-                            mesh: Mesh3D::default(),
                             dirty: true,
                         }
                     } else {
@@ -260,13 +244,6 @@ impl Project {
         self.active_frame_mut().layers.get_mut(al).unwrap()
     }
 
-    pub fn active_mesh(&self) -> &Mesh3D {
-        &self.active_frame_ref().mesh
-    }
-
-    pub fn active_mesh_mut(&mut self) -> &mut Mesh3D {
-        &mut self.active_frame_mut().mesh
-    }
 }
 
 fn default_palette() -> Vec<Rgba> {
@@ -343,8 +320,6 @@ impl Animation {
 pub struct Frame {
     pub duration_ms: u32,
     pub layers: Vec<Layer>,
-    #[serde(default)]
-    pub mesh: Mesh3D,
     #[serde(skip)]
     pub dirty: bool,
 }
@@ -354,7 +329,6 @@ impl Frame {
         Self {
             duration_ms: 0,
             layers: vec![Layer::new_with_id("Layer 1".to_string(), width, height, layer_id)],
-            mesh: Mesh3D::default(),
             dirty: true,
         }
     }

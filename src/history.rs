@@ -48,21 +48,14 @@ pub enum Command {
         color_a: Rgba,
         color_b: Rgba,
     },
-    /// 3D mesh operations for ThreeD mode
-    AddVertex3D {
-        animation_id: usize,
-        frame_id: usize,
-        vertex: crate::project::Vertex3D,
-    },
-    AddEdge3D {
-        animation_id: usize,
-        frame_id: usize,
-        edge: crate::project::Edge3D,
-    },
-    AddFace3D {
-        animation_id: usize,
-        frame_id: usize,
-        face: crate::project::Face3D,
+    /// One modeling gesture in ThreeD mode: full mesh snapshots before/after,
+    /// plus any texture-island pixel moves that accompanied the topology change
+    /// (so mesh and texture stay atomic through undo/redo).
+    MeshEdit {
+        before: crate::three_d::mesh::Mesh,
+        after: crate::three_d::mesh::Mesh,
+        layer_id: usize,
+        pixel_edits: Vec<(u32, u32, Rgba, Rgba)>, // (x, y, old, new)
     },
 }
 
@@ -233,27 +226,27 @@ fn apply_command(project: &mut Project, color_state: Option<&mut ColorState>, cm
                 }
             }
         }
-        Command::AddVertex3D { animation_id, frame_id, vertex } => {
-            let frame = &mut project.animations[*animation_id].frames[*frame_id];
-            match dir {
-                Direction::Forward => frame.mesh.vertices.push(*vertex),
-                Direction::Backward => { if !frame.mesh.vertices.is_empty() { frame.mesh.vertices.pop(); } }
+        Command::MeshEdit { before, after, layer_id, pixel_edits } => {
+            let mesh = match dir {
+                Direction::Forward => after,
+                Direction::Backward => before,
+            };
+            project.mesh3d = Some(mesh.clone());
+            if !pixel_edits.is_empty() {
+                let frame = &mut project.animations[0].frames[0];
+                if let Some(layer) = frame.layers.get_mut(*layer_id) {
+                    for &(x, y, old, new) in pixel_edits {
+                        let c = match dir {
+                            Direction::Forward => new,
+                            Direction::Backward => old,
+                        };
+                        layer.set_pixel(x, y, c);
+                    }
+                }
+                frame.dirty = true;
+            } else if let Some(frame) = project.animations.get_mut(0).and_then(|a| a.frames.get_mut(0)) {
+                frame.dirty = true;
             }
         }
-        Command::AddEdge3D { animation_id, frame_id, edge } => {
-            let frame = &mut project.animations[*animation_id].frames[*frame_id];
-            match dir {
-                Direction::Forward => frame.mesh.edges.push(*edge),
-                Direction::Backward => { if !frame.mesh.edges.is_empty() { frame.mesh.edges.pop(); } }
-            }
-        }
-        Command::AddFace3D { animation_id, frame_id, face } => {
-            let frame = &mut project.animations[*animation_id].frames[*frame_id];
-            match dir {
-                Direction::Forward => frame.mesh.faces.push(face.clone()),
-                Direction::Backward => { if !frame.mesh.faces.is_empty() { frame.mesh.faces.pop(); } }
-            }
-        }
-
     }
 }

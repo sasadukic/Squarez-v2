@@ -505,7 +505,7 @@ pub fn load_v2(path: &Path) -> Result<Project, LoadError> {
                     background_color: lm.background_color,
                 });
             }
-            frames.push(Frame { duration_ms: 0, layers, mesh: crate::project::Mesh3D::default(), dirty: false });
+            frames.push(Frame { duration_ms: 0, layers, dirty: false });
         }
 
         animations.push(Animation {
@@ -535,6 +535,7 @@ pub fn load_v2(path: &Path) -> Result<Project, LoadError> {
         tile_h: proj_meta.tile_h,
         mode: proj_meta.mode,
         sprite_stack_max_layers: proj_meta.sprite_stack_max_layers,
+        mesh3d: None,
     })
 }
 
@@ -700,7 +701,6 @@ mod tests {
             Frame {
                 duration_ms: 0,
                 layers: vec![Layer::new("Layer 1".to_string(), 8, 8)],
-                mesh: crate::project::Mesh3D::default(),
                 dirty: false,
             }
         );

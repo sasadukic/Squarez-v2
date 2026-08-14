@@ -103,3 +103,160 @@ fn loads_legacy_v1_files_without_locked_layer_field() {
     assert_eq!(loaded.name, "legacy");
     assert!(!loaded.animations[0].frames[0].layers[0].locked);
 }
+
+// ── v1 payload, late layout (Frame carried a mesh) ───────────────────────────
+// Structural mirror of the Project layout the last v1-writing builds produced.
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OldProjectWithMesh {
+    name: String,
+    canvas_width: u32,
+    canvas_height: u32,
+    palette: Vec<[u8; 4]>,
+    animations: Vec<OldAnimationWithMesh>,
+    active_animation: usize,
+    active_frame: usize,
+    active_layer: usize,
+    layer_id_counter: u64,
+    tiles_w: u32,
+    tiles_h: u32,
+    tile_w: u32,
+    tile_h: u32,
+    mode: OldProjectMode,
+    sprite_stack_max_layers: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+enum OldProjectMode {
+    Normal,
+    SpriteStack,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OldAnimationWithMesh {
+    name: String,
+    fps: u8,
+    frames: Vec<OldFrameWithMesh>,
+    tile_start: usize,
+    tile_end: usize,
+    tile_visible: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OldFrameWithMesh {
+    duration_ms: u32,
+    layers: Vec<OldLayerFull>,
+    mesh: OldMesh3D,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OldMesh3D {
+    vertices: Vec<(f32, f32, f32)>,
+    edges: Vec<(u64, u64)>,
+    faces: Vec<(Vec<u64>, [u8; 4])>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OldLayerFull {
+    name: String,
+    visible: bool,
+    locked: bool,
+    opacity: u8,
+    blend_mode: BlendMode,
+    pixels: Vec<u8>,
+    width: u32,
+    height: u32,
+    id: u64,
+    is_group: bool,
+    group_id: Option<u64>,
+    collapsed: bool,
+    background_color: Option<[u8; 4]>,
+}
+
+#[test]
+fn loads_v1_files_with_per_frame_mesh() {
+    let mut pixels = vec![0u8; 4 * 4 * 4];
+    // pixel (1, 2) = red
+    let idx = ((2 * 4 + 1) * 4) as usize;
+    pixels[idx..idx + 4].copy_from_slice(&[255, 0, 0, 255]);
+
+    let old = OldProjectWithMesh {
+        name: "meshy".to_string(),
+        canvas_width: 4,
+        canvas_height: 4,
+        palette: vec![[1, 2, 3, 255]],
+        animations: vec![OldAnimationWithMesh {
+            name: "Animation 1".to_string(),
+            fps: 12,
+            frames: vec![OldFrameWithMesh {
+                duration_ms: 0,
+                layers: vec![OldLayerFull {
+                    name: "Layer 1".to_string(),
+                    visible: true,
+                    locked: false,
+                    opacity: 255,
+                    blend_mode: BlendMode::Normal,
+                    pixels,
+                    width: 4,
+                    height: 4,
+                    id: 7,
+                    is_group: false,
+                    group_id: None,
+                    collapsed: false,
+                    background_color: None,
+                }],
+                mesh: OldMesh3D {
+                    vertices: vec![(0.0, 0.0, 0.0), (1.0, 0.0, 0.0)],
+                    edges: vec![(0, 1)],
+                    faces: vec![(vec![0, 1, 0], [9, 9, 9, 255])],
+                },
+            }],
+            tile_start: 0,
+            tile_end: 0,
+            tile_visible: true,
+        }],
+        active_animation: 0,
+        active_frame: 0,
+        active_layer: 0,
+        layer_id_counter: 8,
+        tiles_w: 1,
+        tiles_h: 1,
+        tile_w: 0,
+        tile_h: 0,
+        mode: OldProjectMode::SpriteStack,
+        sprite_stack_max_layers: Some(8),
+    };
+
+    let encoded = bincode::serialize(&old).unwrap();
+    let compressed = lz4_flex::compress_prepend_size(&encoded);
+    let path = std::env::temp_dir().join("squarez_v1_with_mesh.sqr");
+    let mut bytes = b"SQR\0\x01".to_vec();
+    bytes.extend(compressed);
+    std::fs::write(&path, bytes).unwrap();
+
+    let loaded = load_sqr(&path).expect("v1-with-mesh load failed");
+
+    assert_eq!(loaded.name, "meshy");
+    assert_eq!(loaded.mode, squarez::project::ProjectMode::SpriteStack);
+    assert_eq!(loaded.sprite_stack_max_layers, Some(8));
+    assert_eq!(loaded.layer_id_counter, 8);
+    assert_eq!(loaded.animations[0].frames[0].layers[0].id, 7);
+    assert_eq!(loaded.animations[0].frames[0].layers[0].get_pixel(1, 2), [255, 0, 0, 255]);
+    assert!(loaded.mesh3d.is_none(), "old per-frame mesh data is discarded");
+}
+
+#[test]
+fn v2_roundtrip_preserves_mesh3d() {
+    let mut project = Project::new(32, 32, "cube".to_string());
+    project.mode = squarez::project::ProjectMode::ThreeD;
+    let mut mesh = squarez::three_d::mesh::Mesh::cube(8);
+    mesh.allocate_all_islands((32, 32)).expect("islands fit");
+    project.mesh3d = Some(mesh.clone());
+
+    let path = std::env::temp_dir().join("squarez_v2_mesh.sqr");
+    save_sqr(&project, &path).expect("save failed");
+    let loaded = load_sqr(&path).expect("load failed");
+
+    assert_eq!(loaded.mode, squarez::project::ProjectMode::ThreeD);
+    assert_eq!(loaded.mesh3d, Some(mesh));
+}

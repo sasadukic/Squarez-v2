@@ -49,32 +49,11 @@ struct IsoCylinderPhase {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ThreeDSelectMode {
-    Vertex,
-    Face,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum ThreeDDrawingPlane {
-    TopBottom, // Z is constant
-    FrontBack, // Y is constant
-    LeftRight, // X is constant
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
 enum MirrorStream {
     Original,
     X,
     Y,
     XY,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SpriteStackDragMode {
-    None,
-    Rotate,
-    Tilt,
-    Spacing,
 }
 
 pub struct App {
@@ -283,35 +262,14 @@ pub struct App {
     /// Height of the floating preview window (from previous frame)
     preview_window_height: f32,
     pub sprite_stack_zoom: f32,
-    pub sprite_stack_angle: f32,
-    pub sprite_stack_tilt: f32,
     pub sprite_stack_spacing: f32,
-    pub sprite_stack_drag_mode: SpriteStackDragMode,
     pub sprite_stack_rotation_90: i32,
     pub sprite_stack_show_grid: bool,
     pub sprite_stack_preview_fixed_cam: bool,
     pub sprite_stack_grid_btn_rect: Option<egui::Rect>,
-    /// Current 3D view mode: 0 = orthographic (iso), 1-4 = side views (front, right, back, left)
-    pub three_d_view_mode: u8,
-    /// Current chain of vertex indices being drawn in 3D mode
-    pub drawing_chain: Vec<usize>,
-    // 3D mode state
-    pub three_d_perspective: bool, // true = perspective, false = orthographic
-    pub three_d_rotation_x: f32, // rotation around X axis (pitch)
-    pub three_d_rotation_y: f32, // rotation around Y axis (yaw)
-    pub three_d_grid_y: f32, // grid Y offset for 3D mode (horizontal floor Y movement)
-    pub three_d_grid_x: f32, // grid X offset for 3D mode (vertical wall X movement)
-    pub three_d_drawing_plane: ThreeDDrawingPlane,
-    // 3D selection state
-    pub selected_vertices: Vec<usize>, // indices of selected vertices
-    pub selected_faces: Vec<usize>, // indices of selected faces
-    pub three_d_select_mode: Option<ThreeDSelectMode>, // vertex or face selection
-    pub drag_translate_start_3d: Option<(f32, f32, f32)>,
-    pub drag_translate_initial_vertices: Option<Vec<(usize, crate::project::Vertex3D)>>,
     pub last_active_layer: usize,
     pub last_frame_index: usize,
     pub last_anim_index: usize,
-    pub last_gizmo_click_time: f64,
     /// Track if any menu was open at the start of the current frame
     menu_was_open_at_frame_start: bool,
     brushes: Vec<CustomBrush>,
@@ -1004,31 +962,14 @@ impl App {
             preview_window_width: 176.0,
             preview_window_height: 220.0,
             sprite_stack_zoom: 4.0,
-            sprite_stack_angle: 0.0,
-            sprite_stack_tilt: 45.0,
             sprite_stack_spacing: 1.0,
-            sprite_stack_drag_mode: SpriteStackDragMode::None,
             sprite_stack_rotation_90: 0,
             sprite_stack_show_grid: true,
             sprite_stack_preview_fixed_cam: false,
             sprite_stack_grid_btn_rect: None,
-            three_d_view_mode: 1,
-            drawing_chain: Vec::new(),
-            three_d_perspective: false,
-            three_d_rotation_x: -0.615,
-            three_d_rotation_y: -0.785,
-            three_d_grid_y: 0.0,
-            three_d_grid_x: 0.0,
-            three_d_drawing_plane: ThreeDDrawingPlane::TopBottom,
-            selected_vertices: Vec::new(),
-            selected_faces: Vec::new(),
-            three_d_select_mode: None,
-            drag_translate_start_3d: None,
-            drag_translate_initial_vertices: None,
             last_active_layer: 0,
             last_frame_index: 0,
             last_anim_index: 0,
-            last_gizmo_click_time: -1.0,
             menu_was_open_at_frame_start: false,
             brushes: {
                 let mut b = layout.as_ref().map(|l| l.brushes.clone()).unwrap_or_default();
@@ -1328,7 +1269,7 @@ impl App {
     }
 
     fn on_project_changed(&mut self) {
-        if self.project.mode == crate::project::ProjectMode::SpriteStack || false {
+        if self.project.mode == crate::project::ProjectMode::SpriteStack {
             self.ui_state.collapse_palette = false;
             self.ui_state.collapse_color = false;
             self.ui_state.collapse_preview = false;
@@ -1348,10 +1289,6 @@ impl App {
             ];
 
             self.pending_zoom_fit = true;
-            // Initialize 3D grid positions when switching to 3D mode
-            if false {
-                self.three_d_grid_x = self.project.canvas_width as f32;
-            }
         } else {
             self.ui_state.collapse_palette = false;
             self.ui_state.collapse_color = false;
@@ -1540,43 +1477,31 @@ impl App {
             new
         }).collect();
         for _ in 0..frame_count {
-            frames.push(ProjectFrame { duration_ms: 0, layers: layers.clone(), mesh: crate::project::Mesh3D::default(), dirty: true });
+            frames.push(ProjectFrame { duration_ms: 0, layers: layers.clone(), dirty: true });
         }
         let tile_end = if frame_count > 0 { frame_count as usize - 1 } else { 0 };
         Animation { name, fps: 12, frames, tile_start: 0, tile_end, tile_visible: true }
     }
 
     fn active_tool_index(&self) -> usize {
-        let is_3d = false;
         match self.active_tool {
             ActiveTool::Pencil | ActiveTool::Eraser           => 0, // pen group
             ActiveTool::Fill   | ActiveTool::Eyedropper       => 1, // bucket group
             ActiveTool::Rectangle { .. }
             | ActiveTool::Ellipse { .. }
             | ActiveTool::Line                                => 2, // shape group
-            ActiveTool::VertexSelect                          => if is_3d { 3 } else { 3 },
-            ActiveTool::FaceSelect                            => if is_3d { 4 } else { 3 },
-            ActiveTool::RectSelect | ActiveTool::MagicWand | ActiveTool::Move => 3, // select group (non-3D)
-            ActiveTool::Zoom                                  => if is_3d { 5 } else { 4 },
+            ActiveTool::VertexSelect | ActiveTool::FaceSelect => 3,
+            ActiveTool::RectSelect | ActiveTool::MagicWand | ActiveTool::Move => 3, // select group
+            ActiveTool::Zoom                                  => 4,
         }
     }
 
     fn is_group_selected(&self, slot: usize) -> bool {
-        let is_3d = false;
         match slot {
             0 => matches!(self.active_tool, ActiveTool::Pencil | ActiveTool::Eraser),
             1 => matches!(self.active_tool, ActiveTool::Fill | ActiveTool::Eyedropper),
             2 => matches!(self.active_tool, ActiveTool::Rectangle { .. } | ActiveTool::Ellipse { .. } | ActiveTool::Line),
-            3 => if is_3d {
-                matches!(self.active_tool, ActiveTool::VertexSelect)
-            } else {
-                matches!(self.active_tool, ActiveTool::RectSelect | ActiveTool::MagicWand | ActiveTool::Move)
-            },
-            4 => if is_3d {
-                matches!(self.active_tool, ActiveTool::FaceSelect)
-            } else {
-                false
-            },
+            3 => matches!(self.active_tool, ActiveTool::RectSelect | ActiveTool::MagicWand | ActiveTool::Move),
             _ => false,
         }
     }
@@ -1599,123 +1524,9 @@ impl App {
         self.set_active_tool(new_tool);
     }
 
-    fn is_point_in_polygon(&self, p: egui::Pos2, poly: &[egui::Pos2]) -> bool {
-        let mut inside = false;
-        let n = poly.len();
-        if n < 3 {
-            return false;
-        }
-        let mut j = n - 1;
-        for i in 0..n {
-            if ((poly[i].y > p.y) != (poly[j].y > p.y))
-                && (p.x < (poly[j].x - poly[i].x) * (p.y - poly[i].y) / (poly[j].y - poly[i].y) + poly[i].x)
-            {
-                inside = !inside;
-            }
-            j = i;
-        }
-        inside
-    }
-
-    fn extrude_selected_faces(&mut self) {
-        if self.selected_faces.is_empty() {
-            return;
-        }
-        let ai = self.project.active_animation;
-        let fi = self.project.active_frame;
-        let li = self.project.active_layer;
-        let frame = &self.project.animations[ai].frames[fi];
-
-        let mut new_vertices: Vec<crate::project::Vertex3D> = Vec::new();
-        let mut new_faces: Vec<crate::project::Face3D> = Vec::new();
-        let mut vertex_map: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
-        let mut selected_faces_updated = Vec::new();
-
-        let active_z = li as f32;
-
-        for &face_idx in &self.selected_faces {
-            if let Some(face) = self.project.active_mesh().faces.get(face_idx) {
-                if face.vertex_indices.len() < 3 {
-                    continue;
-                }
-                
-                let avg_z = face.vertex_indices.iter()
-                    .filter_map(|&idx| self.project.active_mesh().vertices.get(idx).map(|v| v.z))
-                    .sum::<f32>() / face.vertex_indices.len() as f32;
-                
-                if (active_z - avg_z).abs() < 0.01 {
-                    // Skip extrusion if active grid layer is on the same layer as the face
-                    continue;
-                }
-
-                let dz = active_z - avg_z;
-                let dx = 0.0f32;
-                let dy = 0.0f32;
-                
-                let mut new_face_indices = Vec::new();
-                for &v_idx in &face.vertex_indices {
-                    if let Some(vertex) = self.project.active_mesh().vertices.get(v_idx) {
-                        let new_vertex = crate::project::Vertex3D {
-                            x: vertex.x + dx,
-                            y: vertex.y + dy,
-                            z: vertex.z + dz,
-                        };
-                        
-                        if let Some(&mapped_idx) = vertex_map.get(&v_idx) {
-                            new_face_indices.push(mapped_idx);
-                        } else {
-                            let new_idx = self.project.active_mesh().vertices.len() + new_vertices.len();
-                            new_vertices.push(new_vertex);
-                            vertex_map.insert(v_idx, new_idx);
-                            new_face_indices.push(new_idx);
-                        }
-                    }
-                }
-                
-                // Create side faces
-                for i in 0..face.vertex_indices.len() {
-                    let next_i = (i + 1) % face.vertex_indices.len();
-                    let v1_old = face.vertex_indices[i];
-                    let v2_old = face.vertex_indices[next_i];
-                    let v1_new = *vertex_map.get(&v1_old).unwrap();
-                    let v2_new = *vertex_map.get(&v2_old).unwrap();
-                    
-                    new_faces.push(crate::project::Face3D {
-                        vertex_indices: vec![v1_old, v2_old, v2_new, v1_new],
-                        color: face.color,
-                    });
-                }
-                
-                // Create top face
-                new_faces.push(crate::project::Face3D {
-                    vertex_indices: new_face_indices,
-                    color: face.color,
-                });
-                let new_top_face_idx = self.project.active_mesh().faces.len() + new_faces.len() - 1;
-                selected_faces_updated.push(new_top_face_idx);
-            }
-        }
-        
-        if new_vertices.is_empty() {
-            return;
-        }
-
-        for vertex in new_vertices {
-            self.project.active_mesh_mut().vertices.push(vertex);
-        }
-        for face in new_faces {
-            self.project.active_mesh_mut().faces.push(face);
-        }
-        
-        self.selected_faces = selected_faces_updated;
-        self.canvas_dirty = true;
-    }
 
     /// Set active tool and sync the group's "current" display.
     fn set_active_tool(&mut self, t: ActiveTool) {
-        if !matches!(t, ActiveTool::VertexSelect | ActiveTool::FaceSelect) {
-            self.three_d_select_mode = None;
-        }
         match &t {
             ActiveTool::Pencil | ActiveTool::Eraser => self.pen_group_current = t.clone(),
             ActiveTool::Fill | ActiveTool::Eyedropper => self.bucket_group_current = t.clone(),
@@ -1723,14 +1534,6 @@ impl App {
                 self.shape_group_current = t.clone();
             }
             ActiveTool::RectSelect | ActiveTool::MagicWand | ActiveTool::Move => self.select_group_current = t.clone(),
-            ActiveTool::VertexSelect => {
-                self.three_d_select_mode = Some(ThreeDSelectMode::Vertex);
-                self.selected_faces.clear();
-            }
-            ActiveTool::FaceSelect => {
-                self.three_d_select_mode = Some(ThreeDSelectMode::Face);
-                self.selected_vertices.clear();
-            }
             _ => {}
         }
         self.active_tool = t;
@@ -1738,10 +1541,6 @@ impl App {
             if matches!(self.iso_mode, crate::tools::IsoMode::TopDown | crate::tools::IsoMode::TopDownFill) {
                 self.iso_mode = crate::tools::IsoMode::Off;
             }
-        }
-        // Clear drawing chain when switching tools in 3D mode
-        if false {
-            self.drawing_chain.clear();
         }
         self.clear_transient_state();
     }
@@ -2606,7 +2405,7 @@ impl App {
                             TopMenu::Layer => {
                                 let ai = self.project.active_animation;
                                 let mut fi = self.project.active_frame;
-                                let reached_limit = (self.project.mode == crate::project::ProjectMode::SpriteStack || false)
+                                let reached_limit = (self.project.mode == crate::project::ProjectMode::SpriteStack)
                                     && self.project.sprite_stack_max_layers.map_or(false, |max| {
                                         self.project.animations[ai].frames[fi].layers.len() >= max as usize
                                     });
@@ -2852,8 +2651,7 @@ impl App {
                 ui.spacing_mut().item_spacing = Vec2::ZERO;
 
                 // Vertically center the button stack in the full screen
-                let is_3d = false;
-                let tool_count = if is_3d { 6.0 } else { 5.0 };
+                let tool_count = 5.0;
                 let tools_h = tool_count * 38.0;
                 let top_pad = ((ctx.screen_rect().height() - tools_h) / 2.0 - TOP_BAR_HEIGHT).max(0.0);
                 ui.add_space(top_pad);
@@ -2932,57 +2730,8 @@ impl App {
                     }
                 }
 
-                // Slot 3: Select group (RectSelect/Move) or 3D tools
-                let is_3d = false;
-                
-                if is_3d {
-                    // In 3D mode, show vertex select and face select tools
-                    // Slot 3: Vertex Select
-                    let vertex_icon = tool_icon(&ActiveTool::VertexSelect);
-                    let vertex_selected = self.active_tool == ActiveTool::VertexSelect;
-                    let vertex_resp = tool_btn_raw(ui, &self.theme, vertex_selected, vertex_icon)
-                        .on_hover_text(tool_tooltip_text(&ActiveTool::VertexSelect));
-                    let vertex_rect = vertex_resp.rect;
-                    if vertex_resp.clicked() && !self.any_modal_open() {
-                        self.set_active_tool(ActiveTool::VertexSelect);
-                        self.open_tool_submenu = None;
-                    }
-
-                    // Slot 4: Face Select
-                    let face_icon = tool_icon(&ActiveTool::FaceSelect);
-                    let face_selected = self.active_tool == ActiveTool::FaceSelect;
-                    let face_resp = tool_btn_raw(ui, &self.theme, face_selected, face_icon)
-                        .on_hover_text(tool_tooltip_text(&ActiveTool::FaceSelect));
-                    let face_rect = face_resp.rect;
-                    if face_resp.clicked() && !self.any_modal_open() {
-                        self.set_active_tool(ActiveTool::FaceSelect);
-                        self.open_tool_submenu = None;
-                    }
-
-                    // Slot 5: Zoom (ungrouped)
-                    let zoom_resp = tool_btn(ui, &mut self.active_tool, &self.theme, ActiveTool::Zoom, egui::include_image!("../assets/icons/zoom.svg"))
-                        .on_hover_text("Zoom View Tool (Double-click button to fit canvas)");
-                    if zoom_resp.clicked() && !self.any_modal_open() {
-                        self.clear_transient_state();
-                        let now = ctx.input(|i| i.time);
-                        if now - self.last_zoom_tool_btn_click < 0.4 {
-                            self.pending_zoom_fit = true;
-                            self.last_zoom_tool_btn_click = -1.0;
-                        } else {
-                            self.last_zoom_tool_btn_click = now;
-                        }
-                    }
-
-                    // Ungrouped clicks should close any open submenu
-                    if zoom_resp.clicked() { self.open_tool_submenu = None; }
-
-                    // Stash slot rects for the submenu overlay drawn after this panel
-                    self.pen_slot_rect = Some(pen_rect);
-                    self.bucket_slot_rect = Some(bucket_rect);
-                    self.shape_slot_rect = Some(shape_rect);
-                    self.select_slot_rect = Some(vertex_rect);
-                } else {
-                    // Normal mode: show select group
+                // Slot 3: Select group (RectSelect/Move)
+                {
                     let select_icon = tool_icon(&self.select_group_current);
                     let select_resp = tool_btn_raw(ui, &self.theme, self.is_group_selected(3), select_icon)
                         .on_hover_text(tool_tooltip_text(&self.select_group_current));
@@ -4274,7 +4023,7 @@ impl App {
         let ai = self.project.active_animation;
         let fi = self.project.active_frame;
 
-        let reached_limit = (self.project.mode == crate::project::ProjectMode::SpriteStack || false)
+        let reached_limit = (self.project.mode == crate::project::ProjectMode::SpriteStack)
             && self.project.sprite_stack_max_layers.map_or(false, |max| {
                 self.project.animations[ai].frames[fi].layers.len() >= max as usize
             });
@@ -5496,7 +5245,7 @@ impl App {
 
                     ui.horizontal(|ui| {
                         ui.style_mut().spacing.item_spacing = Vec2::ZERO;
-                            let reached_limit = (self.project.mode == crate::project::ProjectMode::SpriteStack || false)
+                            let reached_limit = (self.project.mode == crate::project::ProjectMode::SpriteStack)
                                 && self.project.sprite_stack_max_layers.map_or(false, |max| {
                                     layer_count >= max as usize
                                 });
@@ -6185,7 +5934,7 @@ impl App {
                         Pos2::new(canvas_rect.min.x + 38.0, canvas_rect.min.y + TOP_BAR_HEIGHT),
                         Pos2::new(canvas_rect.max.x, canvas_rect.max.y),
                     );
-                    if self.project.mode == crate::project::ProjectMode::SpriteStack || false {
+                    if self.project.mode == crate::project::ProjectMode::SpriteStack {
                         let w = self.project.canvas_width as f32;
                         let h = self.project.canvas_height as f32;
                         let num_layers = self.project.active_frame_ref().layers.len() as f32;
@@ -6200,8 +5949,6 @@ impl App {
                 let painter = ui.painter_at(canvas_rect);
                 if self.project.mode == crate::project::ProjectMode::SpriteStack {
                     self.draw_3d_voxel_workspace(ui, &painter, canvas_rect);
-                } else if false {
-                    self.draw_3d_workspace(ui, &painter, canvas_rect);
                 } else {
                     self.canvas.draw(
                         ctx,
@@ -6243,36 +5990,11 @@ impl App {
                     if !any_menu_open {
                         self.pen_size_scroll_accum = 0.0;
                         self.canvas.handle_input(ui, canvas_rect);
-
-                        // Handle Right-click drag to rotate 3D camera
-                        if false {
-                            let is_hovered = ui.input(|i| i.pointer.hover_pos().map(|pos| canvas_rect.contains(pos)).unwrap_or(false));
-                            let over_gizmo = ui.input(|i| i.pointer.hover_pos().map(|pos| {
-                                pos.x >= canvas_rect.max.x - 120.0 && pos.y <= canvas_rect.min.y + 160.0
-                            }).unwrap_or(false));
-                            
-                            if is_hovered && !over_gizmo && ui.input(|i| i.pointer.secondary_down()) {
-                                let delta = ui.input(|i| i.pointer.delta());
-                                if delta != egui::Vec2::ZERO {
-                                    self.three_d_rotation_y += delta.x * 0.005;
-                                    self.three_d_rotation_x = (self.three_d_rotation_x + delta.y * 0.005).clamp(-std::f32::consts::FRAC_PI_2 + 0.01, std::f32::consts::FRAC_PI_2 - 0.01);
-                                    if self.three_d_view_mode == 0 {
-                                        self.three_d_view_mode = 1;
-                                    }
-                                    self.canvas_dirty = true;
-                                }
-                            }
-                            
-                            // Handle face extrusion with E key
-                            if ui.ctx().input(|i| i.key_pressed(egui::Key::E)) && !self.selected_faces.is_empty() {
-                                self.extrude_selected_faces();
-                            }
-                        }
                     }
                 }
 
                 let art_rect = self.canvas.art_rect(canvas_rect, disp_w, disp_h);
-                if self.project.mode != crate::project::ProjectMode::SpriteStack && true {
+                if self.project.mode != crate::project::ProjectMode::SpriteStack {
                     painter.rect_stroke(
                         art_rect,
                         0.0,
@@ -6616,7 +6338,7 @@ impl App {
                 }
 
                 // Render info overlay box in the top-left corner of the canvas (under logo, next to tools)
-                if self.project.mode != crate::project::ProjectMode::SpriteStack && true {
+                if self.project.mode != crate::project::ProjectMode::SpriteStack {
                     let hover_canvas = ctx.pointer_hover_pos()
                         .and_then(|p| self.get_canvas_coords(p, canvas_rect))
                         .filter(|&(hx, hy)| hx < disp_w && hy < disp_h);
@@ -6663,17 +6385,7 @@ impl App {
                     false
                 };
 
-                let hovering_over_3d_controls = if false {
-                    ui.ctx().input(|i| {
-                        i.pointer.hover_pos().map(|pos| {
-                            pos.x >= canvas_rect.max.x - 120.0 && pos.y <= canvas_rect.min.y + 130.0
-                        }).unwrap_or(false)
-                    })
-                } else {
-                    false
-                };
-
-                let response = if hovering_over_vis_button || hovering_over_3d_controls {
+                let response = if hovering_over_vis_button {
                     // Don't consume clicks when hovering over button
                     ui.allocate_rect(canvas_rect, egui::Sense::hover())
                 } else {
@@ -7829,7 +7541,7 @@ print("FAIL")
     }
 
     fn draw_preview_content(&mut self, ui: &mut egui::Ui) {
-        if self.project.mode == crate::project::ProjectMode::SpriteStack || false {
+        if self.project.mode == crate::project::ProjectMode::SpriteStack {
             let frame = self.project.active_frame_ref();
             let w = self.project.canvas_width;
             let h = self.project.canvas_height;
@@ -8092,8 +7804,6 @@ print("FAIL")
                         )
                     );
                     if btn_resp.clicked() {
-                        self.sprite_stack_angle = 45.0f32.to_radians();
-                        self.sprite_stack_tilt = 60.0;
                         self.sprite_stack_spacing = 1.0;
                     }
                 }
@@ -8185,7 +7895,7 @@ print("FAIL")
                             .fit_to_exact_size(icon_size),
                     );
 
-                if self.project.mode == crate::project::ProjectMode::SpriteStack || false {
+                if self.project.mode == crate::project::ProjectMode::SpriteStack {
                         let btn_size = Vec2::new(30.0, 15.0);
                         let btn_rect = egui::Rect::from_center_size(
                             egui::Pos2::new(rect.right() - 32.0, rect.center().y),
@@ -8239,8 +7949,6 @@ print("FAIL")
                         );
                         
                         if btn_resp.clicked() {
-                            self.sprite_stack_angle = 45.0f32.to_radians();
-                            self.sprite_stack_tilt = 60.0;
                             self.sprite_stack_spacing = 1.0;
                         }
                     }
@@ -8485,7 +8193,7 @@ print("FAIL")
     fn get_canvas_coords(&self, pos: egui::Pos2, canvas_rect: egui::Rect) -> Option<(u32, u32)> {
         let w = self.project.canvas_width;
         let h = self.project.canvas_height;
-        if self.project.mode == crate::project::ProjectMode::SpriteStack || false {
+        if self.project.mode == crate::project::ProjectMode::SpriteStack {
             self.screen_to_voxel_coord(pos, canvas_rect)
         } else {
             self.canvas.screen_to_canvas(pos, canvas_rect, w, h)
@@ -8493,14 +8201,9 @@ print("FAIL")
     }
 
     fn get_canvas_coords_i32(&self, pos: egui::Pos2, canvas_rect: egui::Rect) -> (i32, i32) {
-        if self.project.mode == crate::project::ProjectMode::SpriteStack || false {
+        if self.project.mode == crate::project::ProjectMode::SpriteStack {
             let (xf, yf) = self.screen_to_voxel_coord_unconstrained(pos, canvas_rect);
-            // In 3D mode, snap to grid corners (round to nearest integer)
-            if false {
-                (xf.round() as i32, yf.round() as i32)
-            } else {
-                (xf.floor() as i32, yf.floor() as i32)
-            }
+            (xf.floor() as i32, yf.floor() as i32)
         } else {
             let w = self.project.canvas_width;
             let h = self.project.canvas_height;
@@ -8509,14 +8212,8 @@ print("FAIL")
     }
 
     fn get_canvas_coords_f32(&self, pos: egui::Pos2, canvas_rect: egui::Rect) -> (f32, f32) {
-        if self.project.mode == crate::project::ProjectMode::SpriteStack || false {
-            let (xf, yf) = self.screen_to_voxel_coord_unconstrained(pos, canvas_rect);
-            // In 3D mode, snap to grid corners (round to nearest integer)
-            if false {
-                (xf.round(), yf.round())
-            } else {
-                (xf, yf)
-            }
+        if self.project.mode == crate::project::ProjectMode::SpriteStack {
+            self.screen_to_voxel_coord_unconstrained(pos, canvas_rect)
         } else {
             let w = self.project.canvas_width;
             let h = self.project.canvas_height;
@@ -8524,128 +8221,7 @@ print("FAIL")
         }
     }
 
-    fn screen_to_3d_coord(&self, pos: egui::Pos2, canvas_rect: egui::Rect) -> (f32, f32, f32) {
-        let w = self.project.canvas_width as f32;
-        let h = self.project.canvas_height as f32;
-        let li = self.project.active_layer as f32;
-        let num_layers = self.project.active_frame_ref().layers.len() as f32;
-        let center_pos = canvas_rect.center() + self.canvas.offset;
-
-        let dx = (pos.x - center_pos.x) / self.canvas.zoom;
-        let dy = (pos.y - center_pos.y) / self.canvas.zoom;
-        let dy_world = -dy;
-
-        if self.three_d_view_mode == 0 {
-            // Mode 0: Orthographic top/orbit view
-            match self.three_d_drawing_plane {
-                ThreeDDrawingPlane::TopBottom => {
-                    let z = li.clamp(0.0, num_layers);
-                    (dx + w / 2.0, -dy + h / 2.0, z)
-                }
-                ThreeDDrawingPlane::FrontBack => {
-                    let y = li.clamp(0.0, h);
-                    (dx + w / 2.0, y, -dy + num_layers / 2.0)
-                }
-                ThreeDDrawingPlane::LeftRight => {
-                    let x = li.clamp(0.0, w);
-                    (x, -dy + h / 2.0, dx + num_layers / 2.0)
-                }
-            }
-        } else {
-            let cos_x = self.three_d_rotation_x.cos();
-            let sin_x = self.three_d_rotation_x.sin();
-            let cos_y = self.three_d_rotation_y.cos();
-            let sin_y = self.three_d_rotation_y.sin();
-
-            let (sx, sy, sz) = match self.three_d_drawing_plane {
-                ThreeDDrawingPlane::TopBottom => {
-                    let cz = li - num_layers / 2.0;
-                    let sy_val = cz;
-                    let det = sin_x;
-                    let (sx_solved, sz_solved) = if det.abs() > 1e-5 {
-                        let a1 = cos_y;
-                        let b1 = -sin_y;
-                        let r1 = dx;
-
-                        let a2 = sin_y * sin_x;
-                        let b2 = cos_y * sin_x;
-                        let r2 = dy_world - sy_val * cos_x;
-
-                        let sx_s = (r1 * b2 - b1 * r2) / det;
-                        let sz_s = (a1 * r2 - r1 * a2) / det;
-                        (sx_s, sz_s)
-                    } else {
-                        let k = match self.three_d_view_mode {
-                            1 => li - h / 2.0,
-                            2 => -(li - w / 2.0),
-                            3 => -(li - h / 2.0),
-                            4 => li - w / 2.0,
-                            _ => li - h / 2.0,
-                        };
-                        let sx_s = if cos_y.abs() > 1e-5 {
-                            (dx + k * sin_y) / cos_y
-                        } else {
-                            dx
-                        };
-                        (sx_s, k)
-                    };
-                    (sx_solved, sy_val, sz_solved)
-                }
-                ThreeDDrawingPlane::FrontBack => {
-                    let cy = li.clamp(0.0, h) - h / 2.0;
-                    match self.three_d_view_mode {
-                        1 | 3 => {
-                            let sz_val = if self.three_d_view_mode == 1 { cy } else { -cy };
-                            let sx_solved = if cos_y.abs() > 1e-5 { (dx + sz_val * sin_y) / cos_y } else { 0.0 };
-                            let sy_solved = if cos_x.abs() > 1e-5 { (dy_world - (sx_solved * sin_y + sz_val * cos_y) * sin_x) / cos_x } else { 0.0 };
-                            (sx_solved, sy_solved, sz_val)
-                        }
-                        2 | 4 => {
-                            let sx_val = if self.three_d_view_mode == 2 { cy } else { -cy };
-                            let sz_solved = if sin_y.abs() > 1e-5 { (sx_val * cos_y - dx) / sin_y } else { 0.0 };
-                            let sy_solved = if cos_x.abs() > 1e-5 { (dy_world - (sx_val * sin_y + sz_solved * cos_y) * sin_x) / cos_x } else { 0.0 };
-                            (sx_val, sy_solved, sz_solved)
-                        }
-                        _ => (dx, dy_world, cy),
-                    }
-                }
-                ThreeDDrawingPlane::LeftRight => {
-                    let cx = li.clamp(0.0, w) - w / 2.0;
-                    match self.three_d_view_mode {
-                        1 | 3 => {
-                            let sx_val = if self.three_d_view_mode == 1 { cx } else { -cx };
-                            let sz_solved = if sin_y.abs() > 1e-5 { (sx_val * cos_y - dx) / sin_y } else { 0.0 };
-                            let sy_solved = if cos_x.abs() > 1e-5 { (dy_world - (sx_val * sin_y + sz_solved * cos_y) * sin_x) / cos_x } else { 0.0 };
-                            (sx_val, sy_solved, sz_solved)
-                        }
-                        2 | 4 => {
-                            let sz_val = if self.three_d_view_mode == 2 { -cx } else { cx };
-                            let sx_solved = if cos_y.abs() > 1e-5 { (dx + sz_val * sin_y) / cos_y } else { 0.0 };
-                            let sy_solved = if cos_x.abs() > 1e-5 { (dy_world - (sx_solved * sin_y + sz_val * cos_y) * sin_x) / cos_x } else { 0.0 };
-                            (sx_solved, sy_solved, sz_val)
-                        }
-                        _ => (cx, dy_world, dx),
-                    }
-                }
-            };
-
-            let (cx_rec, cy_rec, cz_rec) = match self.three_d_view_mode {
-                1 => (sx, sz, sy),
-                2 => (-sz, sx, sy),
-                3 => (-sx, -sz, sy),
-                4 => (sz, -sx, sy),
-                _ => (sx, sz, sy),
-            };
-            (cx_rec + w / 2.0, cy_rec + h / 2.0, cz_rec + num_layers / 2.0)
-        }
-    }
-
     fn screen_to_voxel_coord_unconstrained(&self, pos: egui::Pos2, canvas_rect: egui::Rect) -> (f32, f32) {
-        if false {
-            let (x, y, _) = self.screen_to_3d_coord(pos, canvas_rect);
-            return (x, y);
-        }
-
         let w = self.project.canvas_width as f32;
         let h = self.project.canvas_height as f32;
         let li = self.project.active_layer as f32;
@@ -8704,56 +8280,16 @@ print("FAIL")
             let cy = y_val - h as f32 / 2.0;
             let cz = z_val - num_layers as f32 / 2.0;
 
-            if false {
-                if self.three_d_view_mode > 0 {
-                    // Side view projection
-                    let (sx, sy, sz) = match self.three_d_view_mode {
-                        1 => (cx, cz, cy),         // Front view: look along Y
-                        2 => (cy, cz, -cx),        // Right view: look along X
-                        3 => (-cx, cz, -cy),       // Back view: look along -Y
-                        4 => (-cy, cz, cx),        // Left view: look along -X
-                        _ => (cx, cz, cy),
-                    };
-                    
-                    // Apply camera rotation
-                    let cos_x = self.three_d_rotation_x.cos();
-                    let sin_x = self.three_d_rotation_x.sin();
-                    let cos_y = self.three_d_rotation_y.cos();
-                    let sin_y = self.three_d_rotation_y.sin();
-                    
-                    // Rotate around Y axis (yaw)
-                    let rx = sx * cos_y - sz * sin_y;
-                    let rz = sx * sin_y + sz * cos_y;
-                    
-                    // Rotate around X axis (pitch)
-                    let ry = sy * cos_x + rz * sin_x;
-                    let rz2 = rz * cos_x - sy * sin_x;
-                    
-                    let scale = if self.three_d_perspective {
-                        let perspective_distance = 1000.0;
-                        perspective_distance / (perspective_distance + rz2)
-                    } else {
-                        1.0
-                    };
-                    
-                    center_pos + egui::Vec2::new(rx * scale, -ry * scale) * self.canvas.zoom
-                } else {
-                    // Orthographic view (mode 0): simple 2D projection
-                    // x maps to screen x, y maps to screen y (inverted)
-                    center_pos + egui::Vec2::new(cx, -cy) * self.canvas.zoom
-                }
-            } else {
-                let (rx, ry) = match self.sprite_stack_rotation_90 % 4 {
-                    0 => (cx, cy),
-                    1 => (-cy, cx),
-                    2 => (-cx, -cy),
-                    _ => (cy, -cx),
-                };
+            let (rx, ry) = match self.sprite_stack_rotation_90 % 4 {
+                0 => (cx, cy),
+                1 => (-cy, cx),
+                2 => (-cx, -cy),
+                _ => (cy, -cx),
+            };
 
-                let px = rx - ry;
-                let py = (rx + ry) * 0.5 - cz * 1.0;
-                center_pos + egui::Vec2::new(px, py) * self.canvas.zoom
-            }
+            let px = rx - ry;
+            let py = (rx + ry) * 0.5 - cz * 1.0;
+            center_pos + egui::Vec2::new(px, py) * self.canvas.zoom
         };
 
         // Draw wireframe bounding box representing the 3 dimensions of the canvas
@@ -8789,48 +8325,6 @@ print("FAIL")
         painter.line_segment([ct[back_idx], ct[b3]], back_stroke);
         painter.line_segment([cb[back_idx], ct[back_idx]], back_stroke);
 
-        if false {
-            let grid_stroke = egui::Stroke::new(1.0, self.theme.muted.gamma_multiply(0.2));
-            // Z planes (bottom Z=0, top Z=num_layers)
-            for &z_f in &[0.0, num_layers as f32] {
-                for y in 1..h {
-                    let p1 = project_3d(0.0, y as f32, z_f);
-                    let p2 = project_3d(w as f32, y as f32, z_f);
-                    painter.line_segment([p1, p2], grid_stroke);
-                }
-                for x in 1..w {
-                    let p1 = project_3d(x as f32, 0.0, z_f);
-                    let p2 = project_3d(x as f32, h as f32, z_f);
-                    painter.line_segment([p1, p2], grid_stroke);
-                }
-            }
-            // X planes (left X=0, right X=w)
-            for &x_f in &[0.0, w as f32] {
-                for y in 1..h {
-                    let p1 = project_3d(x_f, y as f32, 0.0);
-                    let p2 = project_3d(x_f, y as f32, num_layers as f32);
-                    painter.line_segment([p1, p2], grid_stroke);
-                }
-                for z in 1..num_layers {
-                    let p1 = project_3d(x_f, 0.0, z as f32);
-                    let p2 = project_3d(x_f, h as f32, z as f32);
-                    painter.line_segment([p1, p2], grid_stroke);
-                }
-            }
-            // Y planes (front Y=0, back Y=h)
-            for &y_f in &[0.0, h as f32] {
-                for x in 1..w {
-                    let p1 = project_3d(x as f32, y_f, 0.0);
-                    let p2 = project_3d(x as f32, y_f, num_layers as f32);
-                    painter.line_segment([p1, p2], grid_stroke);
-                }
-                for z in 1..num_layers {
-                    let p1 = project_3d(0.0, y_f, z as f32);
-                    let p2 = project_3d(w as f32, y_f, z as f32);
-                    painter.line_segment([p1, p2], grid_stroke);
-                }
-            }
-        }
 
         // Draw voxels in back-to-front order (depth sorting)
         let x_range: Vec<u32> = match self.sprite_stack_rotation_90 % 4 {
@@ -8945,16 +8439,7 @@ print("FAIL")
 
         // Draw hover preview of tool drawing as 3D voxels with proper face culling
         // Only draw side faces for boundary pixels (no neighbor in that direction)
-        // In 3D mode, render as vertex dots on grid corners instead of voxel cubes
-        if false {
-            let vertex_color = self.theme.accent;
-            let vertex_size = 0.5 * self.canvas.zoom;
-            for &(px, py, _color) in &self.shape_preview {
-                // Snap to grid corners (integer coordinates)
-                let pos = project_3d(px as f32, py as f32, li as f32);
-                painter.circle_filled(pos, vertex_size / 2.0, vertex_color);
-            }
-        } else {
+        {
             let no_stroke = egui::Stroke::new(0.0, egui::Color32::TRANSPARENT);
             let preview_set: std::collections::HashSet<(i32, i32)> = self.shape_preview.iter()
                 .map(|&(px, py, _)| (px as i32, py as i32))
@@ -9076,41 +8561,12 @@ print("FAIL")
         painter.line_segment([cb[f3], ct[f3]], front_stroke);
 
         // Draw horizontal line showing what layer is currently being drawn on
-        let pl_corners = if false {
-            match self.three_d_drawing_plane {
-                ThreeDDrawingPlane::TopBottom => [
-                    project_3d(0.0, 0.0, li as f32),
-                    project_3d(w as f32, 0.0, li as f32),
-                    project_3d(w as f32, h as f32, li as f32),
-                    project_3d(0.0, h as f32, li as f32),
-                ],
-                ThreeDDrawingPlane::FrontBack => {
-                    let y_val = (li as f32).clamp(0.0, h as f32);
-                    [
-                        project_3d(0.0, y_val, 0.0),
-                        project_3d(w as f32, y_val, 0.0),
-                        project_3d(w as f32, y_val, num_layers as f32),
-                        project_3d(0.0, y_val, num_layers as f32),
-                    ]
-                }
-                ThreeDDrawingPlane::LeftRight => {
-                    let x_val = (li as f32).clamp(0.0, w as f32);
-                    [
-                        project_3d(x_val, 0.0, 0.0),
-                        project_3d(x_val, h as f32, 0.0),
-                        project_3d(x_val, h as f32, num_layers as f32),
-                        project_3d(x_val, 0.0, num_layers as f32),
-                    ]
-                }
-            }
-        } else {
-            [
-                project_3d(0.0, 0.0, li as f32),
-                project_3d(w as f32, 0.0, li as f32),
-                project_3d(w as f32, h as f32, li as f32),
-                project_3d(0.0, h as f32, li as f32),
-            ]
-        };
+        let pl_corners = [
+            project_3d(0.0, 0.0, li as f32),
+            project_3d(w as f32, 0.0, li as f32),
+            project_3d(w as f32, h as f32, li as f32),
+            project_3d(0.0, h as f32, li as f32),
+        ];
         let mut right_most_p = pl_corners[0];
         for &p in &pl_corners {
             if p.x > right_most_p.x {
@@ -9122,16 +8578,8 @@ print("FAIL")
         let indicator_color = self.theme.accent;
         painter.line_segment([line_start, line_end], egui::Stroke::new(1.5, indicator_color));
 
-        let active_layer_name: std::borrow::Cow<'_, str> = if false {
-            let axis_name = match self.three_d_drawing_plane {
-                ThreeDDrawingPlane::TopBottom => "Z",
-                ThreeDDrawingPlane::FrontBack => "Y",
-                ThreeDDrawingPlane::LeftRight => "X",
-            };
-            format!("{}: {}", axis_name, li).into()
-        } else {
-            self.project.animations[ai].frames[fi].layers[li].name.as_str().into()
-        };
+        let active_layer_name: std::borrow::Cow<'_, str> =
+            self.project.animations[ai].frames[fi].layers[li].name.as_str().into();
         let label_pos = egui::Pos2::new(line_end.x + 4.0, line_end.y - 6.0);
         painter.text(
             label_pos,
@@ -9168,7 +8616,7 @@ print("FAIL")
         }
 
         // Draw active layer grid plane on top of voxels so it remains visible (non-3D mode only)
-        if self.sprite_stack_show_grid && true {
+        if self.sprite_stack_show_grid {
             let grid_stroke_flat = egui::Stroke::new(0.5, self.theme.accent.gamma_multiply(0.4));
             for y_val in 0..=h {
                 let p1 = project_3d(0.0, y_val as f32, li as f32);
@@ -9187,7 +8635,7 @@ print("FAIL")
             self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 3) % 4;
             self.canvas_dirty = true;
         }
-        if ctx.input(|i| i.key_pressed(egui::Key::E)) && self.selected_faces.is_empty() {
+        if ctx.input(|i| i.key_pressed(egui::Key::E)) {
             self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 1) % 4;
             self.canvas_dirty = true;
         }
@@ -9208,855 +8656,7 @@ print("FAIL")
         }
     }
 
-    fn draw_3d_workspace(&mut self, ui: &mut egui::Ui, painter: &egui::Painter, canvas_rect: egui::Rect) {
-        // First, render everything the same as sprite stack mode
-        self.draw_3d_voxel_workspace(ui, painter, canvas_rect);
 
-        // Then add 3D mesh rendering on top
-        let w = self.project.canvas_width;
-        let h = self.project.canvas_height;
-        let ai = self.project.active_animation;
-        let fi = self.project.active_frame;
-        let li = self.project.active_layer;
-        let frame = &self.project.animations[ai].frames[fi];
-        let num_layers = frame.layers.len();
-
-        let center_pos = canvas_rect.center() + self.canvas.offset;
-
-        let zoom = self.canvas.zoom;
-        let view_mode = self.three_d_view_mode;
-        let is_perspective = self.three_d_perspective;
-        let rot_x = self.three_d_rotation_x;
-        let rot_y = self.three_d_rotation_y;
-
-        let project_3d = move |x_val: f32, y_val: f32, z_val: f32| -> egui::Pos2 {
-            let cx = x_val - w as f32 / 2.0;
-            let cy = y_val - h as f32 / 2.0;
-            let cz = z_val - num_layers as f32 / 2.0;
-
-            if view_mode > 0 {
-                // Side view projection
-                let (sx, sy, sz) = match view_mode {
-                    1 => (cx, cz, cy),         // Front view: look along Y
-                    2 => (cy, cz, -cx),        // Right view: look along X
-                    3 => (-cx, cz, -cy),       // Back view: look along -Y
-                    4 => (-cy, cz, cx),        // Left view: look along -X
-                    _ => (cx, cz, cy),
-                };
-                
-                // Apply camera rotation
-                let cos_x = rot_x.cos();
-                let sin_x = rot_x.sin();
-                let cos_y = rot_y.cos();
-                let sin_y = rot_y.sin();
-                
-                // Rotate around Y axis (yaw)
-                let rx = sx * cos_y - sz * sin_y;
-                let rz = sx * sin_y + sz * cos_y;
-                
-                // Rotate around X axis (pitch)
-                let ry = sy * cos_x + rz * sin_x;
-                let rz2 = rz * cos_x - sy * sin_x;
-                
-                let scale = if is_perspective {
-                    let perspective_distance = 1000.0;
-                    perspective_distance / (perspective_distance + rz2)
-                } else {
-                    1.0
-                };
-                
-                center_pos + egui::Vec2::new(rx * scale, -ry * scale) * zoom
-            } else {
-                // Orthographic view (mode 0): simple 2D projection
-                // x maps to screen x, y maps to screen y (inverted)
-                center_pos + egui::Vec2::new(cx, -cy) * zoom
-            }
-        };
-
-        let mesh = &frame.mesh;
-
-        // Draw standalone edges (not part of any face)
-        let mut referenced_edges = std::collections::HashSet::new();
-        for face in &mesh.faces {
-            if face.vertex_indices.len() < 3 { continue; }
-            for i in 0..face.vertex_indices.len() {
-                let j = (i + 1) % face.vertex_indices.len();
-                let v1 = face.vertex_indices[i];
-                let v2 = face.vertex_indices[j];
-                let edge_key = if v1 < v2 { (v1, v2) } else { (v2, v1) };
-                referenced_edges.insert(edge_key);
-            }
-        }
-
-        let edge_color = self.theme.accent;
-        for edge in &mesh.edges {
-            let key = if edge.v1 < edge.v2 { (edge.v1, edge.v2) } else { (edge.v2, edge.v1) };
-            if !referenced_edges.contains(&key) {
-                if let (Some(v1), Some(v2)) = (mesh.vertices.get(edge.v1), mesh.vertices.get(edge.v2)) {
-                    let p1 = project_3d(v1.x, v1.y, v1.z);
-                    let p2 = project_3d(v2.x, v2.y, v2.z);
-                    painter.line_segment([p1, p2], egui::Stroke::new(1.5, edge_color));
-                }
-            }
-        }
-
-        // Draw preview line from last vertex in chain to mouse position
-        if !self.drawing_chain.is_empty() {
-            if let Some(&last_idx) = self.drawing_chain.last() {
-                if let Some(last_vertex) = mesh.vertices.get(last_idx) {
-                    let p1 = project_3d(last_vertex.x, last_vertex.y, last_vertex.z);
-                    // Show where the next vertex will be placed (snapped to grid)
-                    if let Some(mouse_pos) = ui.ctx().input(|i| i.pointer.hover_pos()) {
-                        if canvas_rect.contains(mouse_pos) {
-                            let (snap_x, snap_y, snap_z) = self.screen_to_3d_coord(mouse_pos, canvas_rect);
-                            let snap_x = snap_x.round().clamp(0.0, w as f32);
-                            let snap_y = snap_y.round().clamp(0.0, h as f32);
-                            let snap_z = snap_z.round().clamp(0.0, num_layers as f32);
-                            let p2 = project_3d(snap_x, snap_y, snap_z);
-                            painter.line_segment([p1, p2], egui::Stroke::new(1.0, edge_color.linear_multiply(0.5)));
-                            // Draw preview vertex dot at snap position
-                            let vertex_size = 0.5 * self.canvas.zoom;
-                            painter.circle_filled(p2, vertex_size / 2.0, edge_color.linear_multiply(0.7));
-                        }
-                    }
-                }
-            }
-        }
-
-        // Draw faces and their vertices in depth-sorted order (Painter's Algorithm)
-        let mut sorted_faces: Vec<(usize, &crate::project::Face3D, f32)> = mesh.faces.iter().enumerate()
-            .map(|(idx, face)| {
-                let avg_depth = if face.vertex_indices.is_empty() {
-                    0.0
-                } else {
-                    face.vertex_indices.iter()
-                        .filter_map(|&v_idx| mesh.vertices.get(v_idx))
-                        .map(|v| {
-                            let cx = v.x - w as f32 / 2.0;
-                            let cy = v.y - h as f32 / 2.0;
-                            let cz = v.z - num_layers as f32 / 2.0;
-                            let (sx, sy, sz) = match self.three_d_view_mode {
-                                1 => (cx, cz, cy),
-                                2 => (cy, cz, -cx),
-                                3 => (-cx, cz, -cy),
-                                4 => (-cy, cz, cx),
-                                _ => (cx, cz, cy),
-                            };
-                            let cos_x = self.three_d_rotation_x.cos();
-                            let sin_x = self.three_d_rotation_x.sin();
-                            let cos_y = self.three_d_rotation_y.cos();
-                            let sin_y = self.three_d_rotation_y.sin();
-                            let rx = sx * cos_y - sz * sin_y;
-                            let rz = sx * sin_y + sz * cos_y;
-                            let ry = sy * cos_x + rz * sin_x;
-                            let rz2 = rz * cos_x - sy * sin_x;
-                            rz2
-                        })
-                        .sum::<f32>() / face.vertex_indices.len() as f32
-                };
-                (idx, face, avg_depth)
-            })
-            .collect();
-
-        // Sort by depth descending (furthest first)
-        sorted_faces.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
-
-        let vertex_color = self.theme.accent;
-        let vertex_size = 0.5 * self.canvas.zoom;
-        let selected_vertex_size = 1.0 * self.canvas.zoom;
-        let mut referenced_vertices = std::collections::HashSet::new();
-
-        for (idx, face, _) in &sorted_faces {
-            if face.vertex_indices.len() < 3 { continue; }
-
-            let mut points: Vec<egui::Pos2> = face.vertex_indices.iter()
-                .filter_map(|&idx| mesh.vertices.get(idx).map(|v| project_3d(v.x, v.y, v.z)))
-                .collect();
-
-                // Sort vertices by angle around centroid to ensure convex winding order
-                if points.len() > 3 {
-                    let mut cx = 0.0;
-                    let mut cy = 0.0;
-                    for p in &points { cx += p.x; cy += p.y; }
-                    cx /= points.len() as f32;
-                    cy /= points.len() as f32;
-                    points.sort_by(|a, b| {
-                        let angle_a = (a.y - cy).atan2(a.x - cx);
-                        let angle_b = (b.y - cy).atan2(b.x - cx);
-                        angle_a.partial_cmp(&angle_b).unwrap_or(std::cmp::Ordering::Equal)
-                    });
-                }
-
-                // Draw face polygon
-                if points.len() >= 3 {
-                    let is_selected = self.selected_faces.contains(idx);
-                    let face_color = if is_selected {
-                        egui::Color32::from_rgba_unmultiplied(255, 255, 0, 160)
-                    } else {
-                        egui::Color32::from_rgba_unmultiplied(
-                            face.color[0], face.color[1], face.color[2], 255
-                        )
-                    };
-                    let stroke_color = egui::Color32::from_rgba_unmultiplied(
-                        (face.color[0] as f32 * 0.7) as u8,
-                        (face.color[1] as f32 * 0.7) as u8,
-                        (face.color[2] as f32 * 0.7) as u8,
-                        255
-                    );
-
-                    painter.add(egui::Shape::convex_polygon(
-                        points.clone(),
-                        face_color,
-                        egui::Stroke::new(1.0, stroke_color),
-                    ));
-
-                // Record that these vertices are part of a drawn face
-                for &v_idx in &face.vertex_indices {
-                    referenced_vertices.insert(v_idx);
-                }
-
-                // Draw vertices of this face if VertexSelect mode is active
-                if self.three_d_select_mode == Some(ThreeDSelectMode::Vertex) {
-                    for &v_idx in &face.vertex_indices {
-                        if let Some(vertex) = mesh.vertices.get(v_idx) {
-                            let pos = project_3d(vertex.x, vertex.y, vertex.z);
-                            let is_v_selected = self.selected_vertices.contains(&v_idx);
-                            let size = if is_v_selected { selected_vertex_size } else { vertex_size };
-                            let color = if is_v_selected { Color32::YELLOW } else { vertex_color };
-                            painter.circle_filled(pos, size / 2.0, color);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Draw standalone vertices (not part of any face) so they are always visible when drawing
-        for (idx, vertex) in mesh.vertices.iter().enumerate() {
-            if !referenced_vertices.contains(&idx) {
-                let pos = project_3d(vertex.x, vertex.y, vertex.z);
-                let is_selected = self.selected_vertices.contains(&idx);
-                let size = if is_selected { selected_vertex_size } else { vertex_size };
-                let color = if is_selected { Color32::YELLOW } else { vertex_color };
-                painter.circle_filled(pos, size / 2.0, color);
-            }
-        }
-
-        // Draw red guide lines and coordinates for selected vertices
-        if false {
-            let guide_stroke = egui::Stroke::new(1.0, egui::Color32::RED);
-            let guide_stroke_secondary = egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 0, 0, 100));
-            
-            for &idx in &self.selected_vertices {
-                if let Some(vertex) = mesh.vertices.get(idx) {
-                    let vx = vertex.x;
-                    let vy = vertex.y;
-                    let vz = vertex.z;
-
-                    // Projections onto planes
-                    let p_vertex = project_3d(vx, vy, vz);
-                    let p_z0 = project_3d(vx, vy, 0.0);
-                    let p_zmax = project_3d(vx, vy, num_layers as f32);
-                    let p_y0 = project_3d(vx, 0.0, vz);
-                    let p_ymax = project_3d(vx, h as f32, vz);
-                    let p_x0 = project_3d(0.0, vy, vz);
-                    let p_xmax = project_3d(w as f32, vy, vz);
-
-                    // Draw guides to bounding box planes
-                    painter.line_segment([p_vertex, p_z0], guide_stroke);
-                    painter.line_segment([p_vertex, p_zmax], guide_stroke);
-                    painter.line_segment([p_vertex, p_y0], guide_stroke);
-                    painter.line_segment([p_vertex, p_ymax], guide_stroke);
-                    painter.line_segment([p_vertex, p_x0], guide_stroke);
-                    painter.line_segment([p_vertex, p_xmax], guide_stroke);
-
-                    // Secondary guides on the floor plane (Z=0) to show X/Y projection limits
-                    let p_x0_z0 = project_3d(0.0, vy, 0.0);
-                    let p_y0_z0 = project_3d(vx, 0.0, 0.0);
-                    let p_xmax_z0 = project_3d(w as f32, vy, 0.0);
-                    let p_ymax_z0 = project_3d(vx, h as f32, 0.0);
-                    painter.line_segment([p_z0, p_x0_z0], guide_stroke_secondary);
-                    painter.line_segment([p_z0, p_y0_z0], guide_stroke_secondary);
-                    painter.line_segment([p_z0, p_xmax_z0], guide_stroke_secondary);
-                    painter.line_segment([p_z0, p_ymax_z0], guide_stroke_secondary);
-
-                    // Display coordinates next to the vertex
-                    let coord_text = format!("X: {:.0}\nY: {:.0}\nZ: {:.0}", vx, vy, vz);
-                    let font_id = egui::FontId::new(10.0, egui::FontFamily::Monospace);
-                    let text_color = egui::Color32::WHITE;
-                    
-                    let text_pos = p_vertex + egui::Vec2::new(10.0, -40.0);
-                    let text_rect = painter.text(
-                        text_pos,
-                        egui::Align2::LEFT_TOP,
-                        &coord_text,
-                        font_id.clone(),
-                        text_color,
-                    );
-                    
-                    let bg_rect = text_rect.expand(4.0);
-                    
-                    // Draw drop shadow: Offset: [0, 14], Color: (0, 0, 0, 89), CornerRadius: 6, No Outline
-                    let shadow_rect = bg_rect.translate(egui::Vec2::new(0.0, 14.0));
-                    painter.rect_filled(
-                        shadow_rect,
-                        egui::CornerRadius::same(6),
-                        egui::Color32::from_rgba_unmultiplied(0, 0, 0, 89)
-                    );
-                    
-                    // Draw main background box: CornerRadius: 6, No Outline
-                    painter.rect_filled(
-                        bg_rect,
-                        egui::CornerRadius::same(6),
-                        egui::Color32::from_rgba_unmultiplied(20, 20, 20, 230)
-                    );
-                    
-                    // Re-draw text on top of background
-                    painter.text(
-                        text_pos,
-                        egui::Align2::LEFT_TOP,
-                        &coord_text,
-                        font_id,
-                        text_color,
-                    );
-                }
-            }
-        }
-
-        // Handle vertex/face selection with click and drag translation
-        if self.three_d_select_mode.is_some() {
-            let is_over_extrude_btn = self.three_d_select_mode == Some(ThreeDSelectMode::Face)
-                && !self.selected_faces.is_empty()
-                && egui::Rect::from_min_size(
-                    egui::Pos2::new(canvas_rect.min.x + 15.0, canvas_rect.max.y - 35.0),
-                    egui::Vec2::new(90.0, 24.0),
-                ).contains(ui.ctx().input(|i| i.pointer.interact_pos()).unwrap_or(egui::Pos2::new(-1.0, -1.0)));
-
-            if let Some(cp) = ui.ctx().input(|i| i.pointer.interact_pos()) {
-                if canvas_rect.contains(cp) && ui.ctx().input(|i| i.pointer.primary_clicked()) && !is_over_extrude_btn {
-                    // Find closest vertex
-                    let mut closest_vertex: Option<(usize, f32)> = None;
-                    for (idx, vertex) in mesh.vertices.iter().enumerate() {
-                        let pos = project_3d(vertex.x, vertex.y, vertex.z);
-                        let dist = (pos - cp).length();
-                        let threshold = 12.0; // 12 pixels threshold
-                        
-                        if dist < threshold {
-                            if closest_vertex.is_none() || dist < closest_vertex.unwrap().1 {
-                                closest_vertex = Some((idx, dist));
-                            }
-                        }
-                    }
-                    
-                    // Find closest face
-                    let mut closest_face: Option<(usize, f32)> = None;
-                    for (idx, face) in mesh.faces.iter().enumerate() {
-                        if face.vertex_indices.len() < 3 { continue; }
-                        
-                        let points: Vec<egui::Pos2> = face.vertex_indices.iter()
-                            .filter_map(|&v_idx| mesh.vertices.get(v_idx).map(|v| project_3d(v.x, v.y, v.z)))
-                            .collect();
-                        
-                        if points.len() >= 3 && self.is_point_in_polygon(cp, &points) {
-                            // Calculate average depth of the face in camera space (rz2)
-                            let avg_depth = face.vertex_indices.iter()
-                                .filter_map(|&v_idx| mesh.vertices.get(v_idx))
-                                .map(|v| {
-                                    let cx = v.x - w as f32 / 2.0;
-                                    let cy = v.y - h as f32 / 2.0;
-                                    let cz = v.z - num_layers as f32 / 2.0;
-                                    let (sx, sy, sz) = match self.three_d_view_mode {
-                                        1 => (cx, cz, cy),
-                                        2 => (cy, cz, -cx),
-                                        3 => (-cx, cz, -cy),
-                                        4 => (-cy, cz, cx),
-                                        _ => (cx, cz, cy),
-                                    };
-                                    let cos_x = self.three_d_rotation_x.cos();
-                                    let sin_x = self.three_d_rotation_x.sin();
-                                    let cos_y = self.three_d_rotation_y.cos();
-                                    let sin_y = self.three_d_rotation_y.sin();
-                                    let rx = sx * cos_y - sz * sin_y;
-                                    let rz = sx * sin_y + sz * cos_y;
-                                    let ry = sy * cos_x - rz * sin_x;
-                                    let rz2 = sy * sin_x + rz * cos_x;
-                                    rz2
-                                })
-                                .sum::<f32>() / face.vertex_indices.len() as f32;
-                                
-                            if closest_face.is_none() || avg_depth < closest_face.unwrap().1 {
-                                closest_face = Some((idx, avg_depth));
-                            }
-                        }
-                    }
-                    
-                    // Handle selection based on current tool
-                    match self.three_d_select_mode {
-                        Some(ThreeDSelectMode::Vertex) => {
-                            if let Some((idx, _)) = closest_vertex {
-                                if ui.ctx().input(|i| i.modifiers.shift) {
-                                    // Toggle selection
-                                    if self.selected_vertices.contains(&idx) {
-                                        self.selected_vertices.retain(|&x| x != idx);
-                                    } else {
-                                        self.selected_vertices.push(idx);
-                                    }
-                                } else {
-                                    // Single selection
-                                    if !self.selected_vertices.contains(&idx) {
-                                        self.selected_vertices = vec![idx];
-                                    }
-                                }
-                                self.canvas_dirty = true;
-                            } else if !ui.ctx().input(|i| i.modifiers.shift) {
-                                // Deselect all if clicking empty space
-                                self.selected_vertices.clear();
-                                self.canvas_dirty = true;
-                            }
-                        }
-                        Some(ThreeDSelectMode::Face) => {
-                            if let Some((idx, _)) = closest_face {
-                                if ui.ctx().input(|i| i.modifiers.shift) {
-                                    // Toggle selection
-                                    if self.selected_faces.contains(&idx) {
-                                        self.selected_faces.retain(|&x| x != idx);
-                                    } else {
-                                        self.selected_faces.push(idx);
-                                    }
-                                } else {
-                                    // Single selection
-                                    if !self.selected_faces.contains(&idx) {
-                                        self.selected_faces = vec![idx];
-                                    }
-                                }
-                                self.canvas_dirty = true;
-                            } else if !ui.ctx().input(|i| i.modifiers.shift) {
-                                // Deselect all if clicking empty space
-                                self.selected_faces.clear();
-                                self.canvas_dirty = true;
-                            }
-                        }
-                        None => {}
-                    }
-
-                    // Initialize drag translation state if we have a selection
-                    if !self.selected_vertices.is_empty() || !self.selected_faces.is_empty() {
-                        let click_3d = self.screen_to_3d_coord(cp, canvas_rect);
-                        self.drag_translate_start_3d = Some(click_3d);
-                        
-                        let mut vertices_to_move = std::collections::HashSet::new();
-                        for &idx in &self.selected_vertices {
-                            vertices_to_move.insert(idx);
-                        }
-                        for &face_idx in &self.selected_faces {
-                            if let Some(face) = mesh.faces.get(face_idx) {
-                                for &v_idx in &face.vertex_indices {
-                                    vertices_to_move.insert(v_idx);
-                                }
-                            }
-                        }
-                        let initial = vertices_to_move.into_iter()
-                            .filter_map(|idx| mesh.vertices.get(idx).map(|v| (idx, v.clone())))
-                            .collect();
-                        self.drag_translate_initial_vertices = Some(initial);
-                    }
-                }
-            }
-
-            // Update drag translation while mouse is held down
-            let mouse_down = ui.ctx().input(|i| i.pointer.primary_down());
-            if mouse_down {
-                if let (Some(start_3d), Some(initials)) = (&self.drag_translate_start_3d, &self.drag_translate_initial_vertices) {
-                    if let Some(curr_pos) = ui.ctx().input(|i| i.pointer.hover_pos()) {
-                        let (cx, cy, cz) = self.screen_to_3d_coord(curr_pos, canvas_rect);
-                        let snap_cx = cx.round();
-                        let snap_cy = cy.round();
-                        let snap_cz = cz.round();
-                        
-                        let snap_sx = start_3d.0.round();
-                        let snap_sy = start_3d.1.round();
-                        let snap_sz = start_3d.2.round();
-
-                        let dx = snap_cx - snap_sx;
-                        let dy = snap_cy - snap_sy;
-                        let dz = snap_cz - snap_sz;
-
-                        let max_w = self.project.canvas_width as f32;
-                        let max_h = self.project.canvas_height as f32;
-                        let max_l = self.project.active_frame_ref().layers.len() as f32;
-
-                        for &(idx, ref init_v) in initials {
-                            if let Some(vertex) = self.project.active_mesh_mut().vertices.get_mut(idx) {
-                                vertex.x = (init_v.x + dx).clamp(0.0, max_w);
-                                vertex.y = (init_v.y + dy).clamp(0.0, max_h);
-                                vertex.z = (init_v.z + dz).clamp(0.0, max_l);
-                            }
-                        }
-                        self.canvas_dirty = true;
-                    }
-                }
-            } else {
-                self.drag_translate_start_3d = None;
-                self.drag_translate_initial_vertices = None;
-            }
-        }
-
-        // Handle keyboard input for moving selected vertices/faces
-        if !self.selected_vertices.is_empty() || !self.selected_faces.is_empty() {
-            let mut dx = 0.0;
-            let mut dy = 0.0;
-            let mut dz = 0.0;
-            let mut key_pressed = false;
-
-            let shift_held = ui.ctx().input(|i| i.modifiers.shift);
-
-            if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowUp)) {
-                key_pressed = true;
-                if shift_held {
-                    dz = 1.0;
-                } else {
-                    dy = 1.0;
-                }
-            }
-            if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowDown)) {
-                key_pressed = true;
-                if shift_held {
-                    dz = -1.0;
-                } else {
-                    dy = -1.0;
-                }
-            }
-            if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
-                key_pressed = true;
-                dx = -1.0;
-            }
-            if ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowRight)) {
-                key_pressed = true;
-                dx = 1.0;
-            }
-
-            if key_pressed {
-                for &idx in &self.selected_vertices {
-                    if let Some(vertex) = self.project.active_mesh_mut().vertices.get_mut(idx) {
-                        vertex.x = (vertex.x + dx).round().clamp(0.0, w as f32);
-                        vertex.y = (vertex.y + dy).round().clamp(0.0, h as f32);
-                        vertex.z = (vertex.z + dz).round().clamp(0.0, num_layers as f32);
-                    }
-                }
-                for &idx in &self.selected_faces {
-                    let v_indices: Vec<usize> = self.project.active_mesh().faces.get(idx)
-                        .map(|f| f.vertex_indices.clone())
-                        .unwrap_or_default();
-                    for v_idx in v_indices {
-                        if let Some(vertex) = self.project.active_mesh_mut().vertices.get_mut(v_idx) {
-                            vertex.x = (vertex.x + dx).round().clamp(0.0, w as f32);
-                            vertex.y = (vertex.y + dy).round().clamp(0.0, h as f32);
-                            vertex.z = (vertex.z + dz).round().clamp(0.0, num_layers as f32);
-                        }
-                    }
-                }
-                self.canvas_dirty = true;
-            }
-        }
-
-
-
-        // Draw 3D view cube in the top-right corner
-        let gizmo_center = egui::Pos2::new(canvas_rect.max.x - 65.0, canvas_rect.min.y + 65.0);
-        let gizmo_rect = egui::Rect::from_center_size(gizmo_center, egui::Vec2::splat(100.0));
-
-        // Drag on the gizmo area to rotate camera
-        let gizmo_drag_resp = ui.interact(gizmo_rect, egui::Id::new("three_d_gizmo_drag"), egui::Sense::drag());
-        if gizmo_drag_resp.dragged() {
-            let delta = gizmo_drag_resp.drag_delta();
-            if delta != egui::Vec2::ZERO {
-                self.three_d_rotation_y += delta.x * 0.01;
-                self.three_d_rotation_x = (self.three_d_rotation_x + delta.y * 0.01).clamp(-std::f32::consts::FRAC_PI_2 + 0.01, std::f32::consts::FRAC_PI_2 - 0.01);
-                if self.three_d_view_mode == 0 {
-                    self.three_d_view_mode = 1;
-                }
-                self.canvas_dirty = true;
-            }
-        }
-
-        let project_gizmo_vertex = |gx: f32, gy: f32, gz: f32| -> (f32, f32, f32) {
-            let (sx, sy, sz) = match self.three_d_view_mode {
-                1 => (gx, gz, gy),
-                2 => (gy, gz, -gx),
-                3 => (-gx, gz, -gy),
-                4 => (-gy, gz, gx),
-                _ => (gx, gz, gy),
-            };
-
-            let cos_x = self.three_d_rotation_x.cos();
-            let sin_x = self.three_d_rotation_x.sin();
-            let cos_y = self.three_d_rotation_y.cos();
-            let sin_y = self.three_d_rotation_y.sin();
-
-            let rx = sx * cos_y - sz * sin_y;
-            let rz = sx * sin_y + sz * cos_y;
-
-            let ry = sy * cos_x + rz * sin_x;
-            let rz2 = rz * cos_x - sy * sin_x;
-
-            (rx, -ry, rz2)
-        };
-
-        // 3D View Cube Vertices
-        let local_verts = [
-            (-1.0, -1.0, -1.0), // 0
-            ( 1.0, -1.0, -1.0), // 1
-            ( 1.0,  1.0, -1.0), // 2
-            (-1.0,  1.0, -1.0), // 3
-            (-1.0, -1.0,  1.0), // 4
-            ( 1.0, -1.0,  1.0), // 5
-            ( 1.0,  1.0,  1.0), // 6
-            (-1.0,  1.0,  1.0), // 7
-        ];
-
-        let mut projected_verts = Vec::new();
-        for &v in &local_verts {
-            let (rx, ry, rz) = project_gizmo_vertex(v.0, v.1, v.2);
-            let screen_pos = gizmo_center + egui::Vec2::new(rx, ry) * 16.0; // scale factor
-            projected_verts.push((screen_pos, rz));
-        }
-
-        struct CubeFace {
-            name: &'static str,
-            verts: [usize; 4],
-            normal: (f32, f32, f32),
-            plane: ThreeDDrawingPlane,
-            target_view_mode: u8,
-            target_rot: (f32, f32),
-            color: egui::Color32,
-        }
-
-        let faces = vec![
-            CubeFace { name: "TOP", verts: [4, 5, 6, 7], normal: (0.0, 0.0, 1.0), plane: ThreeDDrawingPlane::TopBottom, target_view_mode: 0, target_rot: (std::f32::consts::FRAC_PI_2, 0.0), color: egui::Color32::from_rgb(180, 190, 255) },
-            CubeFace { name: "BOTTOM", verts: [3, 2, 1, 0], normal: (0.0, 0.0, -1.0), plane: ThreeDDrawingPlane::TopBottom, target_view_mode: 0, target_rot: (-std::f32::consts::FRAC_PI_2, 0.0), color: egui::Color32::from_rgb(150, 160, 220) },
-            CubeFace { name: "FRONT", verts: [7, 6, 2, 3], normal: (0.0, 1.0, 0.0), plane: ThreeDDrawingPlane::FrontBack, target_view_mode: 1, target_rot: (0.0, 0.0), color: egui::Color32::from_rgb(255, 180, 180) },
-            CubeFace { name: "BACK", verts: [0, 1, 5, 4], normal: (0.0, -1.0, 0.0), plane: ThreeDDrawingPlane::FrontBack, target_view_mode: 3, target_rot: (0.0, std::f32::consts::PI), color: egui::Color32::from_rgb(220, 150, 150) },
-            CubeFace { name: "LEFT", verts: [4, 7, 3, 0], normal: (-1.0, 0.0, 0.0), plane: ThreeDDrawingPlane::LeftRight, target_view_mode: 4, target_rot: (0.0, std::f32::consts::FRAC_PI_2), color: egui::Color32::from_rgb(180, 255, 180) },
-            CubeFace { name: "RIGHT", verts: [1, 2, 6, 5], normal: (1.0, 0.0, 0.0), plane: ThreeDDrawingPlane::LeftRight, target_view_mode: 2, target_rot: (0.0, -std::f32::consts::FRAC_PI_2), color: egui::Color32::from_rgb(150, 220, 150) },
-        ];
-
-        let mut sorted_faces: Vec<(usize, &CubeFace, f32)> = faces.iter().enumerate()
-            .map(|(idx, face)| {
-                let depth = (projected_verts[face.verts[0]].1 +
-                             projected_verts[face.verts[1]].1 +
-                             projected_verts[face.verts[2]].1 +
-                             projected_verts[face.verts[3]].1) / 4.0;
-                (idx, face, depth)
-            })
-            .collect();
-
-        // Sort by depth descending: back-most first (drawn first), front-most last (drawn last)
-        sorted_faces.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
-
-        let pointer_pos = ui.input(|i| i.pointer.interact_pos());
-        
-        let point_in_quad = |p: egui::Pos2, q: &[egui::Pos2; 4]| -> bool {
-            let mut sign = None;
-            for i in 0..4 {
-                let a = q[i];
-                let b = q[(i + 1) % 4];
-                let ab = b - a;
-                let ap = p - a;
-                let cross = ab.x * ap.y - ab.y * ap.x;
-                if cross.abs() > 1e-5 {
-                    let current_sign = cross.is_sign_positive();
-                    if let Some(s) = sign {
-                        if s != current_sign {
-                            return false;
-                        }
-                    } else {
-                        sign = Some(current_sign);
-                    }
-                }
-            }
-            true
-        };
-
-        let mut hovered_face_idx: Option<usize> = None;
-        if let Some(pos) = pointer_pos {
-            if gizmo_rect.contains(pos) {
-                // Check faces from front-most to back-most
-                for &(idx, face, _) in sorted_faces.iter().rev() {
-                    let points = [
-                        projected_verts[face.verts[0]].0,
-                        projected_verts[face.verts[1]].0,
-                        projected_verts[face.verts[2]].0,
-                        projected_verts[face.verts[3]].0,
-                    ];
-                    if point_in_quad(pos, &points) {
-                        hovered_face_idx = Some(idx);
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Draw the cube faces
-        for &(_idx, face, _) in &sorted_faces {
-            let points = vec![
-                projected_verts[face.verts[0]].0,
-                projected_verts[face.verts[1]].0,
-                projected_verts[face.verts[2]].0,
-                projected_verts[face.verts[3]].0,
-            ];
-
-            let is_selected = face.plane == self.three_d_drawing_plane;
-            let is_hovered = hovered_face_idx == Some(_idx);
-
-            // Dynamic shading based on face normal
-            let normal_3d = face.normal;
-            let light_dir = (0.5, 0.7, 1.0);
-            let dp = normal_3d.0 * light_dir.0 + normal_3d.1 * light_dir.1 + normal_3d.2 * light_dir.2;
-            let shade_factor = (dp + 1.0) / 2.0;
-
-            let base_color = if is_selected {
-                self.theme.accent.gamma_multiply(0.8)
-            } else {
-                egui::Color32::from_gray((160.0 + shade_factor * 60.0) as u8)
-            };
-
-            let face_color = if is_hovered {
-                base_color.linear_multiply(1.2)
-            } else {
-                base_color
-            };
-
-            let stroke_color = self.theme.border;
-            painter.add(egui::Shape::convex_polygon(
-                points.clone(),
-                face_color,
-                egui::Stroke::new(1.0, stroke_color),
-            ));
-
-            // Draw face label text
-            let mut cx_sum = 0.0;
-            let mut cy_sum = 0.0;
-            for p in &points { cx_sum += p.x; cy_sum += p.y; }
-            let centroid = egui::Pos2::new(cx_sum / 4.0, cy_sum / 4.0);
-
-            let text_color = if is_selected {
-                self.theme.bg
-            } else {
-                self.theme.fg_desc
-            };
-
-            painter.text(
-                centroid,
-                egui::Align2::CENTER_CENTER,
-                face.name,
-                egui::FontId::new(9.0, egui::FontFamily::Proportional),
-                text_color,
-            );
-        }
-
-        // Draw Perspective/Orthographic text button below the view cube
-        let persp_text_pos = egui::Pos2::new(gizmo_center.x, gizmo_center.y + 45.0);
-        let persp_text_rect = egui::Rect::from_center_size(persp_text_pos, egui::Vec2::new(80.0, 16.0));
-        let persp_text_resp = ui.interact(persp_text_rect, egui::Id::new("three_d_persp_text_btn"), egui::Sense::click());
-        
-        let label_text = if self.three_d_perspective { "<- Persp" } else { "<- Ortho" };
-        let label_color = if persp_text_resp.hovered() { self.theme.fg } else { self.theme.fg_desc };
-        painter.text(
-            persp_text_pos,
-            egui::Align2::CENTER_CENTER,
-            label_text,
-            egui::FontId::new(9.0, egui::FontFamily::Proportional),
-            label_color,
-        );
-
-        // Draw active view name text below perspective button
-        let active_view_name = match self.three_d_view_mode {
-            1 => "Front View",
-            2 => "Right View",
-            3 => "Back View",
-            4 => "Left View",
-            0 => {
-                let rot_x = self.three_d_rotation_x;
-                if (rot_x - std::f32::consts::FRAC_PI_2).abs() < 0.1 {
-                    "Top View"
-                } else if (rot_x + std::f32::consts::FRAC_PI_2).abs() < 0.1 {
-                    "Bottom View"
-                } else {
-                    "Orbit View"
-                }
-            }
-            _ => "Orbit View",
-        };
-        let view_label_pos = egui::Pos2::new(gizmo_center.x, gizmo_center.y + 60.0);
-        painter.text(
-            view_label_pos,
-            egui::Align2::CENTER_CENTER,
-            active_view_name,
-            egui::FontId::new(9.5, egui::FontFamily::Proportional),
-            self.theme.accent,
-        );
-
-        // Handle clicking on a face or empty space
-        if ui.input(|i| i.pointer.primary_clicked()) {
-            let now = ui.input(|i| i.time);
-            if let Some(idx) = hovered_face_idx {
-                let face = &faces[idx];
-                self.three_d_drawing_plane = face.plane;
-                self.three_d_rotation_x = face.target_rot.0;
-                self.three_d_rotation_y = face.target_rot.1;
-                self.three_d_view_mode = face.target_view_mode;
-                self.three_d_perspective = false;
-                self.canvas_dirty = true;
-                self.last_gizmo_click_time = now;
-            } else if gizmo_rect.contains(pointer_pos.unwrap_or(egui::Pos2::new(-1.0, -1.0))) && !persp_text_rect.contains(pointer_pos.unwrap_or(egui::Pos2::new(-1.0, -1.0))) {
-                let since_last = now - self.last_gizmo_click_time;
-                self.last_gizmo_click_time = now;
-                if since_last < 0.4 {
-                    // Double-click empty space → reset to default isometric view
-                    self.three_d_rotation_x = -0.615;
-                    self.three_d_rotation_y = -0.785;
-                    self.three_d_view_mode = 1;
-                    self.three_d_perspective = false;
-                    self.three_d_drawing_plane = ThreeDDrawingPlane::TopBottom;
-                    self.project.active_layer = 0;
-                }
-                self.canvas_dirty = true;
-            } else if persp_text_resp.clicked() {
-                self.three_d_perspective = !self.three_d_perspective;
-                self.canvas_dirty = true;
-            }
-        }
-
-        if self.three_d_select_mode == Some(ThreeDSelectMode::Face) && !self.selected_faces.is_empty() {
-            let extrude_btn_rect = egui::Rect::from_min_size(
-                egui::Pos2::new(canvas_rect.min.x + 15.0, canvas_rect.max.y - 35.0),
-                egui::Vec2::new(90.0, 24.0),
-            );
-            
-            let shadow_color = egui::Color32::from_rgba_unmultiplied(0, 0, 0, 89);
-            painter.rect_filled(extrude_btn_rect.translate(egui::vec2(0.0, 2.0)), 6.0, shadow_color);
-            
-            let btn_resp = ui.interact(extrude_btn_rect, egui::Id::new("three_d_extrude_btn"), egui::Sense::click());
-            let btn_bg = if btn_resp.hovered() { self.theme.accent } else { self.theme.panel };
-            let text_color = if btn_resp.hovered() { self.theme.bg } else { self.theme.fg };
-            
-            painter.rect_filled(extrude_btn_rect, 6.0, btn_bg);
-            
-            painter.text(
-                extrude_btn_rect.center(),
-                egui::Align2::CENTER_CENTER,
-                "Extrude (E)",
-                egui::FontId::new(10.0, egui::FontFamily::Proportional),
-                text_color,
-            );
-            
-            if btn_resp.clicked() {
-                self.extrude_selected_faces();
-            }
-        }
-    }
-
-    /// Try to create triangular faces from the newly added vertex and nearby vertices.
-    /// Creates faces when 3 vertices are close enough to form a triangle.
     fn handle_canvas_input(&mut self, response: egui::Response, canvas_rect: egui::Rect) {
         let middle_down = response.ctx.input(|i| i.pointer.middle_down());
         let space_held  = response.ctx.input(|i| i.key_down(egui::Key::Space));
@@ -10925,94 +9525,6 @@ print("FAIL")
         let color = self.color_state.foreground;
         match &self.active_tool.clone() {
             ActiveTool::Pencil => {
-                // In 3D mode, pencil places vertices and creates edges
-                if false {
-                    let (x3d_h, y3d_h, z3d_h) = self.screen_to_3d_coord(pos, canvas_rect);
-                    
-                    let w = self.project.canvas_width as f32;
-                    let h = self.project.canvas_height as f32;
-                    let num_layers = self.project.active_frame_ref().layers.len() as f32;
-                    
-                    let x3d = x3d_h.round().clamp(0.0, w);
-                    let y3d = y3d_h.round().clamp(0.0, h);
-                    let z3d = z3d_h.round().clamp(0.0, num_layers);
-
-                    // Check if clicking on an existing vertex (within threshold)
-                    let threshold = 0.5;
-                    let existing_idx = self.project.active_mesh().vertices.iter().position(|v| {
-                        (v.x - x3d).abs() < threshold &&
-                        (v.y - y3d).abs() < threshold &&
-                        (v.z - z3d).abs() < threshold
-                    });
-
-                    if let Some(idx) = existing_idx {
-                        // Clicking on existing vertex
-                        if !self.drawing_chain.is_empty() && idx == self.drawing_chain[0] && self.drawing_chain.len() >= 3 {
-                            // Close the loop - create a face
-                            let face = crate::project::Face3D {
-                                vertex_indices: self.drawing_chain.clone(),
-                                color,
-                            };
-                            self.project.active_mesh_mut().faces.push(face.clone());
-                            self.undo_stack.push(crate::history::Command::AddFace3D {
-                                animation_id: ai,
-                                frame_id: fi,
-                                face,
-                            });
-                            self.drawing_chain.clear();
-                        } else if !self.drawing_chain.is_empty() {
-                            // Add edge from last vertex to this one
-                            let last_idx = *self.drawing_chain.last().unwrap();
-                            if last_idx != idx {
-                                let edge = crate::project::Edge3D { v1: last_idx, v2: idx };
-                                // Check if edge already exists
-                                let edge_exists = self.project.active_mesh().edges.iter().any(|e| {
-                                    (e.v1 == last_idx && e.v2 == idx) || (e.v1 == idx && e.v2 == last_idx)
-                                });
-                                if !edge_exists {
-                                    self.project.active_mesh_mut().edges.push(edge);
-                                    self.undo_stack.push(crate::history::Command::AddEdge3D {
-                                        animation_id: ai,
-                                        frame_id: fi,
-                                        edge,
-                                    });
-                                }
-                                self.drawing_chain.push(idx);
-                            }
-                        }
-                    } else {
-                        // Clicking on empty space - create new vertex
-                        let new_idx = self.project.active_mesh().vertices.len();
-                        let vertex = crate::project::Vertex3D {
-                            x: x3d,
-                            y: y3d,
-                            z: z3d,
-                        };
-                        self.project.active_mesh_mut().vertices.push(vertex);
-                        self.undo_stack.push(crate::history::Command::AddVertex3D {
-                            animation_id: ai,
-                            frame_id: fi,
-                            vertex,
-                        });
-
-                        // Add edge from last vertex in chain to new vertex
-                        if !self.drawing_chain.is_empty() {
-                            let last_idx = *self.drawing_chain.last().unwrap();
-                            let edge = crate::project::Edge3D { v1: last_idx, v2: new_idx };
-                            self.project.active_mesh_mut().edges.push(edge);
-                            self.undo_stack.push(crate::history::Command::AddEdge3D {
-                                animation_id: ai,
-                                frame_id: fi,
-                                edge,
-                            });
-                        }
-
-                        self.drawing_chain.push(new_idx);
-                    }
-
-                    self.canvas_dirty = true;
-                    self.last_pencil_pos = Some((px, py));
-                } else {
                     // Normal mode pencil behavior
                     let is_animated_brush = self.active_brush_index
                         .and_then(|idx| self.brushes.get(idx))
@@ -11123,7 +9635,6 @@ print("FAIL")
                             }
                         }
                     }
-                }
                 self.last_pencil_pos = Some((px, py));
                 self.canvas_dirty = true;
             }
@@ -11999,7 +10510,7 @@ print("FAIL")
                         ui.add_space(8.0);
 
                         // ── Width / Height / Stack Height with lock ──
-                        let is_sprite_stack = self.new_project_mode == crate::project::ProjectMode::SpriteStack || false;
+                        let is_sprite_stack = self.new_project_mode == crate::project::ProjectMode::SpriteStack;
                         let num_rows = if is_sprite_stack { 3.0 } else { 2.0 };
                         let total_h = row_h * num_rows + gap * (num_rows - 1.0);
 
@@ -12137,7 +10648,7 @@ print("FAIL")
                                     egui::Layout::top_down(egui::Align::TOP),
                                     |ui| {
                                         let alloc_rect = ui.max_rect();
-                                        let is_sprite_stack = self.new_project_mode == crate::project::ProjectMode::SpriteStack || false;
+                                        let is_sprite_stack = self.new_project_mode == crate::project::ProjectMode::SpriteStack;
                                         let lock_cy = if is_sprite_stack {
                                             alloc_rect.top() + row_h + gap + row_h / 2.0
                                         } else {
@@ -12442,7 +10953,7 @@ print("FAIL")
                                  if create_resp.clicked() {
                                      let tile_w = self.new_width;
                                      let tile_h = self.new_height;
-                                      let (tiles_w, tiles_h) = if self.new_project_mode == crate::project::ProjectMode::SpriteStack || false {
+                                      let (tiles_w, tiles_h) = if self.new_project_mode == crate::project::ProjectMode::SpriteStack {
                                           (1, 1)
                                       } else {
                                           (self.new_tiles_w, self.new_tiles_h)
@@ -12450,7 +10961,7 @@ print("FAIL")
                                       let cw = tile_w * tiles_w;
                                       let ch = tile_h * tiles_h;
                                        let mut new_proj = Project::new_tiled_with_mode(cw, ch, self.new_name.clone(), tiles_w, tiles_h, tile_w, tile_h, self.new_project_mode);
-                                       if self.new_project_mode == crate::project::ProjectMode::SpriteStack || false {
+                                       if self.new_project_mode == crate::project::ProjectMode::SpriteStack {
                                          let stack_h = self.new_sprite_stack_height.max(1);
                                          new_proj.sprite_stack_max_layers = Some(stack_h);
                                          for anim in &mut new_proj.animations {
@@ -12521,61 +11032,6 @@ print("FAIL")
         }
     }
 
-    /// Intersect the click ray with a vertical plane at X = grid_x.
-    /// Returns (y, z) coordinates on that plane.
-    fn screen_to_grid_plane_coord(&self, pos: egui::Pos2, canvas_rect: egui::Rect, grid_x: f32) -> (f32, f32) {
-        let w = self.project.canvas_width as f32;
-        let h = self.project.canvas_height as f32;
-        let num_layers = self.project.active_frame_ref().layers.len() as f32;
-        let center_pos = canvas_rect.center() + self.canvas.offset;
-
-        let dx = (pos.x - center_pos.x) / self.canvas.zoom;
-        let dy = (pos.y - center_pos.y) / self.canvas.zoom;
-
-        // In Front view (mode 1): screen x → world x, screen y → world z
-        // The vertical plane is at X = grid_x, in Y-Z space
-        // We need to solve: given dx, dy (screen), and X = grid_x, find Y and Z
-        
-        if self.three_d_view_mode > 0 {
-            let cos_x = self.three_d_rotation_x.cos();
-            let sin_x = self.three_d_rotation_x.sin();
-            let cos_y = self.three_d_rotation_y.cos();
-            let sin_y = self.three_d_rotation_y.sin();
-
-            let cx = grid_x - w / 2.0;
-            let sy_const = 0.0; // We're solving at the grid's Y=0 reference point
-            
-            // Forward projection: screen_x = (cx*cos_y - cy*sin_y) * zoom
-            // screen_y = -(cz*cos_x + (cx*sin_y + cy*cos_y)*sin_x) * zoom
-            // Given cx (grid_x), solve for cy and cz from dx, dy
-            
-            // From screen_x equation: dx = cx*cos_y - cy*sin_y
-            // cy = (cx*cos_y - dx) / sin_y  (if sin_y != 0)
-            // From screen_y equation: dy = -(cz*cos_x + (cx*sin_y + cy*cos_y)*sin_x)
-            
-            let cy = if sin_y.abs() > 0.01 {
-                (cx * cos_y - dx) / sin_y
-            } else {
-                // sin_y ≈ 0, cos_y ≈ 1 or ≈ -1
-                // dx = cx * cos_y, so cx ≈ dx / cos_y
-                // No Y info available in this case, use center
-                h / 2.0 - cx
-            };
-            
-            // Now solve for cz
-            let inner = cx * sin_y + cy * cos_y;
-            let cz = if cos_x.abs() > 0.01 {
-                -(dy + inner * sin_x) / cos_x
-            } else {
-                num_layers / 2.0
-            };
-            
-            (cy + h / 2.0, cz + num_layers / 2.0)
-        } else {
-            // Top-down view: screen maps directly to X-Y, Z is from layer
-            (dx + h / 2.0, 0.0)
-        }
-    }
 
     fn draw_resize_tilemap_dialog(&mut self, ctx: &egui::Context) {
         if !self.show_resize_tilemap_dialog {
@@ -14180,57 +12636,6 @@ impl eframe::App for App {
                 self.canvas_dirty = true;
             }
 
-            // 3D camera side snapping key shortcuts
-            if false {
-                if ctx.input(|i| i.key_pressed(egui::Key::Num1)) {
-                    self.three_d_drawing_plane = ThreeDDrawingPlane::FrontBack;
-                    self.three_d_rotation_x = 0.0;
-                    self.three_d_rotation_y = 0.0;
-                    self.three_d_view_mode = 1;
-                    self.three_d_perspective = false;
-                    self.canvas_dirty = true;
-                }
-                if ctx.input(|i| i.key_pressed(egui::Key::Num2)) {
-                    self.three_d_drawing_plane = ThreeDDrawingPlane::FrontBack;
-                    self.three_d_rotation_x = 0.0;
-                    self.three_d_rotation_y = 0.0;
-                    self.three_d_view_mode = 3;
-                    self.three_d_perspective = false;
-                    self.canvas_dirty = true;
-                }
-                if ctx.input(|i| i.key_pressed(egui::Key::Num3)) {
-                    self.three_d_drawing_plane = ThreeDDrawingPlane::LeftRight;
-                    self.three_d_rotation_x = 0.0;
-                    self.three_d_rotation_y = 0.0;
-                    self.three_d_view_mode = 4;
-                    self.three_d_perspective = false;
-                    self.canvas_dirty = true;
-                }
-                if ctx.input(|i| i.key_pressed(egui::Key::Num4)) {
-                    self.three_d_drawing_plane = ThreeDDrawingPlane::LeftRight;
-                    self.three_d_rotation_x = 0.0;
-                    self.three_d_rotation_y = 0.0;
-                    self.three_d_view_mode = 2;
-                    self.three_d_perspective = false;
-                    self.canvas_dirty = true;
-                }
-                if ctx.input(|i| i.key_pressed(egui::Key::Num5)) {
-                    self.three_d_drawing_plane = ThreeDDrawingPlane::TopBottom;
-                    self.three_d_rotation_x = std::f32::consts::FRAC_PI_2;
-                    self.three_d_rotation_y = 0.0;
-                    self.three_d_view_mode = 0;
-                    self.three_d_perspective = false;
-                    self.canvas_dirty = true;
-                }
-                if ctx.input(|i| i.key_pressed(egui::Key::Num6)) {
-                    self.three_d_drawing_plane = ThreeDDrawingPlane::TopBottom;
-                    self.three_d_rotation_x = -std::f32::consts::FRAC_PI_2;
-                    self.three_d_rotation_y = 0.0;
-                    self.three_d_view_mode = 0;
-                    self.three_d_perspective = false;
-                    self.canvas_dirty = true;
-                }
-            }
         }
 
         if file_new  { self.open_new_dialog(false); }

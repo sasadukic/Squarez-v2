@@ -5,7 +5,7 @@ use serde::Deserialize;
 use crate::project::{Animation, BlendMode, Frame, Layer, Project};
 
 const MAGIC: &[u8; 4] = b"SQR\0";
-const VERSION: u8 = 1;
+const VERSION: u8 = 2;
 
 pub fn save_sqr(project: &Project, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let encoded = bincode::serialize(project)?;
@@ -23,23 +23,134 @@ pub fn load_sqr(path: &Path) -> Result<Project, Box<dyn std::error::Error>> {
     if file.read_exact(&mut magic).is_ok() && &magic == MAGIC {
         let mut version = [0u8; 1];
         file.read_exact(&mut version)?;
-        if version[0] != VERSION {
-            return Err(format!("Unsupported .sqr version: {}", version[0]).into());
-        }
         let mut compressed = Vec::new();
         file.read_to_end(&mut compressed)?;
         let decoded = lz4_flex::decompress_size_prepended(&compressed)?;
-        match bincode::deserialize::<Project>(&decoded) {
-            Ok(project) => Ok(project),
-            Err(current_error) => match bincode::deserialize::<LegacyProjectV1>(&decoded) {
+        match version[0] {
+            // Version 2: current Project layout (Frame has no mesh; Project has mesh3d).
+            2 => Ok(bincode::deserialize::<Project>(&decoded)?),
+            // Version 1: bincode is positional, so old payloads must be decoded through
+            // exact structural mirrors of the layouts that produced them.
+            1 => match bincode::deserialize::<LegacyProjectV2>(&decoded) {
                 Ok(legacy) => Ok(legacy.into_project()),
-                Err(_) => Err(Box::new(current_error)),
+                Err(v2_error) => match bincode::deserialize::<LegacyProjectV1>(&decoded) {
+                    Ok(legacy) => Ok(legacy.into_project()),
+                    Err(_) => Err(Box::new(v2_error)),
+                },
             },
+            v => Err(format!("Unsupported .sqr version: {}", v).into()),
         }
     } else {
         match crate::io::v2::load_v2(path) {
             Ok(project) => Ok(project),
             Err(e) => Err(Box::new(e)),
+        }
+    }
+}
+
+// ── Version-1 payload, late layout ────────────────────────────────────────────
+// Exact mirror of the Project layout the last v1-writing builds serialized:
+// every Frame carried a Mesh3D (vertices/edges/faces). The mesh was only ever
+// written by a long-removed feature and is discarded on load.
+
+#[derive(Debug, Clone, Deserialize)]
+struct LegacyProjectV2 {
+    name: String,
+    canvas_width: u32,
+    canvas_height: u32,
+    palette: Vec<[u8; 4]>,
+    animations: Vec<LegacyAnimationV2>,
+    active_animation: usize,
+    active_frame: usize,
+    active_layer: usize,
+    layer_id_counter: u64,
+    tiles_w: u32,
+    tiles_h: u32,
+    tile_w: u32,
+    tile_h: u32,
+    mode: LegacyProjectModeV2,
+    sprite_stack_max_layers: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+enum LegacyProjectModeV2 {
+    Normal,
+    SpriteStack,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LegacyAnimationV2 {
+    name: String,
+    fps: u8,
+    frames: Vec<LegacyFrameV2>,
+    tile_start: usize,
+    tile_end: usize,
+    tile_visible: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LegacyFrameV2 {
+    duration_ms: u32,
+    layers: Vec<Layer>,
+    #[allow(dead_code)]
+    mesh: LegacyMesh3D,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LegacyMesh3D {
+    #[allow(dead_code)]
+    vertices: Vec<(f32, f32, f32)>,
+    #[allow(dead_code)]
+    edges: Vec<(u64, u64)>,
+    #[allow(dead_code)]
+    faces: Vec<LegacyFace3D>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LegacyFace3D {
+    #[allow(dead_code)]
+    vertex_indices: Vec<u64>,
+    #[allow(dead_code)]
+    color: [u8; 4],
+}
+
+impl LegacyProjectV2 {
+    fn into_project(self) -> Project {
+        Project {
+            name: self.name,
+            canvas_width: self.canvas_width,
+            canvas_height: self.canvas_height,
+            palette: self.palette,
+            animations: self
+                .animations
+                .into_iter()
+                .map(|a| Animation {
+                    name: a.name,
+                    fps: a.fps,
+                    frames: a
+                        .frames
+                        .into_iter()
+                        .map(|f| Frame { duration_ms: f.duration_ms, layers: f.layers, dirty: true })
+                        .collect(),
+                    tile_start: a.tile_start,
+                    tile_end: a.tile_end,
+                    tile_visible: a.tile_visible,
+                })
+                .collect(),
+            active_animation: self.active_animation,
+            active_frame: self.active_frame,
+            active_layer: self.active_layer,
+            layer_id_counter: self.layer_id_counter,
+            tiles_w: self.tiles_w,
+            tiles_h: self.tiles_h,
+            tile_w: self.tile_w,
+            tile_h: self.tile_h,
+            mode: match self.mode {
+                LegacyProjectModeV2::Normal => crate::project::ProjectMode::Normal,
+                LegacyProjectModeV2::SpriteStack => crate::project::ProjectMode::SpriteStack,
+            },
+            sprite_stack_max_layers: self.sprite_stack_max_layers,
+            mesh3d: None,
         }
     }
 }
@@ -74,6 +185,7 @@ impl LegacyProjectV1 {
             tile_h: 0,
             mode: crate::project::ProjectMode::Normal,
             sprite_stack_max_layers: None,
+            mesh3d: None,
         }
     }
 }
@@ -109,7 +221,6 @@ impl LegacyFrameV1 {
         Frame {
             duration_ms: self.duration_ms,
             layers: self.layers.into_iter().map(LegacyLayerV1::into_layer).collect(),
-            mesh: crate::project::Mesh3D::default(),
             dirty: true,
         }
     }

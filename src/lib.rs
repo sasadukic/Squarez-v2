@@ -11,6 +11,7 @@ pub mod history;
 pub mod layers;
 pub mod animation;
 pub mod tools;
+pub mod three_d;
 pub mod color;
 pub mod io;
 pub mod ui_state;
