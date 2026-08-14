@@ -525,8 +525,19 @@ pub fn draw(
         }
     }
 
-    // View label + tool hints (bottom-left corner of the workspace)
+    // Prominent view name while snapped (Blender-style viewport label)
     let cam_now = state.camera;
+    if let Some(view) = cam_now.snapped() {
+        painter.text(
+            Pos2::new(canvas_rect.center().x, canvas_rect.top() + 10.0),
+            egui::Align2::CENTER_TOP,
+            format!("{} Orthographic", view.label()),
+            egui::FontId::proportional(15.0),
+            theme.fg,
+        );
+    }
+
+    // View label + tool hints (bottom-left corner of the workspace)
     let label = match cam_now.snapped() {
         Some(v) => v.label().to_string(),
         None => "Orbit".to_string(),

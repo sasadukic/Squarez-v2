@@ -8,15 +8,12 @@
 use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2};
 
 use super::camera::{Camera3D, SnapView};
+use super::render::{AXIS_X, AXIS_Y, AXIS_Z};
 use crate::theme::Theme;
 
 const RADIUS: f32 = 42.0;
 const BALL_ORBIT: f32 = 30.0;
 const BALL_R: f32 = 8.0;
-
-const AXIS_X: Color32 = Color32::from_rgb(226, 84, 84);
-const AXIS_Y: Color32 = Color32::from_rgb(108, 194, 92);
-const AXIS_Z: Color32 = Color32::from_rgb(94, 136, 226);
 
 struct Ball {
     dir: [f32; 3],

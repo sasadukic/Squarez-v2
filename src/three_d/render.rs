@@ -7,9 +7,14 @@
 
 use egui::{Color32, Pos2, Rect, Stroke};
 
-use super::camera::Camera3D;
+use super::camera::{Camera3D, SnapView};
 use super::mesh::Mesh;
 use crate::theme::Theme;
+
+/// Axis colors, shared with the navigation gizmo (Blender convention).
+pub const AXIS_X: Color32 = Color32::from_rgb(226, 84, 84);
+pub const AXIS_Y: Color32 = Color32::from_rgb(108, 194, 92);
+pub const AXIS_Z: Color32 = Color32::from_rgb(94, 136, 226);
 
 #[derive(Debug, Clone, Copy)]
 pub struct SceneTri {
@@ -104,22 +109,50 @@ pub fn paint_scene(painter: &egui::Painter, scene: &Scene, texture_id: egui::Tex
     painter.add(egui::Shape::mesh(em));
 }
 
-/// Faint XZ grid floor with highlighted origin axes.
+fn axis_color(dir: [f32; 3]) -> Color32 {
+    if dir[0] != 0.0 {
+        AXIS_X
+    } else if dir[1] != 0.0 {
+        AXIS_Y
+    } else {
+        AXIS_Z
+    }
+}
+
+/// 1-world-unit grid with highlighted origin axes. In free orbit this is the
+/// XZ floor; in a snapped view it lies in the view plane through the origin
+/// (Blender-style), so it coincides exactly with the integer grid that
+/// vertex/face drags snap to.
 pub fn paint_grid(painter: &egui::Painter, cam: &Camera3D, rect: Rect, theme: &Theme) {
     const EXTENT: i32 = 16;
+    // (u_dir, v_dir): the two world axes spanning the grid plane.
+    let (u_dir, v_dir): ([f32; 3], [f32; 3]) = match cam.snapped() {
+        Some(SnapView::Front) | Some(SnapView::Back) => ([1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
+        Some(SnapView::Left) | Some(SnapView::Right) => ([0.0, 0.0, 1.0], [0.0, 1.0, 0.0]),
+        // Top/Bottom and free orbit: the XZ floor.
+        _ => ([1.0, 0.0, 0.0], [0.0, 0.0, 1.0]),
+    };
     let grid_stroke = Stroke::new(0.5, theme.muted.gamma_multiply(0.25));
-    let axis_x = Stroke::new(1.0, Color32::from_rgb(190, 90, 90).gamma_multiply(0.6));
-    let axis_z = Stroke::new(1.0, Color32::from_rgb(90, 120, 190).gamma_multiply(0.6));
+    let u_axis = Stroke::new(1.0, axis_color(u_dir).gamma_multiply(0.6));
+    let v_axis = Stroke::new(1.0, axis_color(v_dir).gamma_multiply(0.6));
     let e = EXTENT as f32;
+    let at = |u: f32, v: f32| -> [f32; 3] {
+        [
+            u_dir[0] * u + v_dir[0] * v,
+            u_dir[1] * u + v_dir[1] * v,
+            u_dir[2] * u + v_dir[2] * v,
+        ]
+    };
     for i in -EXTENT..=EXTENT {
         let t = i as f32;
-        let (a, _) = cam.project([t, 0.0, -e], rect);
-        let (b, _) = cam.project([t, 0.0, e], rect);
-        let (c, _) = cam.project([-e, 0.0, t], rect);
-        let (d, _) = cam.project([e, 0.0, t], rect);
+        // Lines of constant u run along v_dir, and vice versa.
+        let (a, _) = cam.project(at(t, -e), rect);
+        let (b, _) = cam.project(at(t, e), rect);
+        let (c, _) = cam.project(at(-e, t), rect);
+        let (d, _) = cam.project(at(e, t), rect);
         if i == 0 {
-            painter.line_segment([a, b], axis_z);
-            painter.line_segment([c, d], axis_x);
+            painter.line_segment([a, b], v_axis);
+            painter.line_segment([c, d], u_axis);
         } else {
             painter.line_segment([a, b], grid_stroke);
             painter.line_segment([c, d], grid_stroke);
