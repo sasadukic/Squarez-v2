@@ -29,6 +29,8 @@ pub struct SceneTri {
     /// Per-channel lighting tint multiplied into the texture
     /// ([1, 1, 1] = unlit). Lit faces lean warm, shadowed faces cool.
     pub shade: [f32; 3],
+    /// Front-facing (outside) surface; false = dimmed interior.
+    pub front: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -110,11 +112,17 @@ pub fn build_scene(mesh: &Mesh, cam: &Camera3D, rect: Rect, atlas: (u32, u32)) -
                 depth: (a.2 + b.2 + c.2) / 3.0,
                 face: fi as u32,
                 shade,
+                front,
             });
         }
     }
 
-    scene.tris.sort_by(|a, b| a.depth.total_cmp(&b.depth));
+    // Two passes: every interior triangle first, then front triangles,
+    // each far-to-near — interiors can never overdraw the outside, which
+    // avoids average-depth misorders at corners.
+    scene
+        .tris
+        .sort_by(|a, b| a.front.cmp(&b.front).then(a.depth.total_cmp(&b.depth)));
     scene
 }
 

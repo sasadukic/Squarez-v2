@@ -202,7 +202,11 @@ fn orbit_view_sorts_far_to_near() {
     let scene = build_scene(&mesh, &cam, rect100(), (64, 64));
     assert!(scene.visible_faces.len() >= 2);
     for pair in scene.tris.windows(2) {
-        assert!(pair[0].depth <= pair[1].depth, "tris not sorted far-to-near");
+        // Interior pass first, then fronts; far-to-near within each pass.
+        assert!(!pair[0].front | pair[1].front, "front tri drawn before an interior tri");
+        if pair[0].front == pair[1].front {
+            assert!(pair[0].depth <= pair[1].depth, "tris not sorted far-to-near");
+        }
     }
 }
 
