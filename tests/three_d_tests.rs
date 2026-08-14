@@ -185,9 +185,10 @@ fn front_view_scene_shows_only_front_face() {
     mesh.allocate_all_islands((64, 64)).unwrap();
     let cam = cam_at(SnapView::Front, 4.0);
     let scene = build_scene(&mesh, &cam, rect100(), (64, 64));
-    // Only the +Z face survives: side faces are edge-on (culled), back faces away.
+    // Only the +Z face is front-facing; the -Z face renders as a dimmed
+    // interior surface, side faces are edge-on (degenerate, skipped).
     assert_eq!(scene.visible_faces.len(), 1);
-    assert_eq!(scene.tris.len(), 2);
+    assert_eq!(scene.tris.len(), 4);
     let fi = scene.visible_faces[0] as usize;
     let n = mesh.face_normal(&mesh.faces[fi]);
     assert!(n[2] > 0.0, "visible face should be +Z, normal {:?}", n);
@@ -440,17 +441,32 @@ fn orbit_views_shade_faces_snap_views_do_not() {
     // Orbit: multiple visible faces with distinct shades in a sane range.
     let orbit = Camera3D::default();
     let scene = build_scene(&mesh, &orbit, rect100(), (64, 64));
-    let mut greens: Vec<f32> = scene.tris.iter().map(|t| t.shade[1]).collect();
+    let front: std::collections::HashSet<u32> = scene.visible_faces.iter().copied().collect();
+    let mut greens: Vec<f32> = scene
+        .tris
+        .iter()
+        .filter(|t| front.contains(&t.face))
+        .map(|t| t.shade[1])
+        .collect();
     greens.sort_by(f32::total_cmp);
     greens.dedup_by(|a, b| (*a - *b).abs() < 1e-4);
     assert!(greens.len() >= 2, "orbit view should shade faces differently: {:?}", greens);
     for tri in &scene.tris {
-        assert!(tri.shade.iter().all(|&c| (0.4..=1.0).contains(&c)), "shade {:?}", tri.shade);
+        let range = if front.contains(&tri.face) { 0.4..=1.0 } else { 0.2..=0.5 };
+        assert!(tri.shade.iter().all(|c| range.contains(c)), "shade {:?}", tri.shade);
     }
-    // Snap view: unlit so texel colors read true while painting.
+    // Snap view: front faces unlit so texel colors read true while
+    // painting; interior (backface) surfaces render dimmed.
     let snap = cam_at(SnapView::Front, 4.0);
     let scene = build_scene(&mesh, &snap, rect100(), (64, 64));
-    assert!(scene.tris.iter().all(|t| t.shade == [1.0, 1.0, 1.0]));
+    let front: std::collections::HashSet<u32> = scene.visible_faces.iter().copied().collect();
+    for t in &scene.tris {
+        if front.contains(&t.face) {
+            assert_eq!(t.shade, [1.0, 1.0, 1.0]);
+        } else {
+            assert_eq!(t.shade, [0.5, 0.5, 0.5]);
+        }
+    }
 }
 
 // ── New modeling op tests: extrude_n, inset, loop cut, create face ───────────

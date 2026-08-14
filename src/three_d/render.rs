@@ -57,11 +57,11 @@ pub fn build_scene(mesh: &Mesh, cam: &Camera3D, rect: Rect, atlas: (u32, u32)) -
 
     for (fi, face) in mesh.faces.iter().enumerate() {
         let n = cam.view_dir(mesh.face_normal(face));
-        if n[2] <= 0.0 {
-            continue; // backface
+        let front = n[2] > 0.0;
+        if front {
+            scene.visible_faces.push(fi as u32);
         }
-        scene.visible_faces.push(fi as u32);
-        let shade = if unlit {
+        let mut shade = if unlit {
             [1.0, 1.0, 1.0]
         } else {
             let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(1e-6);
@@ -73,6 +73,11 @@ pub fn build_scene(mesh: &Mesh, cam: &Camera3D, rect: Rect, atlas: (u32, u32)) -
                 level * (COOL[2] + (WARM[2] - COOL[2]) * lambert),
             ]
         };
+        if !front {
+            // Interior surfaces (seen through holes) render dimmed so the
+            // inside of an open shell is visible but clearly "inside".
+            shade = [shade[0] * 0.5, shade[1] * 0.5, shade[2] * 0.5];
+        }
 
         // Screen positions + per-corner normalized UVs via the face's plane basis.
         let basis = mesh.face_plane_basis(face);
