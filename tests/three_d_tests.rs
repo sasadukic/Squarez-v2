@@ -433,16 +433,18 @@ fn mesh_edit_command_replays_both_directions() {
 fn orbit_views_shade_faces_snap_views_do_not() {
     let mut mesh = Mesh::cube(8);
     mesh.allocate_all_islands((64, 64)).unwrap();
-    // Orbit: multiple visible faces with distinct, sub-1.0 shades.
+    // Orbit: multiple visible faces with distinct shades in a sane range.
     let orbit = Camera3D::default();
     let scene = build_scene(&mesh, &orbit, rect100(), (64, 64));
-    let mut shades: Vec<f32> = scene.tris.iter().map(|t| t.shade).collect();
-    shades.sort_by(f32::total_cmp);
-    shades.dedup_by(|a, b| (*a - *b).abs() < 1e-4);
-    assert!(shades.len() >= 2, "orbit view should shade faces differently: {:?}", shades);
-    assert!(shades.iter().all(|&s| (0.55..=1.0).contains(&s)));
+    let mut greens: Vec<f32> = scene.tris.iter().map(|t| t.shade[1]).collect();
+    greens.sort_by(f32::total_cmp);
+    greens.dedup_by(|a, b| (*a - *b).abs() < 1e-4);
+    assert!(greens.len() >= 2, "orbit view should shade faces differently: {:?}", greens);
+    for tri in &scene.tris {
+        assert!(tri.shade.iter().all(|&c| (0.4..=1.0).contains(&c)), "shade {:?}", tri.shade);
+    }
     // Snap view: unlit so texel colors read true while painting.
     let snap = cam_at(SnapView::Front, 4.0);
     let scene = build_scene(&mesh, &snap, rect100(), (64, 64));
-    assert!(scene.tris.iter().all(|t| t.shade == 1.0));
+    assert!(scene.tris.iter().all(|t| t.shade == [1.0, 1.0, 1.0]));
 }

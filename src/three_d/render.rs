@@ -26,8 +26,9 @@ pub struct SceneTri {
     pub depth: f32,
     /// Index of the face this triangle belongs to.
     pub face: u32,
-    /// Lighting factor multiplied into the texture (1.0 = unlit).
-    pub shade: f32,
+    /// Per-channel lighting tint multiplied into the texture
+    /// ([1, 1, 1] = unlit). Lit faces lean warm, shadowed faces cool.
+    pub shade: [f32; 3],
 }
 
 #[derive(Debug, Clone, Default)]
@@ -45,11 +46,14 @@ pub fn build_scene(mesh: &Mesh, cam: &Camera3D, rect: Rect, atlas: (u32, u32)) -
     let aw = atlas.0.max(1) as f32;
     let ah = atlas.1.max(1) as f32;
 
-    // Per-face lambert shading from a view-space light (top-left-front),
-    // like Blender's solid viewport. Snapped views render unlit so texel
-    // colors read true while painting.
+    // Per-face lighting from a view-space key light (top-left-front), like
+    // Blender's solid viewport — with a pixel-art touch: lit faces shift
+    // slightly warm, shadowed faces slightly cool, instead of a flat gray
+    // multiply. Snapped views render unlit so texel colors read true.
     let unlit = cam.snapped().is_some();
     const LIGHT: [f32; 3] = [-0.324, 0.417, 0.849]; // normalized
+    const WARM: [f32; 3] = [1.0, 0.985, 0.94];
+    const COOL: [f32; 3] = [0.9, 0.94, 1.0];
 
     for (fi, face) in mesh.faces.iter().enumerate() {
         let n = cam.view_dir(mesh.face_normal(face));
@@ -58,11 +62,16 @@ pub fn build_scene(mesh: &Mesh, cam: &Camera3D, rect: Rect, atlas: (u32, u32)) -
         }
         scene.visible_faces.push(fi as u32);
         let shade = if unlit {
-            1.0
+            [1.0, 1.0, 1.0]
         } else {
             let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(1e-6);
-            let lambert = (n[0] * LIGHT[0] + n[1] * LIGHT[1] + n[2] * LIGHT[2]) / len;
-            0.55 + 0.45 * lambert.max(0.0)
+            let lambert = ((n[0] * LIGHT[0] + n[1] * LIGHT[1] + n[2] * LIGHT[2]) / len).max(0.0);
+            let level = 0.55 + 0.45 * lambert;
+            [
+                level * (COOL[0] + (WARM[0] - COOL[0]) * lambert),
+                level * (COOL[1] + (WARM[1] - COOL[1]) * lambert),
+                level * (COOL[2] + (WARM[2] - COOL[2]) * lambert),
+            ]
         };
 
         // Screen positions + per-corner normalized UVs via the face's plane basis.
@@ -113,8 +122,11 @@ pub fn paint_scene(painter: &egui::Painter, scene: &Scene, texture_id: egui::Tex
     let mut em = egui::Mesh::with_texture(texture_id);
     for tri in &scene.tris {
         let base = em.vertices.len() as u32;
-        let level = (tri.shade.clamp(0.0, 1.0) * 255.0).round() as u8;
-        let tint = Color32::from_gray(level);
+        let tint = Color32::from_rgb(
+            (tri.shade[0].clamp(0.0, 1.0) * 255.0).round() as u8,
+            (tri.shade[1].clamp(0.0, 1.0) * 255.0).round() as u8,
+            (tri.shade[2].clamp(0.0, 1.0) * 255.0).round() as u8,
+        );
         for i in 0..3 {
             em.vertices.push(egui::epaint::Vertex {
                 pos: tri.pts[i],
@@ -178,7 +190,9 @@ pub fn paint_grid(painter: &egui::Painter, cam: &Camera3D, rect: Rect, theme: &T
     }
 }
 
-/// Wireframe over the visible faces.
+/// Edge overlay: a dark silhouette outline (edges bordering exactly one
+/// visible face) always, plus faint interior wireframe when requested
+/// (modeling tools need it; painting looks cleaner without).
 pub fn paint_wireframe(
     painter: &egui::Painter,
     mesh: &Mesh,
@@ -186,22 +200,63 @@ pub fn paint_wireframe(
     cam: &Camera3D,
     rect: Rect,
     theme: &Theme,
+    show_interior: bool,
 ) {
-    let stroke = Stroke::new(1.0, theme.muted.gamma_multiply(0.8));
-    let mut drawn: std::collections::HashSet<(u32, u32)> = std::collections::HashSet::new();
+    // Count how many visible faces borders each edge.
+    let mut edge_faces: std::collections::HashMap<(u32, u32), u32> = std::collections::HashMap::new();
     for &fi in &scene.visible_faces {
         let face = &mesh.faces[fi as usize];
         let k = face.verts.len();
         for i in 0..k {
             let a = face.verts[i];
             let b = face.verts[(i + 1) % k];
-            let key = (a.min(b), a.max(b));
-            if !drawn.insert(key) {
-                continue;
-            }
-            let (pa, _) = cam.project(mesh.vertices[a as usize], rect);
-            let (pb, _) = cam.project(mesh.vertices[b as usize], rect);
-            painter.line_segment([pa, pb], stroke);
+            *edge_faces.entry((a.min(b), a.max(b))).or_insert(0) += 1;
         }
+    }
+    let silhouette = Stroke::new(2.0, Color32::from_black_alpha(150));
+    let interior = Stroke::new(1.0, theme.muted.gamma_multiply(0.55));
+    for (&(a, b), &count) in &edge_faces {
+        let is_silhouette = count == 1;
+        if !is_silhouette && !show_interior {
+            continue;
+        }
+        let (pa, _) = cam.project(mesh.vertices[a as usize], rect);
+        let (pb, _) = cam.project(mesh.vertices[b as usize], rect);
+        painter.line_segment([pa, pb], if is_silhouette { silhouette } else { interior });
+    }
+}
+
+/// Soft fake contact shadow on the floor plane under the model.
+/// Skipped in snapped views (the floor disk would be edge-on anyway).
+pub fn paint_contact_shadow(painter: &egui::Painter, mesh: &Mesh, cam: &Camera3D, rect: Rect) {
+    if cam.snapped().is_some() || mesh.vertices.is_empty() {
+        return;
+    }
+    let (mut min_x, mut max_x) = (f32::MAX, f32::MIN);
+    let (mut min_z, mut max_z) = (f32::MAX, f32::MIN);
+    for v in &mesh.vertices {
+        min_x = min_x.min(v[0]);
+        max_x = max_x.max(v[0]);
+        min_z = min_z.min(v[2]);
+        max_z = max_z.max(v[2]);
+    }
+    let cx = (min_x + max_x) / 2.0;
+    let cz = (min_z + max_z) / 2.0;
+    let rx = ((max_x - min_x) / 2.0 + 0.8).max(1.0);
+    let rz = ((max_z - min_z) / 2.0 + 0.8).max(1.0);
+    // Three stacked translucent disks approximate a blurred shadow.
+    for (scale, alpha) in [(1.0, 16), (0.78, 20), (0.55, 24)] {
+        let pts: Vec<Pos2> = (0..24)
+            .map(|i| {
+                let a = i as f32 / 24.0 * std::f32::consts::TAU;
+                let world = [cx + a.cos() * rx * scale, 0.0, cz + a.sin() * rz * scale];
+                cam.project(world, rect).0
+            })
+            .collect();
+        painter.add(egui::Shape::convex_polygon(
+            pts,
+            Color32::from_black_alpha(alpha),
+            Stroke::NONE,
+        ));
     }
 }
