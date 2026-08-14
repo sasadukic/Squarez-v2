@@ -657,9 +657,9 @@ pub fn loop_cut(
     })
 }
 
-/// Create a face from 3–4 selected vertices (click order). Winding is
-/// auto-flipped to face away from the mesh centroid; the face gets a fresh
-/// checker island.
+/// Create a face from 3–4 selected vertices (any click order — the ring is
+/// sorted by angle around the shared plane). Winding is auto-flipped to
+/// face away from the mesh centroid; the face gets a fresh checker island.
 pub fn create_face(
     mesh: &Mesh,
     layer: &Layer,
@@ -675,7 +675,40 @@ pub fn create_face(
         return Ok(EditOutcome { mesh: out_mesh, ..Default::default() });
     }
 
-    let mut face = Face { verts: verts.to_vec(), island: Island::default() };
+    // Sort the vertices into a perimeter ring so any click order works
+    // (a zig-zag order would otherwise make a degenerate bowtie).
+    let pts: Vec<[f32; 3]> = verts.iter().map(|&vi| out_mesh.vertices[vi as usize]).collect();
+    let cross = |a: [f32; 3], b: [f32; 3]| -> [f32; 3] {
+        [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+    };
+    let sub = |a: [f32; 3], b: [f32; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let norm2 = |a: [f32; 3]| dot(a, a);
+    // Plane normal from any non-collinear triple.
+    let mut plane_n = cross(sub(pts[1], pts[0]), sub(pts[2], pts[0]));
+    if norm2(plane_n) < 1e-6 && pts.len() == 4 {
+        plane_n = cross(sub(pts[1], pts[0]), sub(pts[3], pts[0]));
+    }
+    if norm2(plane_n) < 1e-6 {
+        return Ok(EditOutcome { mesh: out_mesh, ..Default::default() }); // collinear
+    }
+    let k = pts.len() as f32;
+    let ring_center = pts.iter().fold([0.0f32; 3], |acc, p| {
+        [acc[0] + p[0] / k, acc[1] + p[1] / k, acc[2] + p[2] / k]
+    });
+    // In-plane basis for angular sorting.
+    let u_axis = sub(pts[0], ring_center);
+    let v_axis = cross(plane_n, u_axis);
+    let mut ordered: Vec<u32> = verts.to_vec();
+    ordered.sort_by(|&a, &b| {
+        let ang = |vi: u32| {
+            let d = sub(out_mesh.vertices[vi as usize], ring_center);
+            dot(d, v_axis).atan2(dot(d, u_axis))
+        };
+        ang(a).total_cmp(&ang(b))
+    });
+
+    let mut face = Face { verts: ordered, island: Island::default() };
     let n = out_mesh.face_normal(&face);
     if (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]) < 1e-6 {
         return Ok(EditOutcome { mesh: out_mesh, ..Default::default() }); // degenerate

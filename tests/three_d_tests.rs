@@ -562,3 +562,28 @@ fn create_face_rejects_degenerate_input() {
     assert_eq!(out.mesh.faces.len(), 6);
     assert!(out.pixel_edits.is_empty());
 }
+
+#[test]
+fn create_face_sorts_any_click_order() {
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands((128, 128)).unwrap();
+    let layer = Layer::new("Texture".to_string(), 128, 128);
+    let base = delete_faces(&mesh, &[1]); // remove the top
+    // Zig-zag click order (a bowtie if taken literally): 4,6 are opposite corners.
+    let out = create_face(&base.mesh, &layer, &[4, 6, 5, 7], (128, 128)).expect("fits");
+    assert_eq!(out.mesh.faces.len(), 6, "face must be created from zig-zag order");
+    let face = out.mesh.faces.last().unwrap();
+    let n = out.mesh.face_normal(face);
+    let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+    assert!(len > 1.0, "ring must be non-degenerate, |n| = {}", len);
+    assert!(n[1] > 0.0, "recreated top must point up");
+    // A proper ring: consecutive verts always differ in exactly one axis
+    // for this axis-aligned square (no diagonals).
+    for i in 0..4 {
+        let a = out.mesh.vertices[face.verts[i] as usize];
+        let b = out.mesh.vertices[face.verts[(i + 1) % 4] as usize];
+        let diffs = (0..3).filter(|&k| (a[k] - b[k]).abs() > 1e-4).count();
+        assert_eq!(diffs, 1, "ring edge {:?} -> {:?} is a diagonal", a, b);
+    }
+    out.mesh.validate().expect("valid");
+}
