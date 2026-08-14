@@ -1217,6 +1217,7 @@ impl App {
             || self.tab_resize_menu.is_some()
             || self.canvas_ctx_menu.is_some()
             || self.open_tool_submenu.is_some()
+            || self.open_add3d_menu
             || self.palette_browser.open
             || self.tile_browser.open
             || self.any_modal_open()
@@ -3013,8 +3014,17 @@ impl App {
             self.pending_add_primitive = Some(prim);
             self.add3d_group_current = prim;
             self.open_add3d_menu = false;
-        } else if resp.clicked_elsewhere() && !self.menu_was_open_at_frame_start {
-            self.open_add3d_menu = false;
+        } else {
+            // Click outside both the flyout and its slot → close.
+            let clicked_outside = ctx.input(|i| i.pointer.any_click()) && {
+                match ctx.input(|i| i.pointer.hover_pos()) {
+                    Some(p) => !resp.rect.contains(p) && !slot_rect.contains(p),
+                    None => false,
+                }
+            };
+            if clicked_outside {
+                self.open_add3d_menu = false;
+            }
         }
     }
 
