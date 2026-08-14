@@ -263,14 +263,57 @@ pub fn paint_wireframe(
         let is_silhouette = count == 1;
         let va = mesh.vertices[a as usize];
         let vb = mesh.vertices[b as usize];
-        let mid = [(va[0] + vb[0]) / 2.0, (va[1] + vb[1]) / 2.0, (va[2] + vb[2]) / 2.0];
-        let (pm, mid_depth) = cam.project(mid, rect);
-        if point_occluded(scene, pm, mid_depth) {
-            continue;
+        draw_edge_occlusion_clipped(
+            painter,
+            scene,
+            cam,
+            rect,
+            va,
+            vb,
+            if is_silhouette { silhouette } else { interior },
+        );
+    }
+}
+
+/// Draw only the visible runs of an edge: sample along its screen length
+/// and break the line wherever nearer geometry covers it. Depth varies
+/// linearly along a segment under orthographic projection, so the
+/// interpolated test is exact.
+fn draw_edge_occlusion_clipped(
+    painter: &egui::Painter,
+    scene: &Scene,
+    cam: &Camera3D,
+    rect: Rect,
+    va: [f32; 3],
+    vb: [f32; 3],
+    stroke: Stroke,
+) {
+    let (pa, da) = cam.project(va, rect);
+    let (pb, db) = cam.project(vb, rect);
+    let len = pa.distance(pb);
+    if len < 0.5 {
+        return;
+    }
+    let samples = ((len / 6.0).ceil() as usize).clamp(2, 40);
+    let mut run_start: Option<Pos2> = None;
+    let mut prev = pa;
+    for i in 0..=samples {
+        let t = i as f32 / samples as f32;
+        let p = Pos2::new(pa.x + (pb.x - pa.x) * t, pa.y + (pb.y - pa.y) * t);
+        let d = da + (db - da) * t;
+        let visible = !point_occluded(scene, p, d);
+        match (visible, run_start) {
+            (true, None) => run_start = Some(p),
+            (false, Some(start)) => {
+                painter.line_segment([start, prev], stroke);
+                run_start = None;
+            }
+            _ => {}
         }
-        let (pa, _) = cam.project(va, rect);
-        let (pb, _) = cam.project(vb, rect);
-        painter.line_segment([pa, pb], if is_silhouette { silhouette } else { interior });
+        prev = p;
+    }
+    if let Some(start) = run_start {
+        painter.line_segment([start, pb], stroke);
     }
 }
 
