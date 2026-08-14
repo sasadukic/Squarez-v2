@@ -31,6 +31,8 @@ pub struct SceneTri {
     pub shade: [f32; 3],
     /// Front-facing (outside) surface; false = dimmed interior.
     pub front: bool,
+    /// Per-corner view-space z, for interpolated occlusion tests.
+    pub depths: [f32; 3],
 }
 
 #[derive(Debug, Clone, Default)]
@@ -113,6 +115,7 @@ pub fn build_scene(mesh: &Mesh, cam: &Camera3D, rect: Rect, atlas: (u32, u32)) -
                 face: fi as u32,
                 shade,
                 front,
+                depths: [a.2, b.2, c.2],
             });
         }
     }
@@ -203,9 +206,38 @@ pub fn paint_grid(painter: &egui::Painter, cam: &Camera3D, rect: Rect, theme: &T
     }
 }
 
+/// Is the screen point at `depth` hidden behind a strictly nearer triangle?
+/// Uses interpolated per-corner depths so slanted occluders test exactly.
+pub fn point_occluded(scene: &Scene, p: Pos2, depth: f32) -> bool {
+    const EPS: f32 = 0.05;
+    for tri in &scene.tris {
+        let [t0, t1, t2] = tri.pts;
+        let v0 = t1 - t0;
+        let v1 = t2 - t0;
+        let v2 = p - t0;
+        let denom = v0.x * v1.y - v1.x * v0.y;
+        if denom.abs() < 1e-6 {
+            continue;
+        }
+        let b1 = (v2.x * v1.y - v1.x * v2.y) / denom;
+        let b2 = (v0.x * v2.y - v2.x * v0.y) / denom;
+        let b0 = 1.0 - b1 - b2;
+        // Strict interior: boundary points (the edge's own faces) don't count.
+        if b0 <= 0.01 || b1 <= 0.01 || b2 <= 0.01 {
+            continue;
+        }
+        let tri_depth = b0 * tri.depths[0] + b1 * tri.depths[1] + b2 * tri.depths[2];
+        if tri_depth > depth + EPS {
+            return true;
+        }
+    }
+    false
+}
+
 /// Edge overlay: a dark silhouette outline (edges bordering exactly one
 /// visible face) plus a faint interior wireframe, so topology (loop cuts,
-/// insets) stays visible with every tool.
+/// insets) stays visible with every tool. Edges hidden behind nearer
+/// geometry are skipped (midpoint occlusion test).
 pub fn paint_wireframe(
     painter: &egui::Painter,
     mesh: &Mesh,
@@ -229,8 +261,15 @@ pub fn paint_wireframe(
     let interior = Stroke::new(1.0, theme.muted.gamma_multiply(0.55));
     for (&(a, b), &count) in &edge_faces {
         let is_silhouette = count == 1;
-        let (pa, _) = cam.project(mesh.vertices[a as usize], rect);
-        let (pb, _) = cam.project(mesh.vertices[b as usize], rect);
+        let va = mesh.vertices[a as usize];
+        let vb = mesh.vertices[b as usize];
+        let mid = [(va[0] + vb[0]) / 2.0, (va[1] + vb[1]) / 2.0, (va[2] + vb[2]) / 2.0];
+        let (pm, mid_depth) = cam.project(mid, rect);
+        if point_occluded(scene, pm, mid_depth) {
+            continue;
+        }
+        let (pa, _) = cam.project(va, rect);
+        let (pb, _) = cam.project(vb, rect);
         painter.line_segment([pa, pb], if is_silhouette { silhouette } else { interior });
     }
 }
