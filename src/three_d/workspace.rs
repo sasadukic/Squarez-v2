@@ -602,12 +602,17 @@ pub fn draw(
                                 state.sel_verts = vec![vi];
                             }
                             if state.sel_verts.contains(&vi) {
-                                state.drag = Some(VertexDrag {
-                                    start_mesh: mesh.clone(),
-                                    verts: state.sel_verts.clone(),
-                                    raw: [0.0; 3],
-                                    applied: [0; 3],
-                                });
+                                if let Some(start_layer) =
+                                    project.animations[0].frames[0].layers.get(li).cloned()
+                                {
+                                    state.drag = Some(VertexDrag {
+                                        start_mesh: mesh.clone(),
+                                        start_layer,
+                                        verts: state.sel_verts.clone(),
+                                        raw: [0.0; 3],
+                                        applied: [0; 3],
+                                    });
+                                }
                             }
                         }
                         None => {
@@ -633,12 +638,17 @@ pub fn draw(
                                 }
                                 // Pressing on a selected edge starts an edge move.
                                 if state.sel_edges.contains(&edge) {
-                                    state.drag = Some(VertexDrag {
-                                        start_mesh: mesh.clone(),
-                                        verts: edge_selection_verts(&state.sel_edges),
-                                        raw: [0.0; 3],
-                                        applied: [0; 3],
-                                    });
+                                    if let Some(start_layer) =
+                                        project.animations[0].frames[0].layers.get(li).cloned()
+                                    {
+                                        state.drag = Some(VertexDrag {
+                                            start_mesh: mesh.clone(),
+                                            start_layer,
+                                            verts: edge_selection_verts(&state.sel_edges),
+                                            raw: [0.0; 3],
+                                            applied: [0; 3],
+                                        });
+                                    }
                                 }
                             }
                             None => {
@@ -664,12 +674,17 @@ pub fn draw(
                             }
                             // Pressing on a selected face starts a face move.
                             if state.sel_faces.contains(&hit.face) {
-                                state.drag = Some(VertexDrag {
-                                    start_mesh: mesh.clone(),
-                                    verts: face_selection_verts(&state.sel_faces, mesh),
-                                    raw: [0.0; 3],
-                                    applied: [0; 3],
-                                });
+                                if let Some(start_layer) =
+                                    project.animations[0].frames[0].layers.get(li).cloned()
+                                {
+                                    state.drag = Some(VertexDrag {
+                                        start_mesh: mesh.clone(),
+                                        start_layer,
+                                        verts: face_selection_verts(&state.sel_faces, mesh),
+                                        raw: [0.0; 3],
+                                        applied: [0; 3],
+                                    });
+                                }
                             }
                         }
                         None => {
@@ -682,8 +697,9 @@ pub fn draw(
             }
         }
 
-        // Live move drag (vertex or face): mutate geometry only; islands
-        // settle on release.
+        // Live move drag (vertex/edge/face): replay the full move — islands
+        // and 1:1 texture copies included — from the pristine snapshots on
+        // every grid step, so the texture never skews mid-drag.
         if response.dragged_by(PointerButton::Primary) {
             let delta = response.drag_delta();
             if delta != Vec2::ZERO && state.drag.is_some() {
@@ -698,29 +714,47 @@ pub fn draw(
                     drag.raw[1].round() as i32,
                     drag.raw[2].round() as i32,
                 ];
-                let diff = [
-                    snapped[0] - drag.applied[0],
-                    snapped[1] - drag.applied[1],
-                    snapped[2] - drag.applied[2],
-                ];
-                if diff != [0, 0, 0] {
-                    if let Some(mesh) = project.mesh3d.as_mut() {
-                        for &vi in &drag.verts {
-                            if let Some(v) = mesh.vertices.get_mut(vi as usize) {
-                                v[0] += diff[0] as f32;
-                                v[1] += diff[1] as f32;
-                                v[2] += diff[2] as f32;
+                if snapped != drag.applied {
+                    let outcome = edit::move_vertices(
+                        &drag.start_mesh,
+                        &drag.start_layer,
+                        &drag.verts,
+                        snapped,
+                        atlas,
+                    );
+                    if let Ok(outcome) = outcome {
+                        drag.applied = snapped;
+                        let start_layer = drag.start_layer.clone();
+                        project.mesh3d = Some(outcome.mesh);
+                        let frame = &mut project.animations[0].frames[0];
+                        if let Some(layer) = frame.layers.get_mut(li) {
+                            *layer = start_layer;
+                            for &(x, y, _, new) in &outcome.pixel_edits {
+                                layer.set_pixel(x, y, new);
                             }
                         }
+                        frame.dirty = true;
+                        output.canvas_dirty = true;
                     }
-                    drag.applied = snapped;
+                    // Err(AtlasFull): hold the previous preview; growth
+                    // happens on commit.
                 }
             }
         }
 
-        // Drag release: settle islands + push one MeshEdit.
+        // Drag release: restore the pristine snapshots, then commit the
+        // final move through the atlas-growth + undo path.
         if ui.input(|i| i.pointer.primary_released()) {
             if let Some(drag) = state.drag.take() {
+                project.mesh3d = Some(drag.start_mesh.clone());
+                {
+                    let frame = &mut project.animations[0].frames[0];
+                    if let Some(layer) = frame.layers.get_mut(li) {
+                        *layer = drag.start_layer.clone();
+                    }
+                    frame.dirty = true;
+                }
+                output.canvas_dirty = true;
                 if drag.applied != [0, 0, 0] {
                     let moved = drag.verts.clone();
                     let applied = drag.applied;
@@ -740,13 +774,7 @@ pub fn draw(
                             state.sel_edges = kept_edges;
                             state.sel_verts.clear();
                         }
-                    } else {
-                        // Could not settle islands — revert the whole move.
-                        project.mesh3d = Some(drag.start_mesh);
                     }
-                } else {
-                    // No net movement: restore the pristine snapshot.
-                    project.mesh3d = Some(drag.start_mesh);
                 }
             }
         }
