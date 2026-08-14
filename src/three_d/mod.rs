@@ -77,11 +77,11 @@ impl ThreeDState {
     }
 }
 
-/// Default prototype-material tones for fresh faces: a subtle warm-gray
-/// checkerboard that shows texel density and reads well under the
-/// warm/cool viewport lighting.
-pub const DEFAULT_FACE_A: Rgba = [168, 161, 150, 255];
-pub const DEFAULT_FACE_B: Rgba = [149, 143, 133, 255];
+/// Default material tones for fresh faces: the theme's canvas checkerboard
+/// pair (Theme::default().checker_light / checker_dark), so an untextured
+/// model looks like the familiar empty-canvas checker.
+pub const DEFAULT_FACE_A: Rgba = [197, 204, 218, 255]; // #C5CCDA
+pub const DEFAULT_FACE_B: Rgba = [170, 178, 194, 255]; // #AAB2C2
 
 /// Fill every allocated island rect on `layer` with `color`. Used at project
 /// creation so new faces are immediately visible on the model.
