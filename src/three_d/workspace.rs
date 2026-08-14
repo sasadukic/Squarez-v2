@@ -382,6 +382,13 @@ pub fn draw(
         if is_select_tool && (3..=4).contains(&state.sel_verts.len()) {
             defs.push(("Create Face (F)", Action::CreateFace));
         }
+        if is_select_tool
+            && (!state.sel_verts.is_empty()
+                || !state.sel_edges.is_empty()
+                || !state.sel_faces.is_empty())
+        {
+            defs.push(("Delete (⌫)", Action::Delete));
+        }
         for (label, act) in defs {
             let w = 14.0 + label.len() as f32 * 6.5;
             let rect = Rect::from_min_size(Pos2::new(x, canvas_rect.min.y + 8.0), Vec2::new(w, 24.0));
