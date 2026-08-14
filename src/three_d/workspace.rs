@@ -938,7 +938,40 @@ pub fn draw(
 
     // ── Selection overlays ──────────────────────────────────────────────────
     if let Some(mesh) = project.mesh3d.as_ref() {
-        if (is_select_tool || is_object_tool || is_scale_object) && !state.sel_faces.is_empty() {
+        if is_object_tool && !state.sel_faces.is_empty() {
+            // Selected object: white silhouette outline only, no fill —
+            // edges bordering exactly one visible selected face.
+            if let Some(scene) = scene.as_ref() {
+                let visible: std::collections::HashSet<u32> =
+                    scene.visible_faces.iter().copied().collect();
+                let mut edge_count: std::collections::HashMap<(u32, u32), u32> =
+                    std::collections::HashMap::new();
+                for &fi in &state.sel_faces {
+                    if !visible.contains(&fi) {
+                        continue;
+                    }
+                    if let Some(face) = mesh.faces.get(fi as usize) {
+                        let k = face.verts.len();
+                        for i in 0..k {
+                            let a = face.verts[i];
+                            let b = face.verts[(i + 1) % k];
+                            *edge_count.entry((a.min(b), a.max(b))).or_insert(0) += 1;
+                        }
+                    }
+                }
+                let outline = Stroke::new(2.0, Color32::WHITE);
+                for (&(a, b), &count) in &edge_count {
+                    if count == 1
+                        && (a as usize) < mesh.vertices.len()
+                        && (b as usize) < mesh.vertices.len()
+                    {
+                        let (pa, _) = cam_copy.project(mesh.vertices[a as usize], canvas_rect);
+                        let (pb, _) = cam_copy.project(mesh.vertices[b as usize], canvas_rect);
+                        painter.line_segment([pa, pb], outline);
+                    }
+                }
+            }
+        } else if is_select_tool && !state.sel_faces.is_empty() {
             // Lighten the selected face rather than darkening it.
             let tint = Color32::from_white_alpha(60);
             let outline = Stroke::new(2.0, Color32::WHITE);
