@@ -191,8 +191,8 @@ pub fn paint_grid(painter: &egui::Painter, cam: &Camera3D, rect: Rect, theme: &T
 }
 
 /// Edge overlay: a dark silhouette outline (edges bordering exactly one
-/// visible face) always, plus faint interior wireframe when requested
-/// (modeling tools need it; painting looks cleaner without).
+/// visible face) plus a faint interior wireframe, so topology (loop cuts,
+/// insets) stays visible with every tool.
 pub fn paint_wireframe(
     painter: &egui::Painter,
     mesh: &Mesh,
@@ -200,7 +200,6 @@ pub fn paint_wireframe(
     cam: &Camera3D,
     rect: Rect,
     theme: &Theme,
-    show_interior: bool,
 ) {
     // Count how many visible faces borders each edge.
     let mut edge_faces: std::collections::HashMap<(u32, u32), u32> = std::collections::HashMap::new();
@@ -217,9 +216,6 @@ pub fn paint_wireframe(
     let interior = Stroke::new(1.0, theme.muted.gamma_multiply(0.55));
     for (&(a, b), &count) in &edge_faces {
         let is_silhouette = count == 1;
-        if !is_silhouette && !show_interior {
-            continue;
-        }
         let (pa, _) = cam.project(mesh.vertices[a as usize], rect);
         let (pb, _) = cam.project(mesh.vertices[b as usize], rect);
         painter.line_segment([pa, pb], if is_silhouette { silhouette } else { interior });

@@ -346,16 +346,12 @@ pub fn draw(
         .as_ref()
         .map(|mesh| render::build_scene(mesh, &cam_copy, canvas_rect, atlas));
 
-    let modeling_tool = matches!(
-        active_tool,
-        ActiveTool::VertexSelect | ActiveTool::EdgeSelect | ActiveTool::FaceSelect
-    );
     if let (Some(mesh), Some(scene)) = (project.mesh3d.as_ref(), scene.as_ref()) {
         render::paint_contact_shadow(&painter, mesh, &cam_copy, canvas_rect);
         if let Some(texture) = canvas.texture.as_ref() {
             render::paint_scene(&painter, scene, texture.id());
         }
-        render::paint_wireframe(&painter, mesh, scene, &cam_copy, canvas_rect, theme, modeling_tool);
+        render::paint_wireframe(&painter, mesh, scene, &cam_copy, canvas_rect, theme);
     }
 
     // ── Button strip ────────────────────────────────────────────────────────
