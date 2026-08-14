@@ -109,7 +109,7 @@ fn vertex_under(
     for (i, &v) in mesh.vertices.iter().enumerate() {
         let (p, _) = cam.project(v, rect);
         let d = p.distance(pos);
-        if d <= VERTEX_HIT_RADIUS && best.map_or(true, |(_, bd)| d < bd) {
+        if d <= VERTEX_HIT_RADIUS && best.is_none_or(|(_, bd)| d < bd) {
             best = Some((i as u32, d));
         }
     }
@@ -343,12 +343,12 @@ pub fn draw(
         }
 
         // Live vertex drag: mutate geometry only; islands settle on release.
-        if is_vertex_tool && state.drag.is_some() && response.dragged_by(PointerButton::Primary) {
+        if is_vertex_tool && response.dragged_by(PointerButton::Primary) {
             let delta = response.drag_delta();
-            if delta != Vec2::ZERO {
+            if delta != Vec2::ZERO && state.drag.is_some() {
                 let zoom = cam_copy.zoom.max(0.001);
                 let world = cam_copy.unview([delta.x / zoom, -delta.y / zoom, 0.0]);
-                let drag = state.drag.as_mut().unwrap();
+                let Some(drag) = state.drag.as_mut() else { unreachable!() };
                 drag.raw[0] += world[0];
                 drag.raw[1] += world[1];
                 drag.raw[2] += world[2];
@@ -432,14 +432,12 @@ pub fn draw(
                     commit_edit(state, project, undo, li, before, outcome, &mut output);
                 }
             }
-            (Action::Extrude, Some(before)) => {
-                if !state.sel_faces.is_empty() {
-                    let sel = state.sel_faces.clone();
-                    if let Some(outcome) = with_atlas_growth(project, li, |mesh, layer, atlas| {
-                        edit::extrude_faces(mesh, layer, &sel, atlas)
-                    }) {
-                        commit_edit(state, project, undo, li, before, outcome, &mut output);
-                    }
+            (Action::Extrude, Some(before)) if !state.sel_faces.is_empty() => {
+                let sel = state.sel_faces.clone();
+                if let Some(outcome) = with_atlas_growth(project, li, |mesh, layer, atlas| {
+                    edit::extrude_faces(mesh, layer, &sel, atlas)
+                }) {
+                    commit_edit(state, project, undo, li, before, outcome, &mut output);
                 }
             }
             (Action::Delete, Some(before)) => {

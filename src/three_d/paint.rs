@@ -223,21 +223,19 @@ pub fn handle(
                                 }
                                 state.last_paint = Some((hit.face, hit.texel));
                             }
-                            ActiveTool::Fill => {
-                                // Fill acts once per press, not continuously.
-                                if press_started {
-                                    let local_x = (hit.texel.0 - isl.x as i64) as u32;
-                                    let local_y = (hit.texel.1 - isl.y as i64) as u32;
-                                    let edits =
-                                        fill_island(layer, isl, local_x, local_y, color_state.foreground);
-                                    if !edits.is_empty() {
-                                        for &(x, y, _, new) in &edits {
-                                            layer.set_pixel(x, y, new);
-                                        }
-                                        state.stroke_edits.extend(edits);
-                                        frame.dirty = true;
-                                        result.canvas_dirty = true;
+                            // Fill acts once per press, not continuously.
+                            ActiveTool::Fill if press_started => {
+                                let local_x = (hit.texel.0 - isl.x as i64) as u32;
+                                let local_y = (hit.texel.1 - isl.y as i64) as u32;
+                                let edits =
+                                    fill_island(layer, isl, local_x, local_y, color_state.foreground);
+                                if !edits.is_empty() {
+                                    for &(x, y, _, new) in &edits {
+                                        layer.set_pixel(x, y, new);
                                     }
+                                    state.stroke_edits.extend(edits);
+                                    frame.dirty = true;
+                                    result.canvas_dirty = true;
                                 }
                             }
                             ActiveTool::Eyedropper => {

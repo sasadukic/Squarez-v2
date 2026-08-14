@@ -11635,6 +11635,17 @@ print("FAIL")
                                         ("Drag Mouse", "Rotate angle (X-drag) & tilt pitch (Y-drag)"),
                                         ("Ctrl + Drag Mouse", "Adjust slice spacing (Y-drag up/down)"),
                                     ]),
+                                    ("3D MODEL MODE", vec![
+                                        ("Right-click Drag", "Orbit the camera"),
+                                        ("Middle-click Drag", "Pan the view"),
+                                        ("Mouse Scroll", "Zoom at cursor (1 texel = N px)"),
+                                        ("1-6", "Snap view: Front/Back/Right/Left/Top/Bottom"),
+                                        ("0", "Reset to home orbit view"),
+                                        ("E", "Extrude selected faces (Face tool)"),
+                                        ("Delete / Backspace", "Delete selected faces or vertices"),
+                                        ("Shift + Click", "Add/remove from selection"),
+                                        ("Escape", "Clear selection"),
+                                    ]),
                                 ];
 
                                 for (cat_title, list) in categories {

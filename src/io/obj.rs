@@ -175,7 +175,7 @@ pub fn load_obj(path: &Path) -> Result<Project, BoxError> {
         let mtl_path = path.parent().unwrap_or(Path::new(".")).join(mtl_name);
         if let Ok(mtl_text) = std::fs::read_to_string(&mtl_path) {
             for line in mtl_text.lines() {
-                let mut parts = line.trim().split_whitespace();
+                let mut parts = line.split_whitespace();
                 if parts.next() == Some("map_Kd") {
                     if let Some(tex_name) = parts.next() {
                         let tex_path = mtl_path.parent().unwrap_or(Path::new(".")).join(tex_name);
