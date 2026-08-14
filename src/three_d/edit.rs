@@ -64,6 +64,7 @@ impl<'a> PixelRecorder<'a> {
     }
 
     /// Nearest-neighbor blit from `src` island to `dst` island.
+    /// Only used with equal sizes today (an exact 1:1 copy).
     fn blit_island(&mut self, src: Island, dst: Island) {
         for j in 0..dst.h as u32 {
             for i in 0..dst.w as u32 {
@@ -71,6 +72,24 @@ impl<'a> PixelRecorder<'a> {
                 let sy = src.y as u32 + (j * src.h as u32) / dst.h as u32;
                 let c = self.layer.get_pixel(sx, sy);
                 self.write(dst.x as u32 + i, dst.y as u32 + j, c);
+            }
+        }
+    }
+
+    /// Copy `src` into `dst` 1:1, anchored at the origin — pixels are never
+    /// resampled (no skewing); texels beyond the old extent get the default
+    /// checkerboard. Used when a reshape changes an island's size.
+    fn copy_island_anchored(&mut self, src: Island, dst: Island) {
+        for j in 0..dst.h {
+            for i in 0..dst.w {
+                let c = if i < src.w && j < src.h {
+                    self.layer.get_pixel((src.x + i) as u32, (src.y + j) as u32)
+                } else if (i + j) % 2 == 0 {
+                    DEFAULT_FACE_A
+                } else {
+                    DEFAULT_FACE_B
+                };
+                self.write((dst.x + i) as u32, (dst.y + j) as u32, c);
             }
         }
     }
@@ -124,7 +143,7 @@ fn refresh_islands(
             continue;
         }
         let new_isl = mesh.alloc_island(w, h, atlas)?;
-        rec.blit_island(old, new_isl);
+        rec.copy_island_anchored(old, new_isl);
         mesh.faces[fi as usize].island = new_isl;
     }
     Ok(())

@@ -11,7 +11,7 @@ use super::ThreeDState;
 use crate::color::ColorState;
 use crate::history::{Command, UndoStack};
 use crate::project::{Layer, Project, Rgba};
-use crate::tools::{apply_eraser, apply_fill, apply_pencil, bresenham_positions, ActiveTool};
+use crate::tools::{apply_eraser, apply_pencil, bresenham_positions, ActiveTool};
 
 /// Result of one frame of paint handling.
 #[derive(Debug, Clone, Copy, Default)]
@@ -119,31 +119,25 @@ fn paint_texel(
     changed
 }
 
-/// Flood-fill confined to one face's island.
+/// Fill a face's entire island with `replacement` — the bucket paints the
+/// whole face, not a flood region (a flood would stop after one texel on
+/// the default checkerboard).
 pub fn fill_island(
     layer: &mut Layer,
     isl: super::mesh::Island,
-    local_x: u32,
-    local_y: u32,
     replacement: Rgba,
 ) -> Vec<(u32, u32, Rgba, Rgba)> {
-    // Copy the island into a scratch layer so the flood cannot escape it.
-    let mut scratch = Layer::new("island".to_string(), isl.w as u32, isl.h as u32);
+    let mut edits = Vec::new();
     for y in 0..isl.h as u32 {
         for x in 0..isl.w as u32 {
-            let c = layer.get_pixel(isl.x as u32 + x, isl.y as u32 + y);
-            scratch.set_pixel(x, y, c);
+            let (gx, gy) = (isl.x as u32 + x, isl.y as u32 + y);
+            let old = layer.get_pixel(gx, gy);
+            if old != replacement {
+                edits.push((gx, gy, old, replacement));
+            }
         }
     }
-    let target = scratch.get_pixel(local_x, local_y);
-    if target == replacement {
-        return Vec::new();
-    }
-    let edits = apply_fill(&scratch, local_x, local_y, target, replacement);
     edits
-        .into_iter()
-        .map(|(x, y, old, new)| (isl.x as u32 + x, isl.y as u32 + y, old, new))
-        .collect()
 }
 
 /// Handle one frame of paint input. Call with the scene already built for
@@ -225,10 +219,7 @@ pub fn handle(
                             }
                             // Fill acts once per press, not continuously.
                             ActiveTool::Fill if press_started => {
-                                let local_x = (hit.texel.0 - isl.x as i64) as u32;
-                                let local_y = (hit.texel.1 - isl.y as i64) as u32;
-                                let edits =
-                                    fill_island(layer, isl, local_x, local_y, color_state.foreground);
+                                let edits = fill_island(layer, isl, color_state.foreground);
                                 if !edits.is_empty() {
                                     for &(x, y, _, new) in &edits {
                                         layer.set_pixel(x, y, new);

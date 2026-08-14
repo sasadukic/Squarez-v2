@@ -271,13 +271,14 @@ fn pick_misses_outside_model() {
 }
 
 #[test]
-fn fill_stays_inside_island() {
+fn fill_covers_the_whole_island() {
     let mut mesh = Mesh::cube(8);
     mesh.allocate_all_islands((64, 64)).unwrap();
     let mut layer = Layer::new("Texture".to_string(), 64, 64);
-    // Uniform transparent atlas; fill face 0's island with red.
+    // Checkerboard content must not stop the fill: it paints every texel.
+    squarez::three_d::paint_islands_checker(&mut layer, &mesh);
     let isl = mesh.faces[0].island;
-    let edits = fill_island(&mut layer, isl, 0, 0, [255, 0, 0, 255]);
+    let edits = fill_island(&mut layer, isl, [255, 0, 0, 255]);
     assert_eq!(edits.len(), 64, "expected the whole 8x8 island filled");
     for &(x, y, _, new) in &edits {
         assert!(x >= isl.x as u32 && x < (isl.x + isl.w) as u32, "x {} escaped island", x);
@@ -286,10 +287,9 @@ fn fill_stays_inside_island() {
     }
     // A second fill with the same color is a no-op.
     for &(x, y, _, new) in &edits {
-        let _ = (x, y, new);
         layer.set_pixel(x, y, new);
     }
-    let again = fill_island(&mut layer, isl, 0, 0, [255, 0, 0, 255]);
+    let again = fill_island(&mut layer, isl, [255, 0, 0, 255]);
     assert!(again.is_empty());
 }
 
@@ -347,15 +347,19 @@ fn move_vertex_resizes_island_with_blit() {
     let new = out.mesh.faces[0].island;
     assert_eq!((new.w, new.h), (9, 8));
     assert_ne!(new, old, "island must move to a fresh slot");
-    // Blit: every dest texel sampled from src via nearest-neighbor.
+    // Anchored 1:1 copy: existing texels are never resampled; the newly
+    // exposed column gets the default checkerboard.
     for &(x, y, _, c) in &out.pixel_edits {
         assert!(x >= new.x as u32 && x < (new.x + new.w) as u32);
         assert!(y >= new.y as u32 && y < (new.y + new.h) as u32);
         let i = x - new.x as u32;
         let j = y - new.y as u32;
-        let si = (i * old.w as u32) / new.w as u32;
-        let sj = (j * old.h as u32) / new.h as u32;
-        assert_eq!(c, [si as u8, sj as u8, 0, 255], "blit mismatch at dest ({}, {})", i, j);
+        if i < old.w as u32 && j < old.h as u32 {
+            assert_eq!(c, [i as u8, j as u8, 0, 255], "1:1 copy mismatch at ({}, {})", i, j);
+        } else {
+            let expected = if (i + j) % 2 == 0 { DEFAULT_FACE_A } else { DEFAULT_FACE_B };
+            assert_eq!(c, expected, "new texels get the checker at ({}, {})", i, j);
+        }
     }
     // Geometry actually moved.
     assert_eq!(out.mesh.vertices[0][0], mesh.vertices[0][0] - 1.0);
