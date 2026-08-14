@@ -31,6 +31,8 @@ pub struct Output {
 enum Action {
     AddCube,
     AddPlane,
+    AddSphere,
+    AddCylinder,
     Extrude,
     Delete,
     CreateFace,
@@ -355,26 +357,56 @@ pub fn draw(
     }
 
     // ── Button strip ────────────────────────────────────────────────────────
-    let is_face_tool = matches!(active_tool, ActiveTool::FaceSelect);
-    let is_edge_tool = matches!(active_tool, ActiveTool::EdgeSelect);
-    let is_vertex_tool = matches!(active_tool, ActiveTool::VertexSelect);
+    let is_select_tool = matches!(active_tool, ActiveTool::Select3D);
     let is_modify_tool = matches!(active_tool, ActiveTool::Extrude | ActiveTool::Inset);
     let is_loop_tool = matches!(active_tool, ActiveTool::LoopCut);
+    let is_move_object = matches!(active_tool, ActiveTool::MoveObject);
+    let is_scale_object = matches!(active_tool, ActiveTool::ScaleObject);
+    let is_object_tool = is_move_object || is_scale_object;
     let mut action: Option<Action> = None;
     let mut over_buttons = false;
     {
-        let mut defs: Vec<(&str, Action)> =
-            vec![("+ Cube", Action::AddCube), ("+ Plane", Action::AddPlane)];
-        if is_face_tool && !state.sel_faces.is_empty() {
+        // Primitive icon buttons.
+        let prims: [(egui::ImageSource<'static>, Action, &str); 4] = [
+            (egui::include_image!("../../assets/icons/prim_cube.svg"), Action::AddCube, "Add Cube"),
+            (egui::include_image!("../../assets/icons/prim_sphere.svg"), Action::AddSphere, "Add Sphere"),
+            (egui::include_image!("../../assets/icons/prim_cylinder.svg"), Action::AddCylinder, "Add Cylinder"),
+            (egui::include_image!("../../assets/icons/prim_plane.svg"), Action::AddPlane, "Add Plane"),
+        ];
+        let mut x = canvas_rect.min.x + 8.0;
+        for (icon, act, tip) in prims {
+            let rect = Rect::from_min_size(Pos2::new(x, canvas_rect.min.y + 8.0), Vec2::splat(24.0));
+            let resp = ui
+                .interact(rect, ui.id().with(("threed_prim", tip)), Sense::click())
+                .on_hover_text(tip);
+            let bg = if resp.hovered() { theme.surface } else { theme.panel };
+            painter.rect_filled(rect, 3.0, bg);
+            let tint = if resp.hovered() { Color32::WHITE } else { theme.fg_desc };
+            ui.put(
+                rect,
+                egui::Image::new(icon).fit_to_exact_size(Vec2::splat(16.0)).tint(tint),
+            );
+            if resp.hovered() {
+                over_buttons = true;
+            }
+            if resp.clicked() {
+                action = Some(act);
+            }
+            x += 24.0 + 6.0;
+        }
+
+        // Contextual text buttons.
+        let mut defs: Vec<(&str, Action)> = Vec::new();
+        if is_select_tool && !state.sel_faces.is_empty() {
             defs.push(("Extrude (E)", Action::Extrude));
         }
-        if is_vertex_tool && (3..=4).contains(&state.sel_verts.len()) {
+        if is_select_tool && (3..=4).contains(&state.sel_verts.len()) {
             defs.push(("Create Face (F)", Action::CreateFace));
         }
-        let mut x = canvas_rect.min.x + 8.0;
+        x += 6.0;
         for (label, act) in defs {
             let w = 14.0 + label.len() as f32 * 6.5;
-            let rect = Rect::from_min_size(Pos2::new(x, canvas_rect.min.y + 8.0), Vec2::new(w, 22.0));
+            let rect = Rect::from_min_size(Pos2::new(x, canvas_rect.min.y + 8.0), Vec2::new(w, 24.0));
             let resp = ui.interact(rect, ui.id().with(("threed_btn", label)), Sense::click());
             let bg = if resp.hovered() { theme.surface } else { theme.panel };
             painter.rect_filled(rect, 3.0, bg);
@@ -427,10 +459,14 @@ pub fn draw(
         }
     }
 
-    // ── Extrude / Inset drag ────────────────────────────────────────────────
-    if is_modify_tool {
+    // ── Extrude / Inset / Scale drag ────────────────────────────────────────
+    if is_modify_tool || is_scale_object {
         state.hover_face = None;
-        let kind = if matches!(active_tool, ActiveTool::Inset) { OpKind::Inset } else { OpKind::Extrude };
+        let kind = match active_tool {
+            ActiveTool::Inset => OpKind::Inset,
+            ActiveTool::ScaleObject => OpKind::Scale,
+            _ => OpKind::Extrude,
+        };
 
         // Hover affordance while not dragging.
         if state.op_drag.is_none() && !over_ui {
@@ -460,14 +496,26 @@ pub fn draw(
                     if let Some(start_layer) =
                         project.animations[0].frames[0].layers.get(li).cloned()
                     {
+                        let (verts, component) = if kind == OpKind::Scale {
+                            let component = edit::connected_faces(mesh, hit.face);
+                            (face_selection_verts(&component, mesh), component)
+                        } else {
+                            (Vec::new(), Vec::new())
+                        };
                         state.op_drag = Some(OpDrag {
                             kind,
                             face: hit.face,
+                            verts,
                             start_mesh: mesh.clone(),
                             start_layer,
                             raw: 0.0,
                             applied: 0,
                         });
+                        if kind == OpKind::Scale {
+                            state.sel_faces = component;
+                            state.sel_verts.clear();
+                            state.sel_edges.clear();
+                        }
                     }
                 }
             }
@@ -489,15 +537,23 @@ pub fn draw(
                     }
                     // Drag right/down to grow the inset border.
                     OpKind::Inset => (delta.x + delta.y) / (2.0 * zoom),
+                    // Drag right/up to grow the object.
+                    OpKind::Scale => (delta.x - delta.y) / (2.0 * zoom),
                 };
-                let n = od.raw.round().max(0.0) as u32;
+                let n: i32 = match od.kind {
+                    OpKind::Scale => od.raw.round() as i32,
+                    _ => od.raw.round().max(0.0) as i32,
+                };
                 if n != od.applied {
                     let outcome = match od.kind {
                         OpKind::Extrude => {
-                            edit::extrude_faces_n(&od.start_mesh, &od.start_layer, &[od.face], n, atlas)
+                            edit::extrude_faces_n(&od.start_mesh, &od.start_layer, &[od.face], n as u32, atlas)
                         }
                         OpKind::Inset => {
-                            edit::inset_faces(&od.start_mesh, &od.start_layer, &[od.face], n, atlas)
+                            edit::inset_faces(&od.start_mesh, &od.start_layer, &[od.face], n as u32, atlas)
+                        }
+                        OpKind::Scale => {
+                            edit::scale_verts(&od.start_mesh, &od.start_layer, &od.verts, n, atlas)
                         }
                     };
                     if let Ok(outcome) = outcome {
@@ -533,14 +589,22 @@ pub fn draw(
                     frame.dirty = true;
                 }
                 output.canvas_dirty = true;
-                if od.applied >= 1 {
+                if od.applied != 0 {
                     let (kind, face, n) = (od.kind, od.face, od.applied);
+                    let verts = od.verts.clone();
                     let before = od.start_mesh.clone();
+                    let kept_faces = state.sel_faces.clone();
                     if let Some(outcome) = with_atlas_growth(project, li, |m, layer, atlas| match kind {
-                        OpKind::Extrude => edit::extrude_faces_n(m, layer, &[face], n, atlas),
-                        OpKind::Inset => edit::inset_faces(m, layer, &[face], n, atlas),
+                        OpKind::Extrude => edit::extrude_faces_n(m, layer, &[face], n as u32, atlas),
+                        OpKind::Inset => edit::inset_faces(m, layer, &[face], n as u32, atlas),
+                        OpKind::Scale => edit::scale_verts(m, layer, &verts, n, atlas),
                     }) {
                         commit_edit(state, project, undo, li, before, outcome, &mut output);
+                        if kind == OpKind::Scale {
+                            // Face indices survive a scale — keep the object highlighted.
+                            state.sel_faces = kept_faces;
+                            state.sel_verts.clear();
+                        }
                     }
                 }
             }
@@ -580,8 +644,8 @@ pub fn draw(
         }
     }
 
-    // ── Modeling input ──────────────────────────────────────────────────────
-    if is_vertex_tool || is_edge_tool || is_face_tool {
+    // ── Modeling input (smart select + object move) ─────────────────────────
+    if is_select_tool || is_move_object {
         state.hover_face = None;
 
         let pressed = ui.input(|i| i.pointer.primary_pressed()) && pointer_over && !over_ui;
@@ -589,9 +653,35 @@ pub fn draw(
 
         if pressed {
             if let (Some(pos), Some(mesh)) = (pointer_pos, project.mesh3d.as_ref()) {
-                if is_vertex_tool {
-                    match vertex_under(mesh, &cam_copy, canvas_rect, pos) {
-                        Some(vi) => {
+                if is_move_object {
+                    // Click an object: select its whole connected component
+                    // and start moving it.
+                    let hit = scene.as_ref().and_then(|sc| paint::pick(sc, pos, mesh, atlas));
+                    match hit {
+                        Some(hit) => {
+                            let component = edit::connected_faces(mesh, hit.face);
+                            state.sel_faces = component.clone();
+                            state.sel_verts.clear();
+                            state.sel_edges.clear();
+                            if let Some(start_layer) =
+                                project.animations[0].frames[0].layers.get(li).cloned()
+                            {
+                                state.drag = Some(VertexDrag {
+                                    start_mesh: mesh.clone(),
+                                    start_layer,
+                                    verts: face_selection_verts(&component, mesh),
+                                    raw: [0.0; 3],
+                                    applied: [0; 3],
+                                });
+                            }
+                        }
+                        None => state.sel_faces.clear(),
+                    }
+                } else if let Some(vi) = vertex_under(mesh, &cam_copy, canvas_rect, pos) {
+                    // Smart select, priority 1: vertex.
+                    state.sel_edges.clear();
+                    state.sel_faces.clear();
+                    {
                             if shift {
                                 if let Some(idx) = state.sel_verts.iter().position(|&v| v == vi) {
                                     state.sel_verts.remove(idx);
@@ -614,17 +704,16 @@ pub fn draw(
                                     });
                                 }
                             }
-                        }
-                        None => {
-                            if !shift {
-                                state.sel_verts.clear();
-                            }
-                        }
                     }
-                } else if is_edge_tool {
-                    if let Some(scene) = scene.as_ref() {
-                        match edge_under(mesh, scene, &cam_copy, canvas_rect, pos) {
-                            Some(edge) => {
+                } else if let Some(edge) =
+                    scene.as_ref().and_then(|sc| edge_under(mesh, sc, &cam_copy, canvas_rect, pos))
+                {
+                    // Smart select, priority 2: edge.
+                    state.sel_verts.clear();
+                    state.sel_faces.clear();
+                    {
+                        {
+                            {
                                 if shift {
                                     if let Some(idx) =
                                         state.sel_edges.iter().position(|&e| e == edge)
@@ -651,16 +740,16 @@ pub fn draw(
                                     }
                                 }
                             }
-                            None => {
-                                if !shift {
-                                    state.sel_edges.clear();
-                                }
-                            }
                         }
                     }
-                } else if let Some(scene) = scene.as_ref() {
-                    match paint::pick(scene, pos, mesh, atlas) {
-                        Some(hit) => {
+                } else if let Some(hit) =
+                    scene.as_ref().and_then(|sc| paint::pick(sc, pos, mesh, atlas))
+                {
+                    // Smart select, priority 3: face.
+                    state.sel_verts.clear();
+                    state.sel_edges.clear();
+                    {
+                        {
                             if shift {
                                 if let Some(idx) =
                                     state.sel_faces.iter().position(|&f| f == hit.face)
@@ -687,12 +776,12 @@ pub fn draw(
                                 }
                             }
                         }
-                        None => {
-                            if !shift {
-                                state.sel_faces.clear();
-                            }
-                        }
                     }
+                } else if !shift {
+                    // Clicked empty space: clear every selection kind.
+                    state.sel_verts.clear();
+                    state.sel_edges.clear();
+                    state.sel_faces.clear();
                 }
             }
         }
@@ -759,21 +848,18 @@ pub fn draw(
                     let moved = drag.verts.clone();
                     let applied = drag.applied;
                     let before = drag.start_mesh.clone();
-                    let kept_faces = state.sel_faces.clone();
+                    let kept_verts = state.sel_verts.clone();
                     let kept_edges = state.sel_edges.clone();
+                    let kept_faces = state.sel_faces.clone();
                     if let Some(outcome) = with_atlas_growth(project, li, |_, layer, atlas| {
                         edit::move_vertices(&before, layer, &moved, applied, atlas)
                     }) {
                         commit_edit(state, project, undo, li, drag.start_mesh, outcome, &mut output);
-                        // Face/edge identities are unchanged by a move — keep
-                        // the selection instead of the moved-verts list.
-                        if is_face_tool {
-                            state.sel_faces = kept_faces;
-                            state.sel_verts.clear();
-                        } else if is_edge_tool {
-                            state.sel_edges = kept_edges;
-                            state.sel_verts.clear();
-                        }
+                        // Vertex/edge/face identities all survive a move —
+                        // restore the selection exactly as it was.
+                        state.sel_verts = kept_verts;
+                        state.sel_edges = kept_edges;
+                        state.sel_faces = kept_faces;
                     }
                 }
             }
@@ -781,13 +867,13 @@ pub fn draw(
 
         // Keyboard actions
         if keys_free {
-            if is_face_tool
+            if is_select_tool
                 && !state.sel_faces.is_empty()
                 && ui.input(|i| i.key_pressed(egui::Key::E))
             {
                 action = Some(Action::Extrude);
             }
-            if is_vertex_tool
+            if is_select_tool
                 && (3..=4).contains(&state.sel_verts.len())
                 && ui.input(|i| i.key_pressed(egui::Key::F))
             {
@@ -818,6 +904,20 @@ pub fn draw(
                     commit_edit(state, project, undo, li, before, outcome, &mut output);
                 }
             }
+            (Action::AddSphere, Some(before)) => {
+                if let Some(outcome) = with_atlas_growth(project, li, |mesh, layer, atlas| {
+                    edit::add_primitive(mesh, layer, edit::Primitive::Sphere, atlas)
+                }) {
+                    commit_edit(state, project, undo, li, before, outcome, &mut output);
+                }
+            }
+            (Action::AddCylinder, Some(before)) => {
+                if let Some(outcome) = with_atlas_growth(project, li, |mesh, layer, atlas| {
+                    edit::add_primitive(mesh, layer, edit::Primitive::Cylinder, atlas)
+                }) {
+                    commit_edit(state, project, undo, li, before, outcome, &mut output);
+                }
+            }
             (Action::Extrude, Some(before)) if !state.sel_faces.is_empty() => {
                 let sel = state.sel_faces.clone();
                 if let Some(outcome) = with_atlas_growth(project, li, |mesh, layer, atlas| {
@@ -837,17 +937,17 @@ pub fn draw(
                 }
             }
             (Action::Delete, Some(before)) => {
-                if is_face_tool && !state.sel_faces.is_empty() {
+                if !state.sel_faces.is_empty() {
                     let outcome = edit::delete_faces(&before, &state.sel_faces);
                     commit_edit(state, project, undo, li, before, outcome, &mut output);
-                } else if is_edge_tool && !state.sel_edges.is_empty() {
+                } else if !state.sel_edges.is_empty() {
                     let doomed = faces_with_edges(&before, &state.sel_edges);
                     if !doomed.is_empty() {
                         let outcome = edit::delete_faces(&before, &doomed);
                         commit_edit(state, project, undo, li, before, outcome, &mut output);
                     }
                     state.sel_edges.clear();
-                } else if is_vertex_tool && !state.sel_verts.is_empty() {
+                } else if !state.sel_verts.is_empty() {
                     let outcome = edit::delete_vertices(&before, &state.sel_verts);
                     commit_edit(state, project, undo, li, before, outcome, &mut output);
                 }
@@ -858,7 +958,7 @@ pub fn draw(
 
     // ── Selection overlays ──────────────────────────────────────────────────
     if let Some(mesh) = project.mesh3d.as_ref() {
-        if is_face_tool && !state.sel_faces.is_empty() {
+        if (is_select_tool || is_object_tool || is_scale_object) && !state.sel_faces.is_empty() {
             // Lighten the selected face rather than darkening it.
             let tint = Color32::from_white_alpha(60);
             let outline = Stroke::new(2.0, Color32::WHITE);
@@ -873,7 +973,7 @@ pub fn draw(
                 }
             }
         }
-        if is_edge_tool {
+        if is_select_tool {
             // Hovered edge (lighter) under the selected edges (full accent).
             if !over_ui {
                 if let (Some(pos), Some(scene)) = (pointer_pos, scene.as_ref()) {
@@ -894,7 +994,7 @@ pub fn draw(
                 }
             }
         }
-        if is_vertex_tool {
+        if is_select_tool {
             for (i, &v) in mesh.vertices.iter().enumerate() {
                 let (p, _) = cam_copy.project(v, canvas_rect);
                 if !canvas_rect.contains(p) {
@@ -920,12 +1020,12 @@ pub fn draw(
         None => "Orbit".to_string(),
     };
     let hint = match active_tool {
-        ActiveTool::VertexSelect => "Vertex: click select · drag move · shift multi · F create face (3-4 verts) · Del delete",
-        ActiveTool::EdgeSelect => "Edge: click select · drag move · shift multi · Del delete faces",
-        ActiveTool::FaceSelect => "Face: click select · drag move · E extrude · Del delete",
+        ActiveTool::Select3D => "Select: click a vertex, edge, or face · drag move · shift multi · E extrude · F fill 3-4 verts · Del delete",
         ActiveTool::Extrude => "Extrude: drag a face to pull it out (whole units)",
         ActiveTool::Inset => "Inset: drag a face to grow an inset border",
         ActiveTool::LoopCut => "Loop Cut: hover to preview the ring · click to cut",
+        ActiveTool::MoveObject => "Move: click an object · drag to move it on the grid",
+        ActiveTool::ScaleObject => "Scale: click an object · drag right/up to resize in whole units",
         t if paint::is_paint_tool(t) => "Paint on the model · RMB orbit · MMB pan · 1-6 snap views",
         _ => "RMB orbit · MMB pan · scroll zoom · 1-6 snap views",
     };

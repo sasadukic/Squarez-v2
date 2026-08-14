@@ -30,18 +30,22 @@ pub struct VertexDrag {
 pub enum OpKind {
     Extrude,
     Inset,
+    /// Uniform object scale; operates on `verts` instead of `face`.
+    Scale,
 }
 
-/// An in-flight extrude/inset drag: pristine mesh + layer snapshots taken at
-/// press time so every preview amount recomputes from clean state.
+/// An in-flight extrude/inset/scale drag: pristine mesh + layer snapshots
+/// taken at press time so every preview amount recomputes from clean state.
 #[derive(Debug, Clone)]
 pub struct OpDrag {
     pub kind: OpKind,
     pub face: u32,
+    /// Vertex set for Scale (the clicked object's vertices).
+    pub verts: Vec<u32>,
     pub start_mesh: mesh::Mesh,
     pub start_layer: Layer,
     pub raw: f32,
-    pub applied: u32,
+    pub applied: i32,
 }
 
 /// Per-tab UI state for the 3D workspace: camera, selection, and in-flight

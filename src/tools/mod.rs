@@ -29,12 +29,13 @@ pub enum ActiveTool {
     Move,
     Zoom,
     // 3D mode tools
-    VertexSelect,
-    EdgeSelect,
-    FaceSelect,
+    /// Smart select: picks vertices, edges, or faces by what you click.
+    Select3D,
     Extrude,
     Inset,
     LoopCut,
+    MoveObject,
+    ScaleObject,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

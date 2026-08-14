@@ -132,16 +132,16 @@ pub struct App {
     bucket_group_current: ActiveTool, // Fill or Eyedropper
     shape_group_current: ActiveTool,  // Rectangle | Ellipse | Line
     select_group_current: ActiveTool, // RectSelect or Move
-    select3d_group_current: ActiveTool, // VertexSelect | EdgeSelect | FaceSelect
     modify3d_group_current: ActiveTool, // Extrude | Inset
+    object3d_group_current: ActiveTool, // MoveObject | ScaleObject
     // Which group submenu is open (slot index 0=pen, 1=bucket, 2=shape/select3d, 3=select/modify3d), if any
     open_tool_submenu: Option<usize>,
     pen_slot_rect: Option<egui::Rect>,
     bucket_slot_rect: Option<egui::Rect>,
     shape_slot_rect: Option<egui::Rect>,
     select_slot_rect: Option<egui::Rect>,
-    select3d_slot_rect: Option<egui::Rect>,
     modify3d_slot_rect: Option<egui::Rect>,
+    object3d_slot_rect: Option<egui::Rect>,
     alt_was_down: bool,
     iso_box_dragging: bool,
     iso_cylinder_dragging: bool,
@@ -861,15 +861,15 @@ impl App {
             bucket_group_current: ActiveTool::Fill,
             shape_group_current: ActiveTool::Rectangle { filled: false },
             select_group_current: ActiveTool::RectSelect,
-            select3d_group_current: ActiveTool::VertexSelect,
             modify3d_group_current: ActiveTool::Extrude,
+            object3d_group_current: ActiveTool::MoveObject,
             open_tool_submenu: None,
             pen_slot_rect: None,
             bucket_slot_rect: None,
             shape_slot_rect: None,
             select_slot_rect: None,
-            select3d_slot_rect: None,
             modify3d_slot_rect: None,
+            object3d_slot_rect: None,
             alt_was_down: false,
             iso_box_dragging: false,
             iso_cylinder_dragging: false,
@@ -1311,12 +1311,12 @@ impl App {
                     | ActiveTool::Fill
                     | ActiveTool::Eyedropper
                     | ActiveTool::Zoom
-                    | ActiveTool::VertexSelect
-                    | ActiveTool::EdgeSelect
-                    | ActiveTool::FaceSelect
+                    | ActiveTool::Select3D
                     | ActiveTool::Extrude
                     | ActiveTool::Inset
                     | ActiveTool::LoopCut
+                    | ActiveTool::MoveObject
+                    | ActiveTool::ScaleObject
             ) {
                 self.set_active_tool(ActiveTool::Pencil);
             }
@@ -1551,12 +1551,11 @@ impl App {
             match self.active_tool {
                 ActiveTool::Pencil | ActiveTool::Eraser     => 0,
                 ActiveTool::Fill   | ActiveTool::Eyedropper => 1,
-                ActiveTool::VertexSelect
-                | ActiveTool::EdgeSelect
-                | ActiveTool::FaceSelect                    => 2,
+                ActiveTool::Select3D                        => 2,
                 ActiveTool::Extrude | ActiveTool::Inset     => 3,
                 ActiveTool::LoopCut                         => 4,
-                ActiveTool::Zoom                            => 5,
+                ActiveTool::MoveObject | ActiveTool::ScaleObject => 5,
+                ActiveTool::Zoom                            => 6,
                 _                                           => 0,
             }
         } else {
@@ -1566,12 +1565,12 @@ impl App {
                 ActiveTool::Rectangle { .. }
                 | ActiveTool::Ellipse { .. }
                 | ActiveTool::Line                                => 2, // shape group
-                ActiveTool::VertexSelect
-                | ActiveTool::EdgeSelect
-                | ActiveTool::FaceSelect
+                ActiveTool::Select3D
                 | ActiveTool::Extrude
                 | ActiveTool::Inset
-                | ActiveTool::LoopCut                             => 3, // 3D-only tools (not reachable in 2D)
+                | ActiveTool::LoopCut
+                | ActiveTool::MoveObject
+                | ActiveTool::ScaleObject                         => 3, // 3D-only tools (not reachable in 2D)
                 ActiveTool::RectSelect | ActiveTool::MagicWand | ActiveTool::Move => 3, // select group
                 ActiveTool::Zoom                                  => 4,
             }
@@ -1616,10 +1615,8 @@ impl App {
                 self.shape_group_current = t.clone();
             }
             ActiveTool::RectSelect | ActiveTool::MagicWand | ActiveTool::Move => self.select_group_current = t.clone(),
-            ActiveTool::VertexSelect | ActiveTool::EdgeSelect | ActiveTool::FaceSelect => {
-                self.select3d_group_current = t.clone();
-            }
             ActiveTool::Extrude | ActiveTool::Inset => self.modify3d_group_current = t.clone(),
+            ActiveTool::MoveObject | ActiveTool::ScaleObject => self.object3d_group_current = t.clone(),
             _ => {}
         }
         self.active_tool = t;
@@ -2738,7 +2735,7 @@ impl App {
 
                 // Vertically center the button stack in the full screen
                 let is_3d = self.project.mode.is_three_d();
-                let tool_count = if is_3d { 6.0 } else { 5.0 };
+                let tool_count = if is_3d { 7.0 } else { 5.0 };
                 let tools_h = tool_count * 38.0;
                 let top_pad = ((ctx.screen_rect().height() - tools_h) / 2.0 - TOP_BAR_HEIGHT).max(0.0);
                 ui.add_space(top_pad);
@@ -2801,33 +2798,20 @@ impl App {
 
                 let mut shape_rect: Option<egui::Rect> = None;
                 let mut select_rect: Option<egui::Rect> = None;
-                let mut select3d_rect: Option<egui::Rect> = None;
+                let mut object3d_rect: Option<egui::Rect> = None;
                 let mut modify3d_rect: Option<egui::Rect> = None;
                 if is_3d {
-                    // Slot 2: Select group (Vertex/Edge/Face flyout)
-                    let sel_active = matches!(
-                        self.active_tool,
-                        ActiveTool::VertexSelect | ActiveTool::EdgeSelect | ActiveTool::FaceSelect
-                    );
+                    // Slot 2: Smart Select (vertices, edges, faces)
                     let sel_resp = tool_btn_raw(
                         ui,
                         &self.theme,
-                        sel_active,
-                        tool_icon(&self.select3d_group_current),
+                        self.active_tool == ActiveTool::Select3D,
+                        tool_icon(&ActiveTool::Select3D),
                     )
-                    .on_hover_text(tool_tooltip_text(&self.select3d_group_current));
-                    select3d_rect = Some(sel_resp.rect);
+                    .on_hover_text(tool_tooltip_text(&ActiveTool::Select3D));
                     if sel_resp.clicked() && !self.any_modal_open() {
-                        if sel_active {
-                            if self.open_tool_submenu == Some(2) {
-                                self.open_tool_submenu = None;
-                            } else if !self.menu_was_open_at_frame_start {
-                                self.open_tool_submenu = Some(2);
-                            }
-                        } else {
-                            self.set_active_tool(self.select3d_group_current.clone());
-                            self.open_tool_submenu = None;
-                        }
+                        self.set_active_tool(ActiveTool::Select3D);
+                        self.open_tool_submenu = None;
                     }
 
                     // Slot 3: Modify group (Extrude/Inset flyout)
@@ -2864,6 +2848,30 @@ impl App {
                     if loop_resp.clicked() && !self.any_modal_open() {
                         self.set_active_tool(ActiveTool::LoopCut);
                         self.open_tool_submenu = None;
+                    }
+
+                    // Slot 5: Object group (Move/Scale flyout)
+                    let obj_active =
+                        matches!(self.active_tool, ActiveTool::MoveObject | ActiveTool::ScaleObject);
+                    let obj_resp = tool_btn_raw(
+                        ui,
+                        &self.theme,
+                        obj_active,
+                        tool_icon(&self.object3d_group_current),
+                    )
+                    .on_hover_text(tool_tooltip_text(&self.object3d_group_current));
+                    object3d_rect = Some(obj_resp.rect);
+                    if obj_resp.clicked() && !self.any_modal_open() {
+                        if obj_active {
+                            if self.open_tool_submenu == Some(5) {
+                                self.open_tool_submenu = None;
+                            } else if !self.menu_was_open_at_frame_start {
+                                self.open_tool_submenu = Some(5);
+                            }
+                        } else {
+                            self.set_active_tool(self.object3d_group_current.clone());
+                            self.open_tool_submenu = None;
+                        }
                     }
                 } else {
                     // Slot 2: Shape group (Rectangle/Ellipse/Line)
@@ -2926,8 +2934,8 @@ impl App {
                     self.bucket_slot_rect = Some(bucket_rect);
                     self.shape_slot_rect = shape_rect;
                     self.select_slot_rect = select_rect;
-                    self.select3d_slot_rect = select3d_rect;
                     self.modify3d_slot_rect = modify3d_rect;
+                    self.object3d_slot_rect = object3d_rect;
                 }
             });
     }
@@ -2936,11 +2944,13 @@ impl App {
         let Some(slot) = self.open_tool_submenu else { return; };
         let is_3d = self.project.mode.is_three_d();
         let (slot_rect, current, others): (egui::Rect, ActiveTool, Vec<ActiveTool>) = match slot {
-            2 if is_3d => {
-                let Some(r) = self.select3d_slot_rect else { return; };
-                let cur = self.select3d_group_current.clone();
-                let all = vec![ActiveTool::VertexSelect, ActiveTool::EdgeSelect, ActiveTool::FaceSelect];
-                let others: Vec<ActiveTool> = all.into_iter().filter(|t| *t != cur).collect();
+            5 if is_3d => {
+                let Some(r) = self.object3d_slot_rect else { return; };
+                let cur = self.object3d_group_current.clone();
+                let others = match cur {
+                    ActiveTool::MoveObject => vec![ActiveTool::ScaleObject],
+                    _                      => vec![ActiveTool::MoveObject],
+                };
                 (r, cur, others)
             }
             3 if is_3d => {
@@ -11736,11 +11746,12 @@ print("FAIL")
                                         ("Mouse Scroll", "Zoom at cursor (1 texel = N px)"),
                                         ("1-6", "Snap view: Front/Back/Right/Left/Top/Bottom"),
                                         ("0", "Reset to home orbit view"),
-                                        ("V / L / F", "Vertex / Edge / Face tools"),
-                                        ("E", "Extrude selected faces (Face tool)"),
+                                        ("V", "Select tool (vertices, edges, faces)"),
+                                        ("E", "Extrude selected faces (Select tool)"),
                                         ("F", "Create face from 3-4 selected vertices"),
                                         ("Drag (Extrude/Inset tool)", "Pull a face out / grow an inset border"),
                                         ("Hover + Click (Loop Cut)", "Preview and cut an edge loop"),
+                                        ("Drag (Move/Scale tool)", "Move / resize a whole object on the grid"),
                                         ("Delete / Backspace", "Delete selected faces or vertices"),
                                         ("Shift + Click", "Add/remove from selection"),
                                         ("Escape", "Clear selection"),
@@ -12663,7 +12674,9 @@ impl eframe::App for App {
                     self.set_active_tool(ActiveTool::Pencil);
                 }
                 if ctx.input(|i| i.key_pressed(egui::Key::E))
-                    && !(is_3d && matches!(self.active_tool, ActiveTool::FaceSelect))
+                    && !(is_3d
+                        && matches!(self.active_tool, ActiveTool::Select3D)
+                        && !self.three_d.sel_faces.is_empty())
                 {
                     self.set_active_tool(ActiveTool::Eraser);
                 }
@@ -12693,20 +12706,8 @@ impl eframe::App for App {
                     };
                     self.set_active_tool(next);
                 }
-                if is_3d {
-                    if ctx.input(|i| i.key_pressed(egui::Key::V)) {
-                        self.set_active_tool(ActiveTool::VertexSelect);
-                    }
-                    if ctx.input(|i| i.key_pressed(egui::Key::L)) {
-                        self.set_active_tool(ActiveTool::EdgeSelect);
-                    }
-                    // With 3-4 vertices selected in the Vertex tool, F means
-                    // "create face" (handled by the workspace), not tool switch.
-                    let f_creates_face = matches!(self.active_tool, ActiveTool::VertexSelect)
-                        && (3..=4).contains(&self.three_d.sel_verts.len());
-                    if ctx.input(|i| i.key_pressed(egui::Key::F)) && !f_creates_face {
-                        self.set_active_tool(ActiveTool::FaceSelect);
-                    }
+                if is_3d && ctx.input(|i| i.key_pressed(egui::Key::V)) {
+                    self.set_active_tool(ActiveTool::Select3D);
                 }
                 if ctx.input(|i| i.key_pressed(egui::Key::Z)) {
                     if matches!(self.active_tool, ActiveTool::Zoom) {
@@ -13395,12 +13396,12 @@ fn tool_icon(tool: &ActiveTool) -> ImageSource<'static> {
         ActiveTool::MagicWand        => egui::include_image!("../assets/icons/wand.png"),
         ActiveTool::Move             => egui::include_image!("../assets/icons/move.svg"),
         ActiveTool::Zoom             => egui::include_image!("../assets/icons/zoom.svg"),
-        ActiveTool::VertexSelect     => egui::include_image!("../assets/icons/vertex_select.svg"),
-        ActiveTool::EdgeSelect       => egui::include_image!("../assets/icons/edge_select.svg"),
+        ActiveTool::Select3D         => egui::include_image!("../assets/icons/vertex_select.svg"),
         ActiveTool::Extrude          => egui::include_image!("../assets/icons/extrude.svg"),
         ActiveTool::Inset            => egui::include_image!("../assets/icons/inset.svg"),
         ActiveTool::LoopCut          => egui::include_image!("../assets/icons/loop_cut.svg"),
-        ActiveTool::FaceSelect       => egui::include_image!("../assets/icons/face_select.svg"),
+        ActiveTool::MoveObject       => egui::include_image!("../assets/icons/move_object.svg"),
+        ActiveTool::ScaleObject      => egui::include_image!("../assets/icons/scale_object.svg"),
     }
 }
 
@@ -13417,12 +13418,12 @@ fn tool_tooltip_text(tool: &ActiveTool) -> &'static str {
         ActiveTool::MagicWand        => "Magic Wand Selection Tool (Select color regions)",
         ActiveTool::Move             => "Pan & Move Canvas Tool",
         ActiveTool::Zoom             => "Zoom View Tool",
-        ActiveTool::VertexSelect     => "Vertex Select Tool (Select & move vertices)",
-        ActiveTool::EdgeSelect       => "Edge Select Tool (Select & move edges)",
+        ActiveTool::Select3D         => "Select Tool (Click vertices, edges, or faces)",
         ActiveTool::Extrude          => "Extrude Tool (Drag a face to pull it out)",
         ActiveTool::Inset            => "Inset Tool (Drag a face to inset a border)",
         ActiveTool::LoopCut          => "Loop Cut Tool (Hover to preview, click to cut)",
-        ActiveTool::FaceSelect       => "Face Select Tool (Select & move faces)",
+        ActiveTool::MoveObject       => "Move Tool (Click an object, drag to move on the grid)",
+        ActiveTool::ScaleObject      => "Scale Tool (Click an object, drag to resize in whole units)",
     }
 }
 

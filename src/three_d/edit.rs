@@ -302,6 +302,8 @@ pub fn delete_vertices(mesh: &Mesh, verts: &[u32]) -> EditOutcome {
 pub enum Primitive {
     Cube,
     Plane,
+    Sphere,
+    Cylinder,
 }
 
 /// Merge a new primitive into the mesh, stacked above existing geometry.
@@ -314,6 +316,8 @@ pub fn add_primitive(
     let prim = match kind {
         Primitive::Cube => Mesh::cube(8),
         Primitive::Plane => Mesh::plane(8),
+        Primitive::Sphere => Mesh::sphere(8),
+        Primitive::Cylinder => Mesh::cylinder(8),
     };
     let mut out_mesh = mesh.clone();
     let lift = if out_mesh.vertices.is_empty() {
@@ -741,5 +745,91 @@ pub fn create_face(
         pixel_edits: rec.edits,
         select_faces: vec![new_idx],
         select_verts: Vec::new(),
+    })
+}
+
+/// All faces connected to `seed_face` through shared vertices — one "object"
+/// in a multi-object mesh.
+pub fn connected_faces(mesh: &Mesh, seed_face: u32) -> Vec<u32> {
+    if seed_face as usize >= mesh.faces.len() {
+        return Vec::new();
+    }
+    let mut in_component_verts: HashSet<u32> =
+        mesh.faces[seed_face as usize].verts.iter().copied().collect();
+    let mut component: HashSet<u32> = HashSet::from([seed_face]);
+    // Fixed-point iteration: tiny meshes, simplicity over asymptotics.
+    loop {
+        let mut grew = false;
+        for (fi, face) in mesh.faces.iter().enumerate() {
+            if component.contains(&(fi as u32)) {
+                continue;
+            }
+            if face.verts.iter().any(|v| in_component_verts.contains(v)) {
+                component.insert(fi as u32);
+                in_component_verts.extend(face.verts.iter().copied());
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    let mut faces: Vec<u32> = component.into_iter().collect();
+    faces.sort_unstable();
+    faces
+}
+
+/// Uniformly scale a vertex set so its largest bounding-box dimension
+/// changes by `k` whole units, anchored at the bbox min corner; every
+/// vertex is rounded back onto the grid. Islands of affected faces re-fit
+/// with 1:1 anchored copies.
+pub fn scale_verts(
+    mesh: &Mesh,
+    layer: &Layer,
+    verts: &[u32],
+    k: i32,
+    atlas: (u32, u32),
+) -> Result<EditOutcome, AtlasFull> {
+    let mut out_mesh = mesh.clone();
+    let moved: HashSet<u32> = verts.iter().copied().collect();
+    if k == 0 || moved.is_empty() {
+        return Ok(EditOutcome { mesh: out_mesh, select_verts: verts.to_vec(), ..Default::default() });
+    }
+    let mut min = [f32::MAX; 3];
+    let mut max = [f32::MIN; 3];
+    for &vi in &moved {
+        let Some(v) = out_mesh.vertices.get(vi as usize) else { continue };
+        for a in 0..3 {
+            min[a] = min[a].min(v[a]);
+            max[a] = max[a].max(v[a]);
+        }
+    }
+    let base = (0..3).map(|a| max[a] - min[a]).fold(0.0f32, f32::max);
+    if base < 1.0 {
+        return Ok(EditOutcome { mesh: out_mesh, select_verts: verts.to_vec(), ..Default::default() });
+    }
+    let target = (base + k as f32).max(1.0);
+    let factor = target / base;
+    for &vi in &moved {
+        if let Some(v) = out_mesh.vertices.get_mut(vi as usize) {
+            for a in 0..3 {
+                v[a] = min[a] + ((v[a] - min[a]) * factor).round();
+            }
+        }
+    }
+    let affected: HashSet<u32> = out_mesh
+        .faces
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| f.verts.iter().any(|vi| moved.contains(vi)))
+        .map(|(i, _)| i as u32)
+        .collect();
+    let mut rec = PixelRecorder::new(layer);
+    refresh_islands(&mut out_mesh, &mut rec, &affected, atlas)?;
+    Ok(EditOutcome {
+        mesh: out_mesh,
+        pixel_edits: rec.edits,
+        select_faces: Vec::new(),
+        select_verts: verts.to_vec(),
     })
 }

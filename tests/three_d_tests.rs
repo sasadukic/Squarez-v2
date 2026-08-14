@@ -587,3 +587,94 @@ fn create_face_sorts_any_click_order() {
     }
     out.mesh.validate().expect("valid");
 }
+
+// ── Primitive + object op tests ──────────────────────────────────────────────
+
+use squarez::three_d::edit::{connected_faces, scale_verts, add_primitive as add_prim, Primitive as Prim};
+
+fn assert_outward_and_integral(mesh: &Mesh, center: [f32; 3]) {
+    for v in &mesh.vertices {
+        for a in 0..3 {
+            assert!((v[a] - v[a].round()).abs() < 1e-4, "non-integer vert {:?}", v);
+        }
+    }
+    for face in &mesh.faces {
+        let n = mesh.face_normal(face);
+        let k = face.verts.len() as f32;
+        let c = face.verts.iter().fold([0.0f32; 3], |acc, &vi| {
+            let v = mesh.vertices[vi as usize];
+            [acc[0] + v[0] / k, acc[1] + v[1] / k, acc[2] + v[2] / k]
+        });
+        let out = [c[0] - center[0], c[1] - center[1], c[2] - center[2]];
+        let dot = n[0] * out[0] + n[1] * out[1] + n[2] * out[2];
+        assert!(dot > 0.0, "face normal {:?} at {:?} points inward", n, c);
+    }
+}
+
+#[test]
+fn cylinder_is_valid_integral_and_outward() {
+    let mut mesh = Mesh::cylinder(8);
+    mesh.validate().expect("valid");
+    assert_eq!(mesh.vertices.len(), 16);
+    assert_eq!(mesh.faces.len(), 8 + 6);
+    assert_outward_and_integral(&mesh, [0.0, 4.0, 0.0]);
+    mesh.allocate_all_islands((256, 256)).expect("islands fit");
+}
+
+#[test]
+fn sphere_is_valid_integral_and_outward() {
+    let mut mesh = Mesh::sphere(8);
+    mesh.validate().expect("valid");
+    assert_eq!(mesh.vertices.len(), 32);
+    assert_eq!(mesh.faces.len(), 24 + 6);
+    assert_outward_and_integral(&mesh, [0.0, 4.0, 0.0]);
+    mesh.allocate_all_islands((256, 256)).expect("islands fit");
+}
+
+#[test]
+fn connected_faces_separates_objects() {
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands((256, 256)).unwrap();
+    let layer = Layer::new("Texture".to_string(), 256, 256);
+    let out = add_prim(&mesh, &layer, Prim::Cube, (256, 256)).expect("fits");
+    let two = out.mesh;
+    assert_eq!(two.faces.len(), 12);
+    let first = connected_faces(&two, 0);
+    let second = connected_faces(&two, 6);
+    assert_eq!(first, (0..6).collect::<Vec<u32>>());
+    assert_eq!(second, (6..12).collect::<Vec<u32>>());
+}
+
+#[test]
+fn scale_grows_and_shrinks_on_the_grid() {
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands((256, 256)).unwrap();
+    let layer = Layer::new("Texture".to_string(), 256, 256);
+    let verts: Vec<u32> = (0..8).collect();
+
+    let grown = scale_verts(&mesh, &layer, &verts, 2, (256, 256)).expect("fits");
+    let (mut min, mut max) = ([f32::MAX; 3], [f32::MIN; 3]);
+    for v in &grown.mesh.vertices {
+        for a in 0..3 {
+            min[a] = min[a].min(v[a]);
+            max[a] = max[a].max(v[a]);
+            assert!((v[a] - v[a].round()).abs() < 1e-4, "off-grid vert {:?}", v);
+        }
+    }
+    assert_eq!(max[0] - min[0], 10.0);
+    assert_eq!(max[1] - min[1], 10.0);
+    // Islands re-fit to the new 10x10 faces.
+    assert!(grown.mesh.faces.iter().all(|f| f.island.w == 10 && f.island.h == 10));
+    assert!(!grown.pixel_edits.is_empty());
+
+    // Shrinking far below 1 clamps to a 1-unit object.
+    let tiny = scale_verts(&mesh, &layer, &verts, -20, (256, 256)).expect("fits");
+    let (mut tmin, mut tmax) = ([f32::MAX; 3], [f32::MIN; 3]);
+    for v in &tiny.mesh.vertices {
+        for a in 0..3 {
+            tmin[a] = tmin[a].min(v[a]);
+            tmax[a] = tmax[a].max(v[a]);
+        }
+    }
+    assert_eq!(tmax[1] - tmin[1], 1.0);
+}
