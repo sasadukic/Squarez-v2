@@ -448,3 +448,113 @@ fn orbit_views_shade_faces_snap_views_do_not() {
     let scene = build_scene(&mesh, &snap, rect100(), (64, 64));
     assert!(scene.tris.iter().all(|t| t.shade == [1.0, 1.0, 1.0]));
 }
+
+// ── New modeling op tests: extrude_n, inset, loop cut, create face ───────────
+
+use squarez::three_d::edit::{create_face, extrude_faces_n, inset_faces, loop_cut, plan_loop};
+
+#[test]
+fn extrude_n_units_moves_cap_and_sizes_sides() {
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands((128, 128)).unwrap();
+    let layer = Layer::new("Texture".to_string(), 128, 128);
+    let out = extrude_faces_n(&mesh, &layer, &[1], 3, (128, 128)).expect("fits");
+    let cap = &out.mesh.faces[1];
+    for &vi in &cap.verts {
+        assert_eq!(out.mesh.vertices[vi as usize][1], 11.0, "cap should sit at y = 8 + 3");
+    }
+    // Side islands span edge_len x n.
+    for side in &out.mesh.faces[6..] {
+        assert_eq!((side.island.w, side.island.h).min((side.island.h, side.island.w)), (3, 8).min((8, 3)));
+    }
+    out.mesh.validate().expect("valid");
+}
+
+#[test]
+fn inset_shrinks_face_and_preserves_painted_center() {
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands((128, 128)).unwrap();
+    let mut layer = Layer::new("Texture".to_string(), 128, 128);
+    // Paint a marker 2 texels in from the old island's corner: it lies in the
+    // kept center region for d=2 and must survive at the new island's origin.
+    let old = mesh.faces[1].island;
+    layer.set_pixel(old.x as u32 + 2, old.y as u32 + 2, [200, 10, 10, 255]);
+
+    let out = inset_faces(&mesh, &layer, &[1], 2, (128, 128)).expect("fits");
+    assert_eq!(out.mesh.vertices.len(), 12);
+    assert_eq!(out.mesh.faces.len(), 10);
+    assert_eq!(out.select_faces, vec![1]);
+    let center = &out.mesh.faces[1];
+    assert_eq!((center.island.w, center.island.h), (4, 4));
+    // Center ring vertices sit 2 units inside the old 8x8 top face.
+    for &vi in &center.verts {
+        let v = out.mesh.vertices[vi as usize];
+        assert_eq!(v[1], 8.0);
+        assert!(v[0].abs() == 2.0 && v[2].abs() == 2.0, "ring vert {:?}", v);
+    }
+    // The painted marker got blitted to the center island's corner.
+    let dst = center.island;
+    let blit = out
+        .pixel_edits
+        .iter()
+        .find(|&&(x, y, _, _)| x == dst.x as u32 && y == dst.y as u32)
+        .expect("corner blit exists");
+    assert_eq!(blit.3, [200, 10, 10, 255]);
+    out.mesh.validate().expect("valid");
+}
+
+#[test]
+fn loop_cut_rings_around_the_cube() {
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands((256, 256)).unwrap();
+    let layer = Layer::new("Texture".to_string(), 256, 256);
+    // Front face is index 2 ([3,2,6,7]); entry edge at pos 1 = (2,6), the
+    // vertical edge at x=+4. Cut at s=0.25 → y=2.
+    let plan = plan_loop(&mesh, 2, 1, 0.25).expect("plan exists");
+    assert_eq!(plan.steps.len(), 4, "loop should ring through the 4 side faces");
+
+    let out = loop_cut(&mesh, &layer, &plan, (256, 256)).expect("fits");
+    assert_eq!(out.mesh.vertices.len(), 12, "4 shared cut vertices");
+    assert_eq!(out.mesh.faces.len(), 10, "4 quads become 8");
+    // All cut vertices at y = 2.
+    for v in &out.mesh.vertices[8..] {
+        assert!((v[1] - 2.0).abs() < 1e-4, "cut vertex {:?}", v);
+    }
+    // Every split half island crops to 8x2 or 8x6.
+    for st in &plan.steps {
+        let half = &out.mesh.faces[st.face as usize];
+        let dims = (half.island.w.min(half.island.h), half.island.w.max(half.island.h));
+        assert!(dims == (2, 8) || dims == (6, 8), "half island {:?}", half.island);
+    }
+    out.mesh.validate().expect("valid");
+}
+
+#[test]
+fn create_face_fills_and_orients_outward() {
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands((128, 128)).unwrap();
+    let layer = Layer::new("Texture".to_string(), 128, 128);
+    // Remove the top face, then recreate it from its ring — deliberately in
+    // the "wrong" (inward) order to exercise the auto-orient.
+    let out = delete_faces(&mesh, &[1]);
+    assert_eq!(out.mesh.faces.len(), 5);
+    let refill = create_face(&out.mesh, &layer, &[5, 6, 7, 4], (128, 128)).expect("fits");
+    assert_eq!(refill.mesh.faces.len(), 6);
+    let new_face = refill.mesh.faces.last().unwrap();
+    let n = refill.mesh.face_normal(new_face);
+    assert!(n[1] > 0.0, "recreated top face must point up, got {:?}", n);
+    assert_eq!((new_face.island.w, new_face.island.h), (8, 8));
+    assert!(!refill.pixel_edits.is_empty(), "fresh island painted");
+    refill.mesh.validate().expect("valid");
+}
+
+#[test]
+fn create_face_rejects_degenerate_input() {
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands((128, 128)).unwrap();
+    let layer = Layer::new("Texture".to_string(), 128, 128);
+    // Duplicate vertices → unchanged mesh.
+    let out = create_face(&mesh, &layer, &[0, 0, 1], (128, 128)).expect("ok");
+    assert_eq!(out.mesh.faces.len(), 6);
+    assert!(out.pixel_edits.is_empty());
+}

@@ -24,6 +24,24 @@ pub struct VertexDrag {
     pub applied: [i32; 3],
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpKind {
+    Extrude,
+    Inset,
+}
+
+/// An in-flight extrude/inset drag: pristine mesh + layer snapshots taken at
+/// press time so every preview amount recomputes from clean state.
+#[derive(Debug, Clone)]
+pub struct OpDrag {
+    pub kind: OpKind,
+    pub face: u32,
+    pub start_mesh: mesh::Mesh,
+    pub start_layer: Layer,
+    pub raw: f32,
+    pub applied: u32,
+}
+
 /// Per-tab UI state for the 3D workspace: camera, selection, and in-flight
 /// gesture data. Parked/swapped alongside the tab like the undo stack.
 #[derive(Debug, Clone)]
@@ -35,6 +53,7 @@ pub struct ThreeDState {
     pub sel_faces: Vec<u32>,
     pub hover_face: Option<u32>,
     pub drag: Option<VertexDrag>,
+    pub op_drag: Option<OpDrag>,
     /// Pixel edits accumulated during the current paint stroke.
     pub stroke_edits: Vec<(u32, u32, Rgba, Rgba)>,
     /// Texels already recorded this stroke (one undo entry per texel).
@@ -55,6 +74,7 @@ impl Default for ThreeDState {
             sel_faces: Vec::new(),
             hover_face: None,
             drag: None,
+            op_drag: None,
             stroke_edits: Vec::new(),
             stroke_painted: std::collections::HashSet::new(),
             last_paint: None,
@@ -71,6 +91,7 @@ impl ThreeDState {
         self.sel_faces.clear();
         self.hover_face = None;
         self.drag = None;
+        self.op_drag = None;
         self.stroke_edits.clear();
         self.stroke_painted.clear();
         self.last_paint = None;

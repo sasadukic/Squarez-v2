@@ -32,6 +32,9 @@ pub enum ActiveTool {
     VertexSelect,
     EdgeSelect,
     FaceSelect,
+    Extrude,
+    Inset,
+    LoopCut,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -10,7 +10,7 @@ use egui::{Color32, FontId, PointerButton, Pos2, Rect, Sense, Stroke, Vec2};
 use super::camera::SnapView;
 use super::edit::{self, EditOutcome};
 use super::mesh::{AtlasFull, Mesh};
-use super::{gizmo, paint, render, ThreeDState, VertexDrag};
+use super::{gizmo, paint, render, OpDrag, OpKind, ThreeDState, VertexDrag};
 use crate::canvas::CanvasState;
 use crate::color::ColorState;
 use crate::history::{Command, UndoStack};
@@ -33,6 +33,7 @@ enum Action {
     AddPlane,
     Extrude,
     Delete,
+    CreateFace,
 }
 
 const VERTEX_HIT_RADIUS: f32 = 8.0;
@@ -96,6 +97,51 @@ fn commit_edit(
     state.sel_verts = outcome.select_verts;
     output.canvas_dirty = true;
     output.modified = true;
+}
+
+fn dist3(a: [f32; 3], b: [f32; 3]) -> f32 {
+    ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
+}
+
+/// For the Loop Cut tool: the face edge nearest the cursor plus the cut
+/// fraction along it, snapped to whole world units (never on a corner).
+fn face_edge_param(
+    mesh: &Mesh,
+    face_idx: u32,
+    cam: &super::camera::Camera3D,
+    rect: Rect,
+    pos: Pos2,
+) -> Option<(usize, f32)> {
+    let face = mesh.faces.get(face_idx as usize)?;
+    if face.verts.len() != 4 {
+        return None;
+    }
+    let mut best: Option<(usize, f32, f32)> = None; // (entry_pos, raw s, screen dist)
+    for i in 0..4 {
+        let a = mesh.vertices[face.verts[i] as usize];
+        let b = mesh.vertices[face.verts[(i + 1) % 4] as usize];
+        let (pa, _) = cam.project(a, rect);
+        let (pb, _) = cam.project(b, rect);
+        let ab = pb - pa;
+        let len2 = ab.length_sq();
+        if len2 < 1e-6 {
+            continue;
+        }
+        let t = ((pos - pa).dot(ab) / len2).clamp(0.0, 1.0);
+        let d = pos.distance(pa + ab * t);
+        if best.is_none_or(|(_, _, bd)| d < bd) {
+            best = Some((i, t, d));
+        }
+    }
+    let (entry_pos, s_raw, _) = best?;
+    let a = mesh.vertices[face.verts[entry_pos] as usize];
+    let b = mesh.vertices[face.verts[(entry_pos + 1) % 4] as usize];
+    let len = dist3(a, b).round();
+    if len < 2.0 {
+        return None; // a 1-unit edge has no interior cut position
+    }
+    let t_units = (s_raw * len).round().clamp(1.0, len - 1.0);
+    Some((entry_pos, t_units / len))
 }
 
 /// The unique endpoints of the selected edges, sorted.
@@ -316,6 +362,8 @@ pub fn draw(
     let is_face_tool = matches!(active_tool, ActiveTool::FaceSelect);
     let is_edge_tool = matches!(active_tool, ActiveTool::EdgeSelect);
     let is_vertex_tool = matches!(active_tool, ActiveTool::VertexSelect);
+    let is_modify_tool = matches!(active_tool, ActiveTool::Extrude | ActiveTool::Inset);
+    let is_loop_tool = matches!(active_tool, ActiveTool::LoopCut);
     let mut action: Option<Action> = None;
     let mut over_buttons = false;
     {
@@ -323,6 +371,9 @@ pub fn draw(
             vec![("+ Cube", Action::AddCube), ("+ Plane", Action::AddPlane)];
         if is_face_tool && !state.sel_faces.is_empty() {
             defs.push(("Extrude (E)", Action::Extrude));
+        }
+        if is_vertex_tool && (3..=4).contains(&state.sel_verts.len()) {
+            defs.push(("Create Face (F)", Action::CreateFace));
         }
         let mut x = canvas_rect.min.x + 8.0;
         for (label, act) in defs {
@@ -375,6 +426,159 @@ pub fn draw(
                             painter.line_segment([a, b], stroke);
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // ── Extrude / Inset drag ────────────────────────────────────────────────
+    if is_modify_tool {
+        state.hover_face = None;
+        let kind = if matches!(active_tool, ActiveTool::Inset) { OpKind::Inset } else { OpKind::Extrude };
+
+        // Hover affordance while not dragging.
+        if state.op_drag.is_none() && !over_ui {
+            if let (Some(pos), Some(scene), Some(mesh)) =
+                (pointer_pos, scene.as_ref(), project.mesh3d.as_ref())
+            {
+                if let Some(hit) = paint::pick(scene, pos, mesh, atlas) {
+                    if let Some(face) = mesh.faces.get(hit.face as usize) {
+                        let stroke = Stroke::new(1.5, Color32::from_white_alpha(140));
+                        let k = face.verts.len();
+                        for i in 0..k {
+                            let (a, _) = cam_copy.project(mesh.vertices[face.verts[i] as usize], canvas_rect);
+                            let (b, _) = cam_copy.project(mesh.vertices[face.verts[(i + 1) % k] as usize], canvas_rect);
+                            painter.line_segment([a, b], stroke);
+                        }
+                    }
+                }
+            }
+        }
+
+        let pressed = ui.input(|i| i.pointer.primary_pressed()) && pointer_over && !over_ui;
+        if pressed && state.op_drag.is_none() {
+            if let (Some(pos), Some(scene), Some(mesh)) =
+                (pointer_pos, scene.as_ref(), project.mesh3d.as_ref())
+            {
+                if let Some(hit) = paint::pick(scene, pos, mesh, atlas) {
+                    if let Some(start_layer) =
+                        project.animations[0].frames[0].layers.get(li).cloned()
+                    {
+                        state.op_drag = Some(OpDrag {
+                            kind,
+                            face: hit.face,
+                            start_mesh: mesh.clone(),
+                            start_layer,
+                            raw: 0.0,
+                            applied: 0,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Live preview: recompute the whole op from the pristine snapshots
+        // whenever the snapped amount changes.
+        if response.dragged_by(PointerButton::Primary) {
+            let delta = response.drag_delta();
+            if delta != Vec2::ZERO && state.op_drag.is_some() {
+                let zoom = cam_copy.zoom.max(0.001);
+                let Some(od) = state.op_drag.as_mut() else { unreachable!() };
+                od.raw += match od.kind {
+                    OpKind::Extrude => {
+                        let face = &od.start_mesh.faces[od.face as usize];
+                        let axis = edit::extrude_dir(&od.start_mesh, face);
+                        let w = cam_copy.unview([delta.x / zoom, -delta.y / zoom, 0.0]);
+                        w[0] * axis[0] + w[1] * axis[1] + w[2] * axis[2]
+                    }
+                    // Drag right/down to grow the inset border.
+                    OpKind::Inset => (delta.x + delta.y) / (2.0 * zoom),
+                };
+                let n = od.raw.round().max(0.0) as u32;
+                if n != od.applied {
+                    let outcome = match od.kind {
+                        OpKind::Extrude => {
+                            edit::extrude_faces_n(&od.start_mesh, &od.start_layer, &[od.face], n, atlas)
+                        }
+                        OpKind::Inset => {
+                            edit::inset_faces(&od.start_mesh, &od.start_layer, &[od.face], n, atlas)
+                        }
+                    };
+                    if let Ok(outcome) = outcome {
+                        let start_layer = od.start_layer.clone();
+                        od.applied = n;
+                        project.mesh3d = Some(outcome.mesh);
+                        let frame = &mut project.animations[0].frames[0];
+                        if let Some(layer) = frame.layers.get_mut(li) {
+                            *layer = start_layer;
+                            for &(x, y, _, new) in &outcome.pixel_edits {
+                                layer.set_pixel(x, y, new);
+                            }
+                        }
+                        frame.dirty = true;
+                        output.canvas_dirty = true;
+                    }
+                    // Err(AtlasFull): hold the previous preview; growth
+                    // happens on commit.
+                }
+            }
+        }
+
+        if ui.input(|i| i.pointer.primary_released()) {
+            if let Some(od) = state.op_drag.take() {
+                // Restore pristine state, then commit the final amount
+                // through the normal atlas-growth + undo path.
+                project.mesh3d = Some(od.start_mesh.clone());
+                {
+                    let frame = &mut project.animations[0].frames[0];
+                    if let Some(layer) = frame.layers.get_mut(li) {
+                        *layer = od.start_layer.clone();
+                    }
+                    frame.dirty = true;
+                }
+                output.canvas_dirty = true;
+                if od.applied >= 1 {
+                    let (kind, face, n) = (od.kind, od.face, od.applied);
+                    let before = od.start_mesh.clone();
+                    if let Some(outcome) = with_atlas_growth(project, li, |m, layer, atlas| match kind {
+                        OpKind::Extrude => edit::extrude_faces_n(m, layer, &[face], n, atlas),
+                        OpKind::Inset => edit::inset_faces(m, layer, &[face], n, atlas),
+                    }) {
+                        commit_edit(state, project, undo, li, before, outcome, &mut output);
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Loop cut ────────────────────────────────────────────────────────────
+    if is_loop_tool {
+        state.hover_face = None;
+        if !over_ui {
+            let mut pending: Option<(Mesh, edit::LoopPlan)> = None;
+            if let (Some(pos), Some(scene), Some(mesh)) =
+                (pointer_pos, scene.as_ref(), project.mesh3d.as_ref())
+            {
+                if let Some(hit) = paint::pick(scene, pos, mesh, atlas) {
+                    if let Some((entry_pos, s)) = face_edge_param(mesh, hit.face, &cam_copy, canvas_rect, pos) {
+                        if let Some(plan) = edit::plan_loop(mesh, hit.face, entry_pos, s) {
+                            for seg in &plan.segments {
+                                let (a, _) = cam_copy.project(seg.0, canvas_rect);
+                                let (b, _) = cam_copy.project(seg.1, canvas_rect);
+                                painter.line_segment([a, b], Stroke::new(2.0, Color32::WHITE));
+                            }
+                            if ui.input(|i| i.pointer.primary_pressed()) {
+                                pending = Some((mesh.clone(), plan));
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some((before, plan)) = pending {
+                if let Some(outcome) = with_atlas_growth(project, li, |m, layer, atlas| {
+                    edit::loop_cut(m, layer, &plan, atlas)
+                }) {
+                    commit_edit(state, project, undo, li, before, outcome, &mut output);
                 }
             }
         }
@@ -559,6 +763,12 @@ pub fn draw(
             {
                 action = Some(Action::Extrude);
             }
+            if is_vertex_tool
+                && (3..=4).contains(&state.sel_verts.len())
+                && ui.input(|i| i.key_pressed(egui::Key::F))
+            {
+                action = Some(Action::CreateFace);
+            }
             if ui.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace))
             {
                 action = Some(Action::Delete);
@@ -590,6 +800,16 @@ pub fn draw(
                     edit::extrude_faces(mesh, layer, &sel, atlas)
                 }) {
                     commit_edit(state, project, undo, li, before, outcome, &mut output);
+                }
+            }
+            (Action::CreateFace, Some(before)) if (3..=4).contains(&state.sel_verts.len()) => {
+                let verts = state.sel_verts.clone();
+                if let Some(outcome) = with_atlas_growth(project, li, |mesh, layer, atlas| {
+                    edit::create_face(mesh, layer, &verts, atlas)
+                }) {
+                    if outcome.mesh.faces.len() != before.faces.len() {
+                        commit_edit(state, project, undo, li, before, outcome, &mut output);
+                    }
                 }
             }
             (Action::Delete, Some(before)) => {
@@ -676,9 +896,12 @@ pub fn draw(
         None => "Orbit".to_string(),
     };
     let hint = match active_tool {
-        ActiveTool::VertexSelect => "Vertex: click select · drag move · shift multi · Del delete",
+        ActiveTool::VertexSelect => "Vertex: click select · drag move · shift multi · F create face (3-4 verts) · Del delete",
         ActiveTool::EdgeSelect => "Edge: click select · drag move · shift multi · Del delete faces",
         ActiveTool::FaceSelect => "Face: click select · drag move · E extrude · Del delete",
+        ActiveTool::Extrude => "Extrude: drag a face to pull it out (whole units)",
+        ActiveTool::Inset => "Inset: drag a face to grow an inset border",
+        ActiveTool::LoopCut => "Loop Cut: hover to preview the ring · click to cut",
         t if paint::is_paint_tool(t) => "Paint on the model · RMB orbit · MMB pan · 1-6 snap views",
         _ => "RMB orbit · MMB pan · scroll zoom · 1-6 snap views",
     };
