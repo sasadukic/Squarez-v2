@@ -142,6 +142,10 @@ pub struct App {
     select_slot_rect: Option<egui::Rect>,
     modify3d_slot_rect: Option<egui::Rect>,
     object3d_slot_rect: Option<egui::Rect>,
+    add3d_slot_rect: Option<egui::Rect>,
+    add3d_group_current: crate::three_d::edit::Primitive,
+    open_add3d_menu: bool,
+    pending_add_primitive: Option<crate::three_d::edit::Primitive>,
     alt_was_down: bool,
     iso_box_dragging: bool,
     iso_cylinder_dragging: bool,
@@ -870,6 +874,10 @@ impl App {
             select_slot_rect: None,
             modify3d_slot_rect: None,
             object3d_slot_rect: None,
+            add3d_slot_rect: None,
+            add3d_group_current: crate::three_d::edit::Primitive::Cube,
+            open_add3d_menu: false,
+            pending_add_primitive: None,
             alt_was_down: false,
             iso_box_dragging: false,
             iso_cylinder_dragging: false,
@@ -1555,7 +1563,7 @@ impl App {
                 ActiveTool::Extrude | ActiveTool::Inset     => 3,
                 ActiveTool::LoopCut                         => 4,
                 ActiveTool::MoveObject | ActiveTool::ScaleObject => 5,
-                ActiveTool::Zoom                            => 6,
+                ActiveTool::Zoom                            => 7,
                 _                                           => 0,
             }
         } else {
@@ -2735,7 +2743,7 @@ impl App {
 
                 // Vertically center the button stack in the full screen
                 let is_3d = self.project.mode.is_three_d();
-                let tool_count = if is_3d { 7.0 } else { 5.0 };
+                let tool_count = if is_3d { 8.0 } else { 5.0 };
                 let tools_h = tool_count * 38.0;
                 let top_pad = ((ctx.screen_rect().height() - tools_h) / 2.0 - TOP_BAR_HEIGHT).max(0.0);
                 ui.add_space(top_pad);
@@ -2873,6 +2881,20 @@ impl App {
                             self.open_tool_submenu = None;
                         }
                     }
+
+                    // Slot 6: Add object (flyout with the four primitives)
+                    let add_resp = tool_btn_raw(
+                        ui,
+                        &self.theme,
+                        self.open_add3d_menu,
+                        prim_icon(self.add3d_group_current),
+                    )
+                    .on_hover_text("Add Object (Cube / Sphere / Cylinder / Plane)");
+                    self.add3d_slot_rect = Some(add_resp.rect);
+                    if add_resp.clicked() && !self.any_modal_open() {
+                        self.open_add3d_menu = !self.open_add3d_menu;
+                        self.open_tool_submenu = None;
+                    }
                 } else {
                     // Slot 2: Shape group (Rectangle/Ellipse/Line)
                     let shape_icon = tool_icon(&self.shape_group_current);
@@ -2938,6 +2960,62 @@ impl App {
                     self.object3d_slot_rect = object3d_rect;
                 }
             });
+    }
+
+    /// Flyout for the 3D "Add Object" toolbar slot: four primitive icons;
+    /// clicking one queues it for the workspace to add this frame.
+    fn draw_add3d_menu(&mut self, ctx: &egui::Context) {
+        if !self.open_add3d_menu {
+            return;
+        }
+        if !self.project.mode.is_three_d() {
+            self.open_add3d_menu = false;
+            return;
+        }
+        let Some(slot_rect) = self.add3d_slot_rect else { return; };
+        use crate::three_d::edit::Primitive;
+        let theme = self.theme.clone();
+        let prims = [
+            (Primitive::Cube, "Cube"),
+            (Primitive::Sphere, "Sphere"),
+            (Primitive::Cylinder, "Cylinder"),
+            (Primitive::Plane, "Plane"),
+        ];
+        let mut picked: Option<Primitive> = None;
+        let resp = egui::Area::new(egui::Id::new("add3d_menu"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(Pos2::new(slot_rect.right(), slot_rect.top()))
+            .show(ctx, |ui| {
+                Frame::new()
+                    .fill(theme.panel)
+                    .shadow(egui::Shadow {
+                        offset: [6, 0],
+                        blur: 20,
+                        spread: 0,
+                        color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
+                    })
+                    .inner_margin(Margin::same(0))
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing = Vec2::ZERO;
+                        ui.horizontal(|ui| {
+                            for (prim, name) in prims {
+                                let r = tool_btn_raw(ui, &theme, false, prim_icon(prim))
+                                    .on_hover_text(format!("Add {}", name));
+                                if r.clicked() {
+                                    picked = Some(prim);
+                                }
+                            }
+                        });
+                    });
+            })
+            .response;
+        if let Some(prim) = picked {
+            self.pending_add_primitive = Some(prim);
+            self.add3d_group_current = prim;
+            self.open_add3d_menu = false;
+        } else if resp.clicked_elsewhere() && !self.menu_was_open_at_frame_start {
+            self.open_add3d_menu = false;
+        }
     }
 
     fn draw_tool_submenu(&mut self, ctx: &egui::Context) {
@@ -6146,12 +6224,14 @@ impl App {
                 }
                 if self.project.mode.is_three_d() {
                     let active_tool = self.active_tool.clone();
+                    let pending_add = self.pending_add_primitive.take();
                     let out = crate::three_d::workspace::draw(
                         &mut self.three_d,
                         &mut self.project,
                         &mut self.undo_stack,
                         &mut self.color_state,
                         &active_tool,
+                        pending_add,
                         &self.canvas,
                         &self.theme,
                         ui,
@@ -13005,6 +13085,7 @@ impl eframe::App for App {
         self.draw_workspace(ctx);
         self.draw_left_toolbar(ctx);  // occupies left strip above timeline only
         self.draw_tool_submenu(ctx);  // floating tool group submenu (right of toolbar)
+        self.draw_add3d_menu(ctx);    // floating add-primitive flyout (3D mode)
         self.draw_layer_context_menu(ctx);
         self.draw_brush_context_menu(ctx);
         self.draw_brush_import_menu(ctx);
@@ -13380,6 +13461,17 @@ fn tool_btn_raw(ui: &mut egui::Ui, theme: &Theme, selected: bool, icon: ImageSou
     };
     ui.put(rect, Image::new(icon).fit_to_exact_size(Vec2::splat(18.0)).tint(tint));
     response
+}
+
+/// Icon for a 3D primitive kind.
+fn prim_icon(p: crate::three_d::edit::Primitive) -> ImageSource<'static> {
+    use crate::three_d::edit::Primitive;
+    match p {
+        Primitive::Cube => egui::include_image!("../assets/icons/prim_cube.svg"),
+        Primitive::Sphere => egui::include_image!("../assets/icons/prim_sphere.svg"),
+        Primitive::Cylinder => egui::include_image!("../assets/icons/prim_cylinder.svg"),
+        Primitive::Plane => egui::include_image!("../assets/icons/prim_plane.svg"),
+    }
 }
 
 /// Map a tool variant to its icon image.

@@ -258,6 +258,7 @@ pub fn draw(
     undo: &mut UndoStack,
     color_state: &mut ColorState,
     active_tool: &ActiveTool,
+    pending_add: Option<edit::Primitive>,
     canvas: &CanvasState,
     theme: &Theme,
     ui: &mut egui::Ui,
@@ -364,37 +365,17 @@ pub fn draw(
     let is_scale_object = matches!(active_tool, ActiveTool::ScaleObject);
     let is_object_tool = is_move_object || is_scale_object;
     let mut action: Option<Action> = None;
+    if let Some(prim) = pending_add {
+        action = Some(match prim {
+            edit::Primitive::Cube => Action::AddCube,
+            edit::Primitive::Plane => Action::AddPlane,
+            edit::Primitive::Sphere => Action::AddSphere,
+            edit::Primitive::Cylinder => Action::AddCylinder,
+        });
+    }
     let mut over_buttons = false;
     {
-        // Primitive icon buttons.
-        let prims: [(egui::ImageSource<'static>, Action, &str); 4] = [
-            (egui::include_image!("../../assets/icons/prim_cube.svg"), Action::AddCube, "Add Cube"),
-            (egui::include_image!("../../assets/icons/prim_sphere.svg"), Action::AddSphere, "Add Sphere"),
-            (egui::include_image!("../../assets/icons/prim_cylinder.svg"), Action::AddCylinder, "Add Cylinder"),
-            (egui::include_image!("../../assets/icons/prim_plane.svg"), Action::AddPlane, "Add Plane"),
-        ];
         let mut x = canvas_rect.min.x + 8.0;
-        for (icon, act, tip) in prims {
-            let rect = Rect::from_min_size(Pos2::new(x, canvas_rect.min.y + 8.0), Vec2::splat(24.0));
-            let resp = ui
-                .interact(rect, ui.id().with(("threed_prim", tip)), Sense::click())
-                .on_hover_text(tip);
-            let bg = if resp.hovered() { theme.surface } else { theme.panel };
-            painter.rect_filled(rect, 3.0, bg);
-            let tint = if resp.hovered() { Color32::WHITE } else { theme.fg_desc };
-            ui.put(
-                rect,
-                egui::Image::new(icon).fit_to_exact_size(Vec2::splat(16.0)).tint(tint),
-            );
-            if resp.hovered() {
-                over_buttons = true;
-            }
-            if resp.clicked() {
-                action = Some(act);
-            }
-            x += 24.0 + 6.0;
-        }
-
         // Contextual text buttons.
         let mut defs: Vec<(&str, Action)> = Vec::new();
         if is_select_tool && !state.sel_faces.is_empty() {
@@ -403,7 +384,6 @@ pub fn draw(
         if is_select_tool && (3..=4).contains(&state.sel_verts.len()) {
             defs.push(("Create Face (F)", Action::CreateFace));
         }
-        x += 6.0;
         for (label, act) in defs {
             let w = 14.0 + label.len() as f32 * 6.5;
             let rect = Rect::from_min_size(Pos2::new(x, canvas_rect.min.y + 8.0), Vec2::new(w, 24.0));
