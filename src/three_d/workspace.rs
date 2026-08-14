@@ -10,7 +10,7 @@ use egui::{Color32, FontId, PointerButton, Pos2, Rect, Sense, Stroke, Vec2};
 use super::camera::SnapView;
 use super::edit::{self, EditOutcome};
 use super::mesh::{AtlasFull, Mesh};
-use super::{paint, render, ThreeDState, VertexDrag};
+use super::{gizmo, paint, render, ThreeDState, VertexDrag};
 use crate::canvas::CanvasState;
 use crate::color::ColorState;
 use crate::history::{Command, UndoStack};
@@ -269,16 +269,20 @@ pub fn draw(
         }
     }
 
+    // ── Navigation gizmo (top-right corner) ─────────────────────────────────
+    let over_gizmo = gizmo::ui(ui, &painter, &mut state.camera, canvas_rect, theme);
+    let over_ui = over_buttons || over_gizmo;
+
     // ── Painting ────────────────────────────────────────────────────────────
     if let Some(scene) = scene.as_ref() {
-        if !over_buttons {
+        if !over_ui {
             let paint_result =
                 paint::handle(state, project, undo, color_state, active_tool, scene, &response, ui);
             output.canvas_dirty |= paint_result.canvas_dirty;
             output.modified |= paint_result.modified;
         }
 
-        if paint::is_paint_tool(active_tool) && !over_buttons {
+        if paint::is_paint_tool(active_tool) && !over_ui {
             if let Some(fi) = state.hover_face {
                 if let Some(mesh) = project.mesh3d.as_ref() {
                     if let Some(face) = mesh.faces.get(fi as usize) {
@@ -301,7 +305,7 @@ pub fn draw(
     if is_vertex_tool || is_face_tool {
         state.hover_face = None;
 
-        let pressed = ui.input(|i| i.pointer.primary_pressed()) && pointer_over && !over_buttons;
+        let pressed = ui.input(|i| i.pointer.primary_pressed()) && pointer_over && !over_ui;
         let shift = ui.input(|i| i.modifiers.shift);
 
         if pressed {
