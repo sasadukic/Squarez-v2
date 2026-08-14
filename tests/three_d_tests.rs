@@ -724,3 +724,32 @@ fn parametric_primitives_respect_grid_caps() {
     s.validate().expect("valid");
     assert_outward_and_integral(&s, [0.0, 8.0, 0.0]);
 }
+
+#[test]
+fn extrude_negative_pushes_a_recess_inward() {
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands((256, 256)).unwrap();
+    let layer = Layer::new("Texture".to_string(), 256, 256);
+    // Push the top face 3 units down into the cube.
+    let out = extrude_faces_n(&mesh, &layer, &[1], -3, (256, 256)).expect("fits");
+    let cap = &out.mesh.faces[1];
+    for &vi in &cap.verts {
+        assert_eq!(out.mesh.vertices[vi as usize][1], 5.0, "cap should sink to y = 8 - 3");
+    }
+    // Cap still faces up (out of the pocket toward the viewer).
+    let n = out.mesh.face_normal(cap);
+    assert!(n[1] > 0.0, "recessed cap must keep +Y, got {:?}", n);
+    // Pocket walls face inward, toward the cavity center axis (x=0, z=0).
+    for side in &out.mesh.faces[6..] {
+        let n = out.mesh.face_normal(side);
+        let k = side.verts.len() as f32;
+        let c = side.verts.iter().fold([0.0f32; 3], |acc, &vi| {
+            let v = out.mesh.vertices[vi as usize];
+            [acc[0] + v[0] / k, acc[1] + v[1] / k, acc[2] + v[2] / k]
+        });
+        let toward_axis = [-c[0], 0.0, -c[2]];
+        let dot = n[0] * toward_axis[0] + n[2] * toward_axis[2];
+        assert!(dot > 0.0, "pocket wall at {:?} should face the cavity, normal {:?}", c, n);
+    }
+    out.mesh.validate().expect("valid");
+}

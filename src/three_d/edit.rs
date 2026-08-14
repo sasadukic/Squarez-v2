@@ -208,13 +208,14 @@ pub fn extrude_faces(
 }
 
 /// Extrude each selected face `n` units along the dominant axis of its
-/// normal. The cap reuses the original island; side quads get fresh
-/// checker islands.
+/// normal — positive pulls out, negative pushes in (recess); the side
+/// walls wind correctly in both directions. The cap reuses the original
+/// island; side quads get fresh checker islands.
 pub fn extrude_faces_n(
     mesh: &Mesh,
     layer: &Layer,
     faces: &[u32],
-    n: u32,
+    n: i32,
     atlas: (u32, u32),
 ) -> Result<EditOutcome, AtlasFull> {
     let mut out_mesh = mesh.clone();

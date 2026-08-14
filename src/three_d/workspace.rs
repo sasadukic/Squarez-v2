@@ -526,13 +526,14 @@ pub fn draw(
                     OpKind::Scale => (delta.x - delta.y) / (2.0 * zoom),
                 };
                 let n: i32 = match od.kind {
-                    OpKind::Scale => od.raw.round() as i32,
-                    _ => od.raw.round().max(0.0) as i32,
+                    // Extrude and Scale go both ways; Inset only grows.
+                    OpKind::Extrude | OpKind::Scale => od.raw.round() as i32,
+                    OpKind::Inset => od.raw.round().max(0.0) as i32,
                 };
                 if n != od.applied {
                     let outcome = match od.kind {
                         OpKind::Extrude => {
-                            edit::extrude_faces_n(&od.start_mesh, &od.start_layer, &[od.face], n as u32, atlas)
+                            edit::extrude_faces_n(&od.start_mesh, &od.start_layer, &[od.face], n, atlas)
                         }
                         OpKind::Inset => {
                             edit::inset_faces(&od.start_mesh, &od.start_layer, &[od.face], n as u32, atlas)
@@ -580,7 +581,7 @@ pub fn draw(
                     let before = od.start_mesh.clone();
                     let kept_faces = state.sel_faces.clone();
                     if let Some(outcome) = with_atlas_growth(project, li, |m, layer, atlas| match kind {
-                        OpKind::Extrude => edit::extrude_faces_n(m, layer, &[face], n as u32, atlas),
+                        OpKind::Extrude => edit::extrude_faces_n(m, layer, &[face], n, atlas),
                         OpKind::Inset => edit::inset_faces(m, layer, &[face], n as u32, atlas),
                         OpKind::Scale => edit::scale_verts(m, layer, &verts, n, atlas),
                     }) {
