@@ -28,6 +28,7 @@ struct InactiveTab {
     undo_stack: UndoStack,
     thumbnails: Vec<Vec<FrameThumbnail>>,
     modified: bool,
+    three_d: crate::three_d::ThreeDState,
 }
 
 #[derive(Debug, Clone)]
@@ -267,6 +268,8 @@ pub struct App {
     pub sprite_stack_show_grid: bool,
     pub sprite_stack_preview_fixed_cam: bool,
     pub sprite_stack_grid_btn_rect: Option<egui::Rect>,
+    /// Per-tab 3D workspace state (camera, selection) for ThreeD-mode projects.
+    pub three_d: crate::three_d::ThreeDState,
     pub last_active_layer: usize,
     pub last_frame_index: usize,
     pub last_anim_index: usize,
@@ -967,6 +970,7 @@ impl App {
             sprite_stack_show_grid: true,
             sprite_stack_preview_fixed_cam: false,
             sprite_stack_grid_btn_rect: None,
+            three_d: Default::default(),
             last_active_layer: 0,
             last_frame_index: 0,
             last_anim_index: 0,
@@ -1160,6 +1164,7 @@ impl App {
         self.mirror_xy_sequence.clear();
         self.shape_preview.clear();
         self.select_state = crate::tools::SelectState::default();
+        self.three_d.clear_transient();
         self.close_all_context_menus();
         self.tab_resize_menu = None;
     }
@@ -1240,6 +1245,7 @@ impl App {
             self.undo_stack = UndoStack::new();
             self.thumbnails = Self::thumbnails_for(&self.project);
             self.active_modified = false;
+            self.three_d = Default::default();
             self.clear_transient_state();
             self.canvas_dirty = true;
             self.pending_zoom_fit = true;
@@ -1254,6 +1260,7 @@ impl App {
             undo_stack: std::mem::replace(&mut self.undo_stack, UndoStack::new()),
             thumbnails: std::mem::replace(&mut self.thumbnails, Vec::new()),
             modified: self.active_modified,
+            three_d: std::mem::take(&mut self.three_d),
         };
         self.other_tabs.insert(self.active_tab_idx, snap);
         // New tab position is one to the right of the old active tab.
@@ -1269,7 +1276,41 @@ impl App {
     }
 
     fn on_project_changed(&mut self) {
-        if self.project.mode == crate::project::ProjectMode::SpriteStack {
+        if self.project.mode.is_three_d() {
+            self.ui_state.collapse_palette = false;
+            self.ui_state.collapse_color = false;
+            self.ui_state.collapse_preview = false;
+            self.ui_state.collapse_brushes = true;
+            self.ui_state.collapse_layers = false;
+            self.ui_state.collapse_animations = true;
+            self.ui_state.collapse_tiles = true;
+
+            self.sidebar_order = vec![
+                Panel::Palette,
+                Panel::Color,
+                Panel::Layers,
+                Panel::Preview,
+                Panel::Brushes,
+                Panel::Animations,
+                Panel::Tiles,
+            ];
+
+            // Only paint tools and zoom exist in 3D mode.
+            if !matches!(
+                self.active_tool,
+                ActiveTool::Pencil
+                    | ActiveTool::Eraser
+                    | ActiveTool::Fill
+                    | ActiveTool::Eyedropper
+                    | ActiveTool::Zoom
+                    | ActiveTool::VertexSelect
+                    | ActiveTool::FaceSelect
+            ) {
+                self.set_active_tool(ActiveTool::Pencil);
+            }
+
+            self.pending_zoom_fit = true;
+        } else if self.project.mode == crate::project::ProjectMode::SpriteStack {
             self.ui_state.collapse_palette = false;
             self.ui_state.collapse_color = false;
             self.ui_state.collapse_preview = false;
@@ -1321,6 +1362,7 @@ impl App {
             undo_stack: std::mem::replace(&mut self.undo_stack, UndoStack::new()),
             thumbnails: std::mem::replace(&mut self.thumbnails, Vec::new()),
             modified: self.active_modified,
+            three_d: std::mem::take(&mut self.three_d),
         };
         self.other_tabs.insert(self.active_tab_idx, snap);
         // After insert, target is at other_tabs[i] (see plan for proof).
@@ -1330,6 +1372,7 @@ impl App {
         self.undo_stack = loaded.undo_stack;
         self.thumbnails = loaded.thumbnails;
         self.active_modified = loaded.modified;
+        self.three_d = loaded.three_d;
         self.active_tab_idx = i;
         self.clear_transient_state();
         self.canvas_dirty = true;
@@ -1348,6 +1391,7 @@ impl App {
                 self.undo_stack = UndoStack::new();
                 self.thumbnails = Self::thumbnails_for(&self.project);
                 self.active_modified = false;
+                self.three_d = Default::default();
                 self.active_tab_idx = 0;
                 self.project_created = false;
 
@@ -1372,6 +1416,7 @@ impl App {
                 self.undo_stack = loaded.undo_stack;
                 self.thumbnails = loaded.thumbnails;
                 self.active_modified = loaded.modified;
+                self.three_d = loaded.three_d;
                 // Recalculate active_tab_idx: we removed the new_logical tab from other_tabs.
                 // If new_logical < i (left): active is now at i-1 (we removed from left).
                 // If new_logical > i (right): active stays at i.
@@ -2651,7 +2696,8 @@ impl App {
                 ui.spacing_mut().item_spacing = Vec2::ZERO;
 
                 // Vertically center the button stack in the full screen
-                let tool_count = 5.0;
+                let is_3d = self.project.mode.is_three_d();
+                let tool_count = if is_3d { 3.0 } else { 5.0 };
                 let tools_h = tool_count * 38.0;
                 let top_pad = ((ctx.screen_rect().height() - tools_h) / 2.0 - TOP_BAR_HEIGHT).max(0.0);
                 ui.add_space(top_pad);
@@ -2712,30 +2758,32 @@ impl App {
                     }
                 }
 
-                // Slot 2: Shape group (Rectangle/Ellipse/Line)
-                let shape_icon = tool_icon(&self.shape_group_current);
-                let shape_resp = tool_btn_raw(ui, &self.theme, self.is_group_selected(2), shape_icon)
-                    .on_hover_text(tool_tooltip_text(&self.shape_group_current));
-                let shape_rect = shape_resp.rect;
-                if shape_resp.clicked() && !self.any_modal_open() {
-                    if self.is_group_selected(2) {
-                        if self.open_tool_submenu == Some(2) {
+                let mut shape_rect: Option<egui::Rect> = None;
+                let mut select_rect: Option<egui::Rect> = None;
+                if !is_3d {
+                    // Slot 2: Shape group (Rectangle/Ellipse/Line)
+                    let shape_icon = tool_icon(&self.shape_group_current);
+                    let shape_resp = tool_btn_raw(ui, &self.theme, self.is_group_selected(2), shape_icon)
+                        .on_hover_text(tool_tooltip_text(&self.shape_group_current));
+                    shape_rect = Some(shape_resp.rect);
+                    if shape_resp.clicked() && !self.any_modal_open() {
+                        if self.is_group_selected(2) {
+                            if self.open_tool_submenu == Some(2) {
+                                self.open_tool_submenu = None;
+                            } else if !self.menu_was_open_at_frame_start {
+                                self.open_tool_submenu = Some(2);
+                            }
+                        } else {
+                            self.set_active_tool(self.shape_group_current.clone());
                             self.open_tool_submenu = None;
-                        } else if !self.menu_was_open_at_frame_start {
-                            self.open_tool_submenu = Some(2);
                         }
-                    } else {
-                        self.set_active_tool(self.shape_group_current.clone());
-                        self.open_tool_submenu = None;
                     }
-                }
 
-                // Slot 3: Select group (RectSelect/Move)
-                {
+                    // Slot 3: Select group (RectSelect/Move)
                     let select_icon = tool_icon(&self.select_group_current);
                     let select_resp = tool_btn_raw(ui, &self.theme, self.is_group_selected(3), select_icon)
                         .on_hover_text(tool_tooltip_text(&self.select_group_current));
-                    let select_rect = select_resp.rect;
+                    select_rect = Some(select_resp.rect);
                     if select_resp.clicked() && !self.any_modal_open() {
                         if self.is_group_selected(3) {
                             if self.open_tool_submenu == Some(3) {
@@ -2748,8 +2796,10 @@ impl App {
                             self.open_tool_submenu = None;
                         }
                     }
+                }
 
-                    // Slot 4: Zoom (ungrouped)
+                // Zoom (ungrouped, always last)
+                {
                     let zoom_resp = tool_btn(ui, &mut self.active_tool, &self.theme, ActiveTool::Zoom, egui::include_image!("../assets/icons/zoom.svg"))
                         .on_hover_text("Zoom View Tool (Double-click button to fit canvas)");
                     if zoom_resp.clicked() && !self.any_modal_open() {
@@ -2769,8 +2819,8 @@ impl App {
                     // Stash slot rects for the submenu overlay drawn after this panel
                     self.pen_slot_rect = Some(pen_rect);
                     self.bucket_slot_rect = Some(bucket_rect);
-                    self.shape_slot_rect = Some(shape_rect);
-                    self.select_slot_rect = Some(select_rect);
+                    self.shape_slot_rect = shape_rect;
+                    self.select_slot_rect = select_rect;
                 }
             });
     }
@@ -4949,7 +4999,7 @@ impl App {
     }
 
     fn draw_timeline(&mut self, ctx: &egui::Context) {
-        if !self.ui_state.is_visible(Panel::Timeline) {
+        if !self.ui_state.is_visible(Panel::Timeline) || self.project.mode.hides_timeline() {
             return;
         }
         if !self.project_created || self.ui_state.collapse_animations {
@@ -5919,7 +5969,8 @@ impl App {
                     self.rebuild_canvas_texture(ctx);
                 }
                 let mut canvas_rect = ui.available_rect_before_wrap();
-                let timeline_visible = self.ui_state.is_visible(Panel::Timeline);
+                let timeline_visible = self.ui_state.is_visible(Panel::Timeline)
+                    && !self.project.mode.hides_timeline();
                 if timeline_visible && !self.ui_state.collapse_animations {
                     canvas_rect.max.y -= 104.0;
                 }
@@ -5941,10 +5992,40 @@ impl App {
                         let projected_w = w + h;
                         let projected_h = (w + h) * 0.5 + num_layers;
                         self.canvas.zoom_to_fit(fit_rect, projected_w.ceil() as u32, projected_h.ceil() as u32);
+                    } else if self.project.mode.is_three_d() {
+                        let radius = self
+                            .project
+                            .mesh3d
+                            .as_ref()
+                            .map(|m| {
+                                m.vertices
+                                    .iter()
+                                    .fold(4.0f32, |acc, v| acc.max(v[0].abs()).max(v[1].abs()).max(v[2].abs()))
+                            })
+                            .unwrap_or(8.0);
+                        self.three_d.camera.reset_home();
+                        self.three_d.camera.zoom_to_fit(radius * 1.75, fit_rect);
                     } else {
                         self.canvas.zoom_to_fit(fit_rect, disp_w, disp_h);
                     }
                     self.pending_zoom_fit = false;
+                }
+                if self.project.mode.is_three_d() {
+                    let out = crate::three_d::workspace::draw(
+                        &mut self.three_d,
+                        &mut self.project,
+                        &self.canvas,
+                        &self.theme,
+                        ui,
+                        canvas_rect,
+                    );
+                    if out.canvas_dirty {
+                        self.canvas_dirty = true;
+                    }
+                    if out.modified {
+                        self.active_modified = true;
+                    }
+                    return;
                 }
                 let painter = ui.painter_at(canvas_rect);
                 if self.project.mode == crate::project::ProjectMode::SpriteStack {
@@ -10489,6 +10570,7 @@ print("FAIL")
                                                  .show_ui(ui, |ui| {
                                                       ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::Normal, "Normal");
                                                       ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::SpriteStack, "Sprite Stack");
+                                                      ui.selectable_value(&mut self.new_project_mode, crate::project::ProjectMode::ThreeD, "3D Model");
                                                  }).response;
                                               if self.new_project_mode != prev_mode {
                                                    if self.new_project_mode == crate::project::ProjectMode::SpriteStack {
@@ -10498,6 +10580,12 @@ print("FAIL")
                                                        self.new_height_str = "8".to_string();
                                                        self.new_sprite_stack_height = 8;
                                                        self.new_sprite_stack_height_str = "8".to_string();
+                                                   } else if self.new_project_mode.is_three_d() {
+                                                       // Width/Height become the texture atlas size.
+                                                       self.new_width = 256;
+                                                       self.new_width_str = "256".to_string();
+                                                       self.new_height = 256;
+                                                       self.new_height_str = "256".to_string();
                                                    }
                                                }
                                              resp
@@ -10743,7 +10831,7 @@ print("FAIL")
                             ui.painter().rect_stroke(in3, 2.0, input_stroke, egui::StrokeKind::Inside);
                         }
 
-                        let (cw, ch) = if is_sprite_stack {
+                        let (cw, ch) = if is_sprite_stack || self.new_project_mode.is_three_d() {
                             (self.new_width.max(1), self.new_height.max(1))
                         } else {
                             ui.add_space(20.0);
@@ -10953,7 +11041,9 @@ print("FAIL")
                                  if create_resp.clicked() {
                                      let tile_w = self.new_width;
                                      let tile_h = self.new_height;
-                                      let (tiles_w, tiles_h) = if self.new_project_mode == crate::project::ProjectMode::SpriteStack {
+                                      let (tiles_w, tiles_h) = if self.new_project_mode == crate::project::ProjectMode::SpriteStack
+                                          || self.new_project_mode.is_three_d()
+                                      {
                                           (1, 1)
                                       } else {
                                           (self.new_tiles_w, self.new_tiles_h)
@@ -10961,6 +11051,15 @@ print("FAIL")
                                       let cw = tile_w * tiles_w;
                                       let ch = tile_h * tiles_h;
                                        let mut new_proj = Project::new_tiled_with_mode(cw, ch, self.new_name.clone(), tiles_w, tiles_h, tile_w, tile_h, self.new_project_mode);
+                                       if self.new_project_mode.is_three_d() {
+                                           // The canvas is the texture atlas: one frame, one "Texture" layer.
+                                           let layer = &mut new_proj.animations[0].frames[0].layers[0];
+                                           layer.name = "Texture".to_string();
+                                           let mut mesh = crate::three_d::mesh::Mesh::cube(8);
+                                           let _ = mesh.allocate_all_islands((cw, ch));
+                                           crate::three_d::paint_islands(layer, &mesh, [128, 128, 128, 255]);
+                                           new_proj.mesh3d = Some(mesh);
+                                       }
                                        if self.new_project_mode == crate::project::ProjectMode::SpriteStack {
                                          let stack_h = self.new_sprite_stack_height.max(1);
                                          new_proj.sprite_stack_max_layers = Some(stack_h);
