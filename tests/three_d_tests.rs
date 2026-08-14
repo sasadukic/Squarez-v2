@@ -299,7 +299,7 @@ use squarez::history::{apply_command, Command, Direction};
 use squarez::project::{Project, ProjectMode};
 use squarez::three_d::edit::{
     add_primitive, delete_faces, delete_vertices, extrude_faces, move_vertices, Primitive,
-    NEW_FACE_COLOR,
+    DEFAULT_FACE_A, DEFAULT_FACE_B,
 };
 
 #[test]
@@ -317,7 +317,7 @@ fn extrude_top_face_adds_cap_and_sides() {
     assert_eq!(out.select_faces, vec![top]);
     // Cap reuses the original island; sides got fresh gray-filled islands.
     assert_eq!(out.mesh.faces[top as usize].island, old_island);
-    assert!(out.pixel_edits.iter().all(|&(_, _, _, new)| new == NEW_FACE_COLOR));
+    assert!(out.pixel_edits.iter().all(|&(_, _, _, new)| new == DEFAULT_FACE_A || new == DEFAULT_FACE_B));
     assert!(!out.pixel_edits.is_empty());
     out.mesh.validate().expect("valid after extrude");
 

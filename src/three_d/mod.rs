@@ -77,6 +77,12 @@ impl ThreeDState {
     }
 }
 
+/// Default prototype-material tones for fresh faces: a subtle warm-gray
+/// checkerboard that shows texel density and reads well under the
+/// warm/cool viewport lighting.
+pub const DEFAULT_FACE_A: Rgba = [168, 161, 150, 255];
+pub const DEFAULT_FACE_B: Rgba = [149, 143, 133, 255];
+
 /// Fill every allocated island rect on `layer` with `color`. Used at project
 /// creation so new faces are immediately visible on the model.
 pub fn paint_islands(layer: &mut Layer, mesh: &mesh::Mesh, color: Rgba) {
@@ -85,6 +91,20 @@ pub fn paint_islands(layer: &mut Layer, mesh: &mesh::Mesh, color: Rgba) {
         for ty in isl.y..isl.y + isl.h {
             for tx in isl.x..isl.x + isl.w {
                 layer.set_pixel(tx as u32, ty as u32, color);
+            }
+        }
+    }
+}
+
+/// Fill every allocated island with the default 1-texel checkerboard
+/// (island-local parity, so every face's pattern starts the same).
+pub fn paint_islands_checker(layer: &mut Layer, mesh: &mesh::Mesh) {
+    for face in &mesh.faces {
+        let isl = face.island;
+        for ty in 0..isl.h {
+            for tx in 0..isl.w {
+                let c = if (tx + ty) % 2 == 0 { DEFAULT_FACE_A } else { DEFAULT_FACE_B };
+                layer.set_pixel((isl.x + tx) as u32, (isl.y + ty) as u32, c);
             }
         }
     }

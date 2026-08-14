@@ -11115,7 +11115,7 @@ print("FAIL")
                                            layer.name = "Texture".to_string();
                                            let mut mesh = crate::three_d::mesh::Mesh::cube(8);
                                            let _ = mesh.allocate_all_islands((cw, ch));
-                                           crate::three_d::paint_islands(layer, &mesh, [128, 128, 128, 255]);
+                                           crate::three_d::paint_islands_checker(layer, &mesh);
                                            new_proj.mesh3d = Some(mesh);
                                        }
                                        if self.new_project_mode == crate::project::ProjectMode::SpriteStack {

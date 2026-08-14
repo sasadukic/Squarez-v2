@@ -10,9 +10,9 @@ use std::collections::HashSet;
 use super::mesh::{AtlasFull, Face, Island, Mesh};
 use crate::project::{Layer, Rgba};
 
-/// Default color painted into freshly allocated islands so new faces are
-/// visible immediately (same gray as project creation).
-pub const NEW_FACE_COLOR: Rgba = [128, 128, 128, 255];
+/// Checkerboard tones painted into freshly allocated islands so new faces
+/// match the default prototype material from project creation.
+pub use super::{DEFAULT_FACE_A, DEFAULT_FACE_B};
 
 pub type PixelEdit = (u32, u32, Rgba, Rgba);
 
@@ -52,11 +52,13 @@ impl<'a> PixelRecorder<'a> {
         }
     }
 
-    /// Fill an island rect with a solid color.
-    fn fill_island(&mut self, isl: Island, color: Rgba) {
-        for y in isl.y..isl.y + isl.h {
-            for x in isl.x..isl.x + isl.w {
-                self.write(x as u32, y as u32, color);
+    /// Fill an island rect with the default checkerboard material
+    /// (island-local parity, matching project creation).
+    fn fill_island_default(&mut self, isl: Island) {
+        for y in 0..isl.h {
+            for x in 0..isl.w {
+                let c = if (x + y) % 2 == 0 { DEFAULT_FACE_A } else { DEFAULT_FACE_B };
+                self.write((isl.x + x) as u32, (isl.y + y) as u32, c);
             }
         }
     }
@@ -211,7 +213,7 @@ pub fn extrude_faces(
             let mut side = Face { verts: vec![a, b, b2, a2], island: Island::default() };
             let (_, _, w, h) = out_mesh.face_uv_bounds(&side);
             let isl = out_mesh.alloc_island(w, h, atlas)?;
-            rec.fill_island(isl, NEW_FACE_COLOR);
+            rec.fill_island_default(isl);
             side.island = isl;
             out_mesh.faces.push(side);
         }
@@ -292,7 +294,7 @@ pub fn add_primitive(
         };
         let (_, _, w, h) = out_mesh.face_uv_bounds(&f);
         let isl = out_mesh.alloc_island(w, h, atlas)?;
-        rec.fill_island(isl, NEW_FACE_COLOR);
+        rec.fill_island_default(isl);
         f.island = isl;
         new_faces.push(out_mesh.faces.len() as u32);
         out_mesh.faces.push(f);
