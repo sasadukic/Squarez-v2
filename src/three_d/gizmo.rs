@@ -54,7 +54,7 @@ pub fn ui(
     canvas_rect: Rect,
     theme: &Theme,
 ) -> bool {
-    let center = Pos2::new(canvas_rect.right() - RADIUS - 14.0, canvas_rect.top() + RADIUS + 14.0);
+    let center = Pos2::new(canvas_rect.right() - RADIUS - 14.0, canvas_rect.bottom() - RADIUS - 14.0);
     let rect = Rect::from_center_size(center, Vec2::splat(RADIUS * 2.0));
     let response = ui.interact(rect, ui.id().with("threed_gizmo"), Sense::click_and_drag());
     let pointer = ui.input(|i| i.pointer.hover_pos());
