@@ -1438,7 +1438,12 @@ impl App {
 
     fn save_active_tab(&mut self) -> bool {
         if self.current_path.is_none() {
-            match rfd_save_as(&self.project.name) {
+            let picked = if self.project.mode.is_three_d() {
+                rfd_save_obj(&self.project.name)
+            } else {
+                rfd_save_as(&self.project.name)
+            };
+            match picked {
                 Some(p) => {
                     self.current_path = Some(p);
                     if let Some(ref path) = self.current_path {
@@ -1451,7 +1456,7 @@ impl App {
             }
         }
         if let Some(path) = self.current_path.clone() {
-            if save_sqr(&self.project, &path).is_ok() {
+            if save_project_file(&self.project, &path).is_ok() {
                 self.active_modified = false;
                 return true;
             }
@@ -1468,7 +1473,7 @@ impl App {
 
     fn autosave_all_tabs(&mut self) {
         if let Some(ref path) = self.current_path {
-            if save_sqr(&self.project, path).is_ok() {
+            if save_project_file(&self.project, path).is_ok() {
                 self.active_modified = false;
             }
         } else {
@@ -1480,7 +1485,7 @@ impl App {
 
         for (i, tab) in self.other_tabs.iter_mut().enumerate() {
             if let Some(ref path) = tab.current_path {
-                if save_sqr(&tab.project, path).is_ok() {
+                if save_project_file(&tab.project, path).is_ok() {
                     tab.modified = false;
                 }
             } else {
@@ -2370,7 +2375,7 @@ impl App {
                                 }
                                 if dropdown_row(ui, &theme, "Open", None, true).clicked() {
                                     if let Some(path) = rfd_open() {
-                                        if let Ok(p) = load_sqr(&path) {
+                                        if let Ok(p) = load_project_file(&path) {
                                             self.open_in_new_tab(p, Some(path));
                                         }
                                     }
@@ -12776,7 +12781,7 @@ impl eframe::App for App {
         }
         if file_open && !self.any_modal_open() {
             if let Some(path) = rfd_open() {
-                if let Ok(p) = load_sqr(&path) {
+                if let Ok(p) = load_project_file(&path) {
                     self.open_in_new_tab(p, Some(path));
                 }
             }
@@ -12788,8 +12793,8 @@ impl eframe::App for App {
             if let Some(path) = file.path {
                 if let Some(ext) = path.extension() {
                     let ext_str = ext.to_string_lossy().to_lowercase();
-                    if ext_str == "sqr" {
-                        if let Ok(p) = load_sqr(&path) {
+                    if ext_str == "sqr" || ext_str == "obj" {
+                        if let Ok(p) = load_project_file(&path) {
                             self.open_in_new_tab(p, Some(path));
                         }
                     } else if ext_str == "png" || ext_str == "jpg" || ext_str == "jpeg" || ext_str == "gif" || ext_str == "bmp" {
@@ -13300,8 +13305,27 @@ fn panel_icon(panel: Panel) -> egui::ImageSource<'static> {
 
 fn rfd_open() -> Option<std::path::PathBuf> {
     rfd::FileDialog::new()
+        .add_filter("Squarez Files", &["sqr", "obj"])
         .add_filter("Squarez Project", &["sqr"])
+        .add_filter("3D Model", &["obj"])
         .pick_file()
+}
+
+/// Load a project from disk, dispatching on the file extension.
+fn load_project_file(path: &std::path::Path) -> Result<Project, Box<dyn std::error::Error>> {
+    match path.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()).as_deref() {
+        Some("obj") => crate::io::obj::load_obj(path),
+        _ => load_sqr(path),
+    }
+}
+
+/// Save a project to disk, dispatching on the file extension
+/// (.obj writes the OBJ + MTL + PNG trio; everything else writes .sqr).
+fn save_project_file(project: &Project, path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    match path.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()).as_deref() {
+        Some("obj") => crate::io::obj::save_obj(project, path),
+        _ => save_sqr(project, path),
+    }
 }
 
 fn rfd_pick_image() -> Option<std::path::PathBuf> {
@@ -13324,6 +13348,19 @@ fn rfd_save_as(default_name: &str) -> Option<std::path::PathBuf> {
     };
     rfd::FileDialog::new()
         .add_filter("Squarez Project", &["sqr"])
+        .set_file_name(&filename)
+        .save_file()
+}
+
+/// Save dialog for 3D-mode projects (OBJ + MTL + PNG trio).
+fn rfd_save_obj(default_name: &str) -> Option<std::path::PathBuf> {
+    let filename = if default_name.to_lowercase().ends_with(".obj") {
+        default_name.to_string()
+    } else {
+        format!("{}.obj", default_name)
+    };
+    rfd::FileDialog::new()
+        .add_filter("3D Model", &["obj"])
         .set_file_name(&filename)
         .save_file()
 }
