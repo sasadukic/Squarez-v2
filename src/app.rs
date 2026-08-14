@@ -1304,6 +1304,7 @@ impl App {
                     | ActiveTool::Eyedropper
                     | ActiveTool::Zoom
                     | ActiveTool::VertexSelect
+                    | ActiveTool::EdgeSelect
                     | ActiveTool::FaceSelect
             ) {
                 self.set_active_tool(ActiveTool::Pencil);
@@ -1540,7 +1541,7 @@ impl App {
             ActiveTool::Rectangle { .. }
             | ActiveTool::Ellipse { .. }
             | ActiveTool::Line                                => 2, // shape group
-            ActiveTool::VertexSelect | ActiveTool::FaceSelect => 3,
+            ActiveTool::VertexSelect | ActiveTool::EdgeSelect | ActiveTool::FaceSelect => 3,
             ActiveTool::RectSelect | ActiveTool::MagicWand | ActiveTool::Move => 3, // select group
             ActiveTool::Zoom                                  => 4,
         }
@@ -2702,7 +2703,7 @@ impl App {
 
                 // Vertically center the button stack in the full screen
                 let is_3d = self.project.mode.is_three_d();
-                let tool_count = 5.0;
+                let tool_count = if is_3d { 6.0 } else { 5.0 };
                 let tools_h = tool_count * 38.0;
                 let top_pad = ((ctx.screen_rect().height() - tools_h) / 2.0 - TOP_BAR_HEIGHT).max(0.0);
                 ui.add_space(top_pad);
@@ -2776,6 +2777,17 @@ impl App {
                     .on_hover_text(tool_tooltip_text(&ActiveTool::VertexSelect));
                     if vertex_resp.clicked() && !self.any_modal_open() {
                         self.set_active_tool(ActiveTool::VertexSelect);
+                        self.open_tool_submenu = None;
+                    }
+                    let edge_resp = tool_btn_raw(
+                        ui,
+                        &self.theme,
+                        self.active_tool == ActiveTool::EdgeSelect,
+                        tool_icon(&ActiveTool::EdgeSelect),
+                    )
+                    .on_hover_text(tool_tooltip_text(&ActiveTool::EdgeSelect));
+                    if edge_resp.clicked() && !self.any_modal_open() {
+                        self.set_active_tool(ActiveTool::EdgeSelect);
                         self.open_tool_submenu = None;
                     }
                     let face_resp = tool_btn_raw(
@@ -11641,6 +11653,7 @@ print("FAIL")
                                         ("Mouse Scroll", "Zoom at cursor (1 texel = N px)"),
                                         ("1-6", "Snap view: Front/Back/Right/Left/Top/Bottom"),
                                         ("0", "Reset to home orbit view"),
+                                        ("V / L / F", "Vertex / Edge / Face tools"),
                                         ("E", "Extrude selected faces (Face tool)"),
                                         ("Delete / Backspace", "Delete selected faces or vertices"),
                                         ("Shift + Click", "Add/remove from selection"),
@@ -12598,6 +12611,9 @@ impl eframe::App for App {
                     if ctx.input(|i| i.key_pressed(egui::Key::V)) {
                         self.set_active_tool(ActiveTool::VertexSelect);
                     }
+                    if ctx.input(|i| i.key_pressed(egui::Key::L)) {
+                        self.set_active_tool(ActiveTool::EdgeSelect);
+                    }
                     if ctx.input(|i| i.key_pressed(egui::Key::F)) {
                         self.set_active_tool(ActiveTool::FaceSelect);
                     }
@@ -13290,6 +13306,7 @@ fn tool_icon(tool: &ActiveTool) -> ImageSource<'static> {
         ActiveTool::Move             => egui::include_image!("../assets/icons/move.svg"),
         ActiveTool::Zoom             => egui::include_image!("../assets/icons/zoom.svg"),
         ActiveTool::VertexSelect     => egui::include_image!("../assets/icons/vertex_select.svg"),
+        ActiveTool::EdgeSelect       => egui::include_image!("../assets/icons/edge_select.svg"),
         ActiveTool::FaceSelect       => egui::include_image!("../assets/icons/face_select.svg"),
     }
 }
@@ -13308,6 +13325,7 @@ fn tool_tooltip_text(tool: &ActiveTool) -> &'static str {
         ActiveTool::Move             => "Pan & Move Canvas Tool",
         ActiveTool::Zoom             => "Zoom View Tool",
         ActiveTool::VertexSelect     => "Vertex Select Tool (Select & move vertices)",
+        ActiveTool::EdgeSelect       => "Edge Select Tool (Select & move edges)",
         ActiveTool::FaceSelect       => "Face Select Tool (Select & move faces)",
     }
 }

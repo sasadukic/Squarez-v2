@@ -98,6 +98,78 @@ fn commit_edit(
     output.modified = true;
 }
 
+/// The unique endpoints of the selected edges, sorted.
+fn edge_selection_verts(sel_edges: &[(u32, u32)]) -> Vec<u32> {
+    let mut set = std::collections::HashSet::new();
+    for &(a, b) in sel_edges {
+        set.insert(a);
+        set.insert(b);
+    }
+    let mut verts: Vec<u32> = set.into_iter().collect();
+    verts.sort_unstable();
+    verts
+}
+
+/// Faces that contain any of the given edges (as consecutive vertices).
+fn faces_with_edges(mesh: &Mesh, edges: &[(u32, u32)]) -> Vec<u32> {
+    let set: std::collections::HashSet<(u32, u32)> = edges.iter().copied().collect();
+    mesh.faces
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| {
+            let k = f.verts.len();
+            (0..k).any(|i| {
+                let a = f.verts[i];
+                let b = f.verts[(i + 1) % k];
+                set.contains(&(a.min(b), a.max(b)))
+            })
+        })
+        .map(|(i, _)| i as u32)
+        .collect()
+}
+
+fn dist_to_segment(p: Pos2, a: Pos2, b: Pos2) -> f32 {
+    let ab = b - a;
+    let len2 = ab.length_sq();
+    if len2 < 1e-6 {
+        return p.distance(a);
+    }
+    let t = ((p - a).dot(ab) / len2).clamp(0.0, 1.0);
+    p.distance(a + ab * t)
+}
+
+/// Nearest visible edge within the hit distance, as a sorted index pair.
+fn edge_under(
+    mesh: &Mesh,
+    scene: &render::Scene,
+    cam: &super::camera::Camera3D,
+    rect: Rect,
+    pos: Pos2,
+) -> Option<(u32, u32)> {
+    const EDGE_HIT_DIST: f32 = 6.0;
+    let mut seen = std::collections::HashSet::new();
+    let mut best: Option<((u32, u32), f32)> = None;
+    for &fi in &scene.visible_faces {
+        let face = &mesh.faces[fi as usize];
+        let k = face.verts.len();
+        for i in 0..k {
+            let a = face.verts[i];
+            let b = face.verts[(i + 1) % k];
+            let key = (a.min(b), a.max(b));
+            if !seen.insert(key) {
+                continue;
+            }
+            let (pa, _) = cam.project(mesh.vertices[a as usize], rect);
+            let (pb, _) = cam.project(mesh.vertices[b as usize], rect);
+            let d = dist_to_segment(pos, pa, pb);
+            if d <= EDGE_HIT_DIST && best.is_none_or(|(_, bd)| d < bd) {
+                best = Some((key, d));
+            }
+        }
+    }
+    best.map(|(key, _)| key)
+}
+
 /// The unique vertices of the selected faces, sorted.
 fn face_selection_verts(sel_faces: &[u32], mesh: &Mesh) -> Vec<u32> {
     let mut set = std::collections::HashSet::new();
@@ -211,6 +283,7 @@ pub fn draw(
         }
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             state.sel_verts.clear();
+            state.sel_edges.clear();
             state.sel_faces.clear();
         }
     }
@@ -236,6 +309,7 @@ pub fn draw(
 
     // ── Button strip ────────────────────────────────────────────────────────
     let is_face_tool = matches!(active_tool, ActiveTool::FaceSelect);
+    let is_edge_tool = matches!(active_tool, ActiveTool::EdgeSelect);
     let is_vertex_tool = matches!(active_tool, ActiveTool::VertexSelect);
     let mut action: Option<Action> = None;
     let mut over_buttons = false;
@@ -302,7 +376,7 @@ pub fn draw(
     }
 
     // ── Modeling input ──────────────────────────────────────────────────────
-    if is_vertex_tool || is_face_tool {
+    if is_vertex_tool || is_edge_tool || is_face_tool {
         state.hover_face = None;
 
         let pressed = ui.input(|i| i.pointer.primary_pressed()) && pointer_over && !over_ui;
@@ -334,6 +408,38 @@ pub fn draw(
                         None => {
                             if !shift {
                                 state.sel_verts.clear();
+                            }
+                        }
+                    }
+                } else if is_edge_tool {
+                    if let Some(scene) = scene.as_ref() {
+                        match edge_under(mesh, scene, &cam_copy, canvas_rect, pos) {
+                            Some(edge) => {
+                                if shift {
+                                    if let Some(idx) =
+                                        state.sel_edges.iter().position(|&e| e == edge)
+                                    {
+                                        state.sel_edges.remove(idx);
+                                    } else {
+                                        state.sel_edges.push(edge);
+                                    }
+                                } else if !state.sel_edges.contains(&edge) {
+                                    state.sel_edges = vec![edge];
+                                }
+                                // Pressing on a selected edge starts an edge move.
+                                if state.sel_edges.contains(&edge) {
+                                    state.drag = Some(VertexDrag {
+                                        start_mesh: mesh.clone(),
+                                        verts: edge_selection_verts(&state.sel_edges),
+                                        raw: [0.0; 3],
+                                        applied: [0; 3],
+                                    });
+                                }
+                            }
+                            None => {
+                                if !shift {
+                                    state.sel_edges.clear();
+                                }
                             }
                         }
                     }
@@ -415,14 +521,18 @@ pub fn draw(
                     let applied = drag.applied;
                     let before = drag.start_mesh.clone();
                     let kept_faces = state.sel_faces.clone();
+                    let kept_edges = state.sel_edges.clone();
                     if let Some(outcome) = with_atlas_growth(project, li, |_, layer, atlas| {
                         edit::move_vertices(&before, layer, &moved, applied, atlas)
                     }) {
                         commit_edit(state, project, undo, li, drag.start_mesh, outcome, &mut output);
+                        // Face/edge identities are unchanged by a move — keep
+                        // the selection instead of the moved-verts list.
                         if is_face_tool {
-                            // Face indices are unchanged by a move — keep the
-                            // face selection instead of the moved-verts list.
                             state.sel_faces = kept_faces;
+                            state.sel_verts.clear();
+                        } else if is_edge_tool {
+                            state.sel_edges = kept_edges;
                             state.sel_verts.clear();
                         }
                     } else {
@@ -481,6 +591,13 @@ pub fn draw(
                 if is_face_tool && !state.sel_faces.is_empty() {
                     let outcome = edit::delete_faces(&before, &state.sel_faces);
                     commit_edit(state, project, undo, li, before, outcome, &mut output);
+                } else if is_edge_tool && !state.sel_edges.is_empty() {
+                    let doomed = faces_with_edges(&before, &state.sel_edges);
+                    if !doomed.is_empty() {
+                        let outcome = edit::delete_faces(&before, &doomed);
+                        commit_edit(state, project, undo, li, before, outcome, &mut output);
+                    }
+                    state.sel_edges.clear();
                 } else if is_vertex_tool && !state.sel_verts.is_empty() {
                     let outcome = edit::delete_vertices(&before, &state.sel_verts);
                     commit_edit(state, project, undo, li, before, outcome, &mut output);
@@ -503,6 +620,27 @@ pub fn draw(
                         .map(|&vi| cam_copy.project(mesh.vertices[vi as usize], canvas_rect).0)
                         .collect();
                     painter.add(egui::Shape::convex_polygon(pts, tint, outline));
+                }
+            }
+        }
+        if is_edge_tool {
+            // Hovered edge (lighter) under the selected edges (full accent).
+            if !over_ui {
+                if let (Some(pos), Some(scene)) = (pointer_pos, scene.as_ref()) {
+                    if let Some((a, b)) = edge_under(mesh, scene, &cam_copy, canvas_rect, pos) {
+                        if !state.sel_edges.contains(&(a, b)) {
+                            let (pa, _) = cam_copy.project(mesh.vertices[a as usize], canvas_rect);
+                            let (pb, _) = cam_copy.project(mesh.vertices[b as usize], canvas_rect);
+                            painter.line_segment([pa, pb], Stroke::new(2.0, theme.accent.gamma_multiply(0.6)));
+                        }
+                    }
+                }
+            }
+            for &(a, b) in &state.sel_edges {
+                if (a as usize) < mesh.vertices.len() && (b as usize) < mesh.vertices.len() {
+                    let (pa, _) = cam_copy.project(mesh.vertices[a as usize], canvas_rect);
+                    let (pb, _) = cam_copy.project(mesh.vertices[b as usize], canvas_rect);
+                    painter.line_segment([pa, pb], Stroke::new(3.0, theme.accent));
                 }
             }
         }
@@ -533,6 +671,7 @@ pub fn draw(
     };
     let hint = match active_tool {
         ActiveTool::VertexSelect => "Vertex: click select · drag move · shift multi · Del delete",
+        ActiveTool::EdgeSelect => "Edge: click select · drag move · shift multi · Del delete faces",
         ActiveTool::FaceSelect => "Face: click select · drag move · E extrude · Del delete",
         t if paint::is_paint_tool(t) => "Paint on the model · RMB orbit · MMB pan · 1-6 snap views",
         _ => "RMB orbit · MMB pan · scroll zoom · 1-6 snap views",

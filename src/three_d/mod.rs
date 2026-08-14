@@ -30,6 +30,8 @@ pub struct VertexDrag {
 pub struct ThreeDState {
     pub camera: camera::Camera3D,
     pub sel_verts: Vec<u32>,
+    /// Selected edges as sorted vertex-index pairs.
+    pub sel_edges: Vec<(u32, u32)>,
     pub sel_faces: Vec<u32>,
     pub hover_face: Option<u32>,
     pub drag: Option<VertexDrag>,
@@ -49,6 +51,7 @@ impl Default for ThreeDState {
         Self {
             camera: camera::Camera3D::default(),
             sel_verts: Vec::new(),
+            sel_edges: Vec::new(),
             sel_faces: Vec::new(),
             hover_face: None,
             drag: None,
@@ -64,6 +67,7 @@ impl ThreeDState {
     /// Drop transient gesture state (selection, stroke) but keep the camera.
     pub fn clear_transient(&mut self) {
         self.sel_verts.clear();
+        self.sel_edges.clear();
         self.sel_faces.clear();
         self.hover_face = None;
         self.drag = None;

@@ -26,6 +26,8 @@ pub struct SceneTri {
     pub depth: f32,
     /// Index of the face this triangle belongs to.
     pub face: u32,
+    /// Lighting factor multiplied into the texture (1.0 = unlit).
+    pub shade: f32,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -43,12 +45,25 @@ pub fn build_scene(mesh: &Mesh, cam: &Camera3D, rect: Rect, atlas: (u32, u32)) -
     let aw = atlas.0.max(1) as f32;
     let ah = atlas.1.max(1) as f32;
 
+    // Per-face lambert shading from a view-space light (top-left-front),
+    // like Blender's solid viewport. Snapped views render unlit so texel
+    // colors read true while painting.
+    let unlit = cam.snapped().is_some();
+    const LIGHT: [f32; 3] = [-0.324, 0.417, 0.849]; // normalized
+
     for (fi, face) in mesh.faces.iter().enumerate() {
         let n = cam.view_dir(mesh.face_normal(face));
         if n[2] <= 0.0 {
             continue; // backface
         }
         scene.visible_faces.push(fi as u32);
+        let shade = if unlit {
+            1.0
+        } else {
+            let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(1e-6);
+            let lambert = (n[0] * LIGHT[0] + n[1] * LIGHT[1] + n[2] * LIGHT[2]) / len;
+            0.55 + 0.45 * lambert.max(0.0)
+        };
 
         // Screen positions + per-corner normalized UVs via the face's plane basis.
         let basis = mesh.face_plane_basis(face);
@@ -80,6 +95,7 @@ pub fn build_scene(mesh: &Mesh, cam: &Camera3D, rect: Rect, atlas: (u32, u32)) -
                 uvs: [a.1, b.1, c.1],
                 depth: (a.2 + b.2 + c.2) / 3.0,
                 face: fi as u32,
+                shade,
             });
         }
     }
@@ -97,11 +113,13 @@ pub fn paint_scene(painter: &egui::Painter, scene: &Scene, texture_id: egui::Tex
     let mut em = egui::Mesh::with_texture(texture_id);
     for tri in &scene.tris {
         let base = em.vertices.len() as u32;
+        let level = (tri.shade.clamp(0.0, 1.0) * 255.0).round() as u8;
+        let tint = Color32::from_gray(level);
         for i in 0..3 {
             em.vertices.push(egui::epaint::Vertex {
                 pos: tri.pts[i],
                 uv: tri.uvs[i],
-                color: Color32::WHITE,
+                color: tint,
             });
         }
         em.indices.extend([base, base + 1, base + 2]);

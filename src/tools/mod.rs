@@ -30,6 +30,7 @@ pub enum ActiveTool {
     Zoom,
     // 3D mode tools
     VertexSelect,
+    EdgeSelect,
     FaceSelect,
 }
 
