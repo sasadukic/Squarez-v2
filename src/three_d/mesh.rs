@@ -121,32 +121,38 @@ impl Mesh {
         }
     }
 
-    /// Integer-coordinate pixel octagon of "radius" r in the XZ plane at
-    /// height `y`, ordered by increasing angle.
-    fn octagon_ring(vertices: &mut Vec<[f32; 3]>, r: f32, y: f32) -> Vec<u32> {
-        let a = r / 2.0;
-        let ring = [
-            (r, a),
-            (a, r),
-            (-a, r),
-            (-r, a),
-            (-r, -a),
-            (-a, -r),
-            (a, -r),
-            (r, -a),
-        ];
-        ring.iter()
-            .map(|&(x, z)| {
+    /// Regular n-gon "pixel ring" of radius r in the XZ plane at height
+    /// `y`: vertices at half-step angle offsets, rounded onto the integer
+    /// grid, ordered by increasing angle. (For n = 8, r = 4 this rounds
+    /// exactly onto the classic pixel octagon.)
+    fn poly_ring(vertices: &mut Vec<[f32; 3]>, n: u32, r: f32, y: f32) -> Vec<u32> {
+        let n = n.max(3);
+        (0..n)
+            .map(|k| {
+                let angle = (k as f32 + 0.5) * std::f32::consts::TAU / n as f32;
+                let x = (r * angle.cos()).round();
+                let z = (r * angle.sin()).round();
                 vertices.push([x, y, z]);
                 vertices.len() as u32 - 1
             })
             .collect()
     }
 
-    /// Side quads between two octagon rings (lower ring first), outward.
+    /// How many sides a ring of radius `r` supports before grid rounding
+    /// collapses neighboring vertices (spacing under ~1 unit).
+    pub fn max_sides_for_radius(r: f32) -> u32 {
+        if r < 0.75 {
+            return 4;
+        }
+        let per_side = (1.0 / (2.0 * r)).min(1.0).asin();
+        ((std::f32::consts::PI / per_side).floor() as u32).clamp(4, 24)
+    }
+
+    /// Side quads between two same-length rings (lower ring first), outward.
     fn band(faces: &mut Vec<Face>, lo: &[u32], hi: &[u32]) {
-        for i in 0..8 {
-            let j = (i + 1) % 8;
+        let n = lo.len();
+        for i in 0..n {
+            let j = (i + 1) % n;
             faces.push(Face {
                 verts: vec![lo[j], lo[i], hi[i], hi[j]],
                 island: Island::default(),
@@ -154,12 +160,11 @@ impl Mesh {
         }
     }
 
-    /// Close an octagon ring with 3 quads (trapezoid + rectangle +
-    /// trapezoid). `top` selects the winding (+Y cap vs -Y cap).
+    /// Close a ring with a triangle fan. `top` selects the winding
+    /// (+Y cap vs -Y cap).
     fn cap(faces: &mut Vec<Face>, ring: &[u32], top: bool) {
-        let quads: [[usize; 4]; 3] = [[0, 1, 2, 3], [7, 0, 3, 4], [4, 5, 6, 7]];
-        for q in quads {
-            let mut verts: Vec<u32> = q.iter().map(|&i| ring[i]).collect();
+        for i in 1..ring.len() - 1 {
+            let mut verts = vec![ring[0], ring[i], ring[i + 1]];
             if top {
                 verts.reverse();
             }
@@ -167,38 +172,51 @@ impl Mesh {
         }
     }
 
-    /// Octagonal prism of `size` world units (integer coordinates): 8 side
-    /// quads plus 3-quad caps top and bottom. Islands not yet allocated.
-    pub fn cylinder(size: u32) -> Self {
+    /// n-sided prism of `size` diameter/height (integer coordinates):
+    /// side quads plus fan caps. Sides are clamped to what the grid
+    /// supports at this radius. Islands not yet allocated.
+    pub fn cylinder_n(sides: u32, size: u32) -> Self {
         let r = size as f32 / 2.0;
+        let n = sides.clamp(3, Self::max_sides_for_radius(r));
         let mut vertices = Vec::new();
         let mut faces = Vec::new();
-        let bottom = Self::octagon_ring(&mut vertices, r, 0.0);
-        let top = Self::octagon_ring(&mut vertices, r, size as f32);
+        let bottom = Self::poly_ring(&mut vertices, n, r, 0.0);
+        let top = Self::poly_ring(&mut vertices, n, r, size as f32);
         Self::band(&mut faces, &bottom, &top);
         Self::cap(&mut faces, &bottom, false);
         Self::cap(&mut faces, &top, true);
         Mesh { vertices, faces, atlas_cursor: AtlasCursor::default() }
     }
 
-    /// Chunky pixel sphere of `size` world units: stacked integer octagon
-    /// rings (r/2, r, r, r/2 profile) with 3-quad caps. Islands not yet
-    /// allocated.
-    pub fn sphere(size: u32) -> Self {
+    /// 8-sided default cylinder.
+    pub fn cylinder(size: u32) -> Self {
+        Self::cylinder_n(8, size)
+    }
+
+    /// Chunky pixel sphere of `size` diameter: stacked pixel rings
+    /// (r/2, r, r, r/2 profile) with fan caps. Sides clamped by the
+    /// smallest (pole) ring so rounding never collapses vertices.
+    pub fn sphere_n(sides: u32, size: u32) -> Self {
         let s = size as f32;
         let r = s / 2.0;
+        let n = sides.clamp(3, Self::max_sides_for_radius(r / 2.0));
         let mut vertices = Vec::new();
         let mut faces = Vec::new();
-        let r0 = Self::octagon_ring(&mut vertices, r / 2.0, 0.0);
-        let r1 = Self::octagon_ring(&mut vertices, r, s / 4.0);
-        let r2 = Self::octagon_ring(&mut vertices, r, s - s / 4.0);
-        let r3 = Self::octagon_ring(&mut vertices, r / 2.0, s);
+        let r0 = Self::poly_ring(&mut vertices, n, r / 2.0, 0.0);
+        let r1 = Self::poly_ring(&mut vertices, n, r, (s / 4.0).round());
+        let r2 = Self::poly_ring(&mut vertices, n, r, (s - s / 4.0).round());
+        let r3 = Self::poly_ring(&mut vertices, n, r / 2.0, s);
         Self::band(&mut faces, &r0, &r1);
         Self::band(&mut faces, &r1, &r2);
         Self::band(&mut faces, &r2, &r3);
         Self::cap(&mut faces, &r0, false);
         Self::cap(&mut faces, &r3, true);
         Mesh { vertices, faces, atlas_cursor: AtlasCursor::default() }
+    }
+
+    /// 8-sided default sphere.
+    pub fn sphere(size: u32) -> Self {
+        Self::sphere_n(8, size)
     }
 
     /// Unnormalized face normal (Newell's method — robust for any planar

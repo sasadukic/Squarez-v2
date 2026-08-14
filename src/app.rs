@@ -144,8 +144,10 @@ pub struct App {
     object3d_slot_rect: Option<egui::Rect>,
     add3d_slot_rect: Option<egui::Rect>,
     add3d_group_current: crate::three_d::edit::Primitive,
+    add3d_sides: u32,
+    add3d_size: u32,
     open_add3d_menu: bool,
-    pending_add_primitive: Option<crate::three_d::edit::Primitive>,
+    pending_add_primitive: Option<crate::three_d::edit::AddPrimitive>,
     alt_was_down: bool,
     iso_box_dragging: bool,
     iso_cylinder_dragging: bool,
@@ -876,6 +878,8 @@ impl App {
             object3d_slot_rect: None,
             add3d_slot_rect: None,
             add3d_group_current: crate::three_d::edit::Primitive::Cube,
+            add3d_sides: 8,
+            add3d_size: 8,
             open_add3d_menu: false,
             pending_add_primitive: None,
             alt_was_down: false,
@@ -2983,6 +2987,12 @@ impl App {
             (Primitive::Plane, "Plane"),
         ];
         let mut picked: Option<Primitive> = None;
+        let mut sides = self.add3d_sides;
+        let mut size = self.add3d_size;
+        // The grid caps how many sides survive integer rounding; the sphere's
+        // pole rings are half the radius, so it is the tighter constraint.
+        let radius_for_cap = size as f32 / 4.0;
+        let max_sides = crate::three_d::mesh::Mesh::max_sides_for_radius(radius_for_cap);
         let resp = egui::Area::new(egui::Id::new("add3d_menu"))
             .order(egui::Order::Foreground)
             .fixed_pos(Pos2::new(slot_rect.right(), slot_rect.top()))
@@ -2995,10 +3005,11 @@ impl App {
                         spread: 0,
                         color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
                     })
-                    .inner_margin(Margin::same(0))
+                    .inner_margin(Margin::same(6))
                     .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing = Vec2::ZERO;
+                        ui.spacing_mut().item_spacing = Vec2::new(0.0, 4.0);
                         ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing = Vec2::ZERO;
                             for (prim, name) in prims {
                                 let r = tool_btn_raw(ui, &theme, false, prim_icon(prim))
                                     .on_hover_text(format!("Add {}", name));
@@ -3007,11 +3018,29 @@ impl App {
                                 }
                             }
                         });
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Size").color(theme.fg_desc).font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional)));
+                            ui.add(egui::DragValue::new(&mut size).range(2..=32).speed(0.1));
+                            ui.add_space(8.0);
+                            ui.label(RichText::new("Sides").color(theme.fg_desc).font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional)));
+                            ui.add(egui::DragValue::new(&mut sides).range(3..=max_sides).speed(0.1));
+                        });
+                        ui.label(
+                            RichText::new(format!("max {} sides at this size", max_sides))
+                                .color(theme.fg_muted)
+                                .font(FontId::new(FONT_SIZE_SM - 1.0, FontFamily::Proportional)),
+                        );
                     });
             })
             .response;
+        self.add3d_sides = sides.clamp(3, max_sides);
+        self.add3d_size = size;
         if let Some(prim) = picked {
-            self.pending_add_primitive = Some(prim);
+            self.pending_add_primitive = Some(crate::three_d::edit::AddPrimitive {
+                kind: prim,
+                sides: self.add3d_sides,
+                size: self.add3d_size,
+            });
             self.add3d_group_current = prim;
             self.open_add3d_menu = false;
         } else {

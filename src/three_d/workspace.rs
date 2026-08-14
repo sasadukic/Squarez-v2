@@ -29,10 +29,6 @@ pub struct Output {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Action {
-    AddCube,
-    AddPlane,
-    AddSphere,
-    AddCylinder,
     Extrude,
     Delete,
     CreateFace,
@@ -258,7 +254,7 @@ pub fn draw(
     undo: &mut UndoStack,
     color_state: &mut ColorState,
     active_tool: &ActiveTool,
-    pending_add: Option<edit::Primitive>,
+    pending_add: Option<edit::AddPrimitive>,
     canvas: &CanvasState,
     theme: &Theme,
     ui: &mut egui::Ui,
@@ -365,13 +361,15 @@ pub fn draw(
     let is_scale_object = matches!(active_tool, ActiveTool::ScaleObject);
     let is_object_tool = is_move_object || is_scale_object;
     let mut action: Option<Action> = None;
-    if let Some(prim) = pending_add {
-        action = Some(match prim {
-            edit::Primitive::Cube => Action::AddCube,
-            edit::Primitive::Plane => Action::AddPlane,
-            edit::Primitive::Sphere => Action::AddSphere,
-            edit::Primitive::Cylinder => Action::AddCylinder,
-        });
+    if let Some(req) = pending_add {
+        if let Some(before) = project.mesh3d.clone() {
+            let obj = req.build();
+            if let Some(outcome) = with_atlas_growth(project, li, |mesh, layer, atlas| {
+                edit::add_object(mesh, layer, &obj, atlas)
+            }) {
+                commit_edit(state, project, undo, li, before, outcome, &mut output);
+            }
+        }
     }
     let mut over_buttons = false;
     {
@@ -870,34 +868,6 @@ pub fn draw(
     if let Some(act) = action {
         let before = project.mesh3d.clone();
         match (act, before) {
-            (Action::AddCube, Some(before)) => {
-                if let Some(outcome) = with_atlas_growth(project, li, |mesh, layer, atlas| {
-                    edit::add_primitive(mesh, layer, edit::Primitive::Cube, atlas)
-                }) {
-                    commit_edit(state, project, undo, li, before, outcome, &mut output);
-                }
-            }
-            (Action::AddPlane, Some(before)) => {
-                if let Some(outcome) = with_atlas_growth(project, li, |mesh, layer, atlas| {
-                    edit::add_primitive(mesh, layer, edit::Primitive::Plane, atlas)
-                }) {
-                    commit_edit(state, project, undo, li, before, outcome, &mut output);
-                }
-            }
-            (Action::AddSphere, Some(before)) => {
-                if let Some(outcome) = with_atlas_growth(project, li, |mesh, layer, atlas| {
-                    edit::add_primitive(mesh, layer, edit::Primitive::Sphere, atlas)
-                }) {
-                    commit_edit(state, project, undo, li, before, outcome, &mut output);
-                }
-            }
-            (Action::AddCylinder, Some(before)) => {
-                if let Some(outcome) = with_atlas_growth(project, li, |mesh, layer, atlas| {
-                    edit::add_primitive(mesh, layer, edit::Primitive::Cylinder, atlas)
-                }) {
-                    commit_edit(state, project, undo, li, before, outcome, &mut output);
-                }
-            }
             (Action::Extrude, Some(before)) if !state.sel_faces.is_empty() => {
                 let sel = state.sel_faces.clone();
                 if let Some(outcome) = with_atlas_growth(project, li, |mesh, layer, atlas| {

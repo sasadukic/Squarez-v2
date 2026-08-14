@@ -306,19 +306,45 @@ pub enum Primitive {
     Cylinder,
 }
 
-/// Merge a new primitive into the mesh, stacked above existing geometry.
+/// A parameterized add-primitive request from the toolbar flyout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AddPrimitive {
+    pub kind: Primitive,
+    pub sides: u32,
+    pub size: u32,
+}
+
+impl AddPrimitive {
+    /// Build the primitive mesh (islands unallocated).
+    pub fn build(self) -> Mesh {
+        let size = self.size.clamp(1, 64);
+        match self.kind {
+            Primitive::Cube => Mesh::cube(size),
+            Primitive::Plane => Mesh::plane(size),
+            Primitive::Sphere => Mesh::sphere_n(self.sides, size),
+            Primitive::Cylinder => Mesh::cylinder_n(self.sides, size),
+        }
+    }
+}
+
+/// Merge a new default-sized primitive into the mesh.
 pub fn add_primitive(
     mesh: &Mesh,
     layer: &Layer,
     kind: Primitive,
     atlas: (u32, u32),
 ) -> Result<EditOutcome, AtlasFull> {
-    let prim = match kind {
-        Primitive::Cube => Mesh::cube(8),
-        Primitive::Plane => Mesh::plane(8),
-        Primitive::Sphere => Mesh::sphere(8),
-        Primitive::Cylinder => Mesh::cylinder(8),
-    };
+    add_object(mesh, layer, &AddPrimitive { kind, sides: 8, size: 8 }.build(), atlas)
+}
+
+/// Merge a prebuilt object mesh into the scene, stacked above existing
+/// geometry, with fresh checker islands for every new face.
+pub fn add_object(
+    mesh: &Mesh,
+    layer: &Layer,
+    prim: &Mesh,
+    atlas: (u32, u32),
+) -> Result<EditOutcome, AtlasFull> {
     let mut out_mesh = mesh.clone();
     let lift = if out_mesh.vertices.is_empty() {
         0.0

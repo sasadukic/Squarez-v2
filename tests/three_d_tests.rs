@@ -616,7 +616,7 @@ fn cylinder_is_valid_integral_and_outward() {
     let mut mesh = Mesh::cylinder(8);
     mesh.validate().expect("valid");
     assert_eq!(mesh.vertices.len(), 16);
-    assert_eq!(mesh.faces.len(), 8 + 6);
+    assert_eq!(mesh.faces.len(), 8 + 12); // 8 side quads + two 6-tri fan caps
     assert_outward_and_integral(&mesh, [0.0, 4.0, 0.0]);
     mesh.allocate_all_islands((256, 256)).expect("islands fit");
 }
@@ -626,7 +626,7 @@ fn sphere_is_valid_integral_and_outward() {
     let mut mesh = Mesh::sphere(8);
     mesh.validate().expect("valid");
     assert_eq!(mesh.vertices.len(), 32);
-    assert_eq!(mesh.faces.len(), 24 + 6);
+    assert_eq!(mesh.faces.len(), 24 + 12); // 24 band quads + two 6-tri fan caps
     assert_outward_and_integral(&mesh, [0.0, 4.0, 0.0]);
     mesh.allocate_all_islands((256, 256)).expect("islands fit");
 }
@@ -677,4 +677,30 @@ fn scale_grows_and_shrinks_on_the_grid() {
         }
     }
     assert_eq!(tmax[1] - tmin[1], 1.0);
+}
+
+
+#[test]
+fn parametric_primitives_respect_grid_caps() {
+    use squarez::three_d::mesh::Mesh as M;
+    // 12-sided cylinder at diameter 16: allowed (r=8 supports 24).
+    let c = M::cylinder_n(12, 16);
+    c.validate().expect("valid");
+    assert_eq!(c.vertices.len(), 24);
+    assert_outward_and_integral(&c, [0.0, 8.0, 0.0]);
+    // Requesting an absurd side count clamps to the grid maximum.
+    let tiny = M::cylinder_n(24, 4); // r=2 supports far fewer than 24
+    tiny.validate().expect("valid");
+    let ring = tiny.vertices.len() / 2;
+    assert!(ring < 24, "sides must clamp, got {}", ring);
+    // Distinct consecutive ring vertices (no rounding collapse).
+    for i in 0..ring {
+        let a = tiny.vertices[i];
+        let b = tiny.vertices[(i + 1) % ring];
+        assert!(a != b, "collapsed ring vertices at {}", i);
+    }
+    // Parametric sphere stays valid and integral too.
+    let s = M::sphere_n(10, 16);
+    s.validate().expect("valid");
+    assert_outward_and_integral(&s, [0.0, 8.0, 0.0]);
 }
