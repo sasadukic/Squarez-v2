@@ -365,7 +365,7 @@ pub fn draw(
             if let Some(fi) = state.hover_face {
                 if let Some(mesh) = project.mesh3d.as_ref() {
                     if let Some(face) = mesh.faces.get(fi as usize) {
-                        let stroke = Stroke::new(1.5, theme.accent);
+                        let stroke = Stroke::new(1.5, Color32::from_white_alpha(140));
                         let k = face.verts.len();
                         for i in 0..k {
                             let (a, _) =
@@ -615,8 +615,9 @@ pub fn draw(
     // ── Selection overlays ──────────────────────────────────────────────────
     if let Some(mesh) = project.mesh3d.as_ref() {
         if is_face_tool && !state.sel_faces.is_empty() {
-            let tint = theme.accent.gamma_multiply(0.35);
-            let outline = Stroke::new(2.0, theme.accent);
+            // Lighten the selected face rather than darkening it.
+            let tint = Color32::from_white_alpha(60);
+            let outline = Stroke::new(2.0, Color32::WHITE);
             for &fi in &state.sel_faces {
                 if let Some(face) = mesh.faces.get(fi as usize) {
                     let pts: Vec<Pos2> = face
@@ -636,7 +637,7 @@ pub fn draw(
                         if !state.sel_edges.contains(&(a, b)) {
                             let (pa, _) = cam_copy.project(mesh.vertices[a as usize], canvas_rect);
                             let (pb, _) = cam_copy.project(mesh.vertices[b as usize], canvas_rect);
-                            painter.line_segment([pa, pb], Stroke::new(2.0, theme.accent.gamma_multiply(0.6)));
+                            painter.line_segment([pa, pb], Stroke::new(2.0, Color32::from_white_alpha(140)));
                         }
                     }
                 }
@@ -645,7 +646,7 @@ pub fn draw(
                 if (a as usize) < mesh.vertices.len() && (b as usize) < mesh.vertices.len() {
                     let (pa, _) = cam_copy.project(mesh.vertices[a as usize], canvas_rect);
                     let (pb, _) = cam_copy.project(mesh.vertices[b as usize], canvas_rect);
-                    painter.line_segment([pa, pb], Stroke::new(3.0, theme.accent));
+                    painter.line_segment([pa, pb], Stroke::new(3.0, Color32::WHITE));
                 }
             }
         }
@@ -659,8 +660,8 @@ pub fn draw(
                 let half = if selected { 3.5 } else { 2.5 };
                 let r = Rect::from_center_size(p, Vec2::splat(half * 2.0));
                 if selected {
-                    painter.rect_filled(r, 0.0, theme.accent);
-                    painter.rect_stroke(r.expand(1.0), 0.0, Stroke::new(1.0, Color32::WHITE), egui::StrokeKind::Outside);
+                    painter.rect_filled(r, 0.0, Color32::WHITE);
+                    painter.rect_stroke(r.expand(1.0), 0.0, Stroke::new(1.0, Color32::from_black_alpha(180)), egui::StrokeKind::Outside);
                 } else {
                     painter.rect_filled(r, 0.0, theme.fg_muted);
                 }
