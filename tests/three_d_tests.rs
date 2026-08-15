@@ -865,3 +865,40 @@ fn heal_checker_rims_removes_baked_strips() {
     let idx = ((isl2.y as u32 * 64 + isl2.x as u32) * 4) as usize;
     assert_eq!(after_c, [before[idx], before[idx + 1], before[idx + 2], before[idx + 3]]);
 }
+
+// ── Depth-aware picking (stacked geometry in snapped views) ─────────────────
+
+#[test]
+fn clicking_stacked_vertices_picks_the_nearest() {
+    use squarez::three_d::workspace::{edge_under, vertex_under};
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands((128, 128)).unwrap();
+    let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 400.0));
+    let cam = cam_at(SnapView::Front, 8.0);
+
+    // In Front view the back-bottom-left vert (0) and front-bottom-left vert
+    // (3) land on the exact same screen pixel; 3 is nearer the camera.
+    let (p0, d0) = cam.project(mesh.vertices[0], rect);
+    let (p3, d3) = cam.project(mesh.vertices[3], rect);
+    assert!((p0 - p3).length() < 0.01, "test premise: verts overlap on screen");
+    assert!(d3 > d0, "test premise: vertex 3 is nearer the camera");
+
+    assert_eq!(
+        vertex_under(&mesh, &cam, rect, p3),
+        Some(3),
+        "clicking stacked vertices must select the one closest to the viewer"
+    );
+
+    // Same for edges: the front bottom edge (2,3) sits over the back one (0,1).
+    let scene = build_scene(&mesh, &cam, rect, (128, 128));
+    let mid_front = {
+        let a = cam.project(mesh.vertices[2], rect).0;
+        let b = cam.project(mesh.vertices[3], rect).0;
+        Pos2::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0)
+    };
+    assert_eq!(
+        edge_under(&mesh, &scene, &cam, rect, mid_front),
+        Some((2, 3)),
+        "clicking stacked edges must select the one closest to the viewer"
+    );
+}

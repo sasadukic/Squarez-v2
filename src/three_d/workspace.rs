@@ -183,7 +183,8 @@ fn dist_to_segment(p: Pos2, a: Pos2, b: Pos2) -> f32 {
 }
 
 /// Nearest visible edge within the hit distance, as a sorted index pair.
-fn edge_under(
+/// Overlapping edges resolve by depth — the one nearest the camera wins.
+pub fn edge_under(
     mesh: &Mesh,
     scene: &render::Scene,
     cam: &super::camera::Camera3D,
@@ -192,7 +193,7 @@ fn edge_under(
 ) -> Option<(u32, u32)> {
     const EDGE_HIT_DIST: f32 = 6.0;
     let mut seen = std::collections::HashSet::new();
-    let mut best: Option<((u32, u32), f32)> = None;
+    let mut best: Option<((u32, u32), f32, f32)> = None; // (edge, dist, depth)
     for &fi in &scene.visible_faces {
         let face = &mesh.faces[fi as usize];
         let k = face.verts.len();
@@ -203,15 +204,36 @@ fn edge_under(
             if !seen.insert(key) {
                 continue;
             }
-            let (pa, _) = cam.project(mesh.vertices[a as usize], rect);
-            let (pb, _) = cam.project(mesh.vertices[b as usize], rect);
+            let (pa, da) = cam.project(mesh.vertices[a as usize], rect);
+            let (pb, db) = cam.project(mesh.vertices[b as usize], rect);
             let d = dist_to_segment(pos, pa, pb);
-            if d <= EDGE_HIT_DIST && best.is_none_or(|(_, bd)| d < bd) {
-                best = Some((key, d));
+            if d > EDGE_HIT_DIST {
+                continue;
             }
+            // Depth at the point on the edge nearest the cursor.
+            let ab = pb - pa;
+            let t = if ab.length_sq() < 1e-6 {
+                0.0
+            } else {
+                ((pos - pa).dot(ab) / ab.length_sq()).clamp(0.0, 1.0)
+            };
+            let depth = da + (db - da) * t;
+            best = Some(match best {
+                None => (key, d, depth),
+                Some((bkey, bd, bdepth)) => {
+                    let clearly_closer_on_screen = d < bd - COINCIDENT_PX;
+                    let same_spot_but_nearer =
+                        (d - bd).abs() <= COINCIDENT_PX && depth > bdepth;
+                    if clearly_closer_on_screen || same_spot_but_nearer {
+                        (key, d, depth)
+                    } else {
+                        (bkey, bd, bdepth)
+                    }
+                }
+            });
         }
     }
-    best.map(|(key, _)| key)
+    best.map(|(key, _, _)| key)
 }
 
 /// The unique vertices of the selected faces, sorted.
@@ -229,22 +251,42 @@ fn face_selection_verts(sel_faces: &[u32], mesh: &Mesh) -> Vec<u32> {
     verts
 }
 
-/// Nearest projected vertex within the hit radius.
-fn vertex_under(
+/// Screen distances this close count as "the same spot": vertices stacked
+/// along the view axis (common in snapped orthographic views) then resolve
+/// by depth instead of by index order.
+const COINCIDENT_PX: f32 = 1.5;
+
+/// Nearest projected vertex within the hit radius. Among candidates that
+/// land on effectively the same screen position, the one closest to the
+/// camera wins.
+pub fn vertex_under(
     mesh: &Mesh,
     cam: &super::camera::Camera3D,
     rect: Rect,
     pos: Pos2,
 ) -> Option<u32> {
-    let mut best: Option<(u32, f32)> = None;
+    let mut best: Option<(u32, f32, f32)> = None; // (index, screen dist, depth)
     for (i, &v) in mesh.vertices.iter().enumerate() {
-        let (p, _) = cam.project(v, rect);
+        let (p, depth) = cam.project(v, rect);
         let d = p.distance(pos);
-        if d <= VERTEX_HIT_RADIUS && best.is_none_or(|(_, bd)| d < bd) {
-            best = Some((i as u32, d));
+        if d > VERTEX_HIT_RADIUS {
+            continue;
         }
+        best = Some(match best {
+            None => (i as u32, d, depth),
+            Some((bi, bd, bdepth)) => {
+                let clearly_closer_on_screen = d < bd - COINCIDENT_PX;
+                let same_spot_but_nearer =
+                    (d - bd).abs() <= COINCIDENT_PX && depth > bdepth;
+                if clearly_closer_on_screen || same_spot_but_nearer {
+                    (i as u32, d, depth)
+                } else {
+                    (bi, bd, bdepth)
+                }
+            }
+        });
     }
-    best.map(|(i, _)| i)
+    best.map(|(i, _, _)| i)
 }
 
 #[allow(clippy::too_many_arguments)]
