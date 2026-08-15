@@ -884,9 +884,14 @@ fn clicking_stacked_vertices_picks_the_nearest() {
     assert!(d3 > d0, "test premise: vertex 3 is nearer the camera");
 
     assert_eq!(
-        vertex_under(&mesh, &cam, rect, p3),
+        vertex_under(&mesh, &cam, rect, p3, false),
         Some(3),
         "clicking stacked vertices must select the one closest to the viewer"
+    );
+    assert_eq!(
+        vertex_under(&mesh, &cam, rect, p3, true),
+        Some(0),
+        "alt-click must reach the vertex stacked behind"
     );
 
     // Same for edges: the front bottom edge (2,3) sits over the back one (0,1).
@@ -897,8 +902,13 @@ fn clicking_stacked_vertices_picks_the_nearest() {
         Pos2::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0)
     };
     assert_eq!(
-        edge_under(&mesh, &scene, &cam, rect, mid_front),
+        edge_under(&mesh, &scene, &cam, rect, mid_front, false),
         Some((2, 3)),
         "clicking stacked edges must select the one closest to the viewer"
+    );
+    assert_eq!(
+        edge_under(&mesh, &scene, &cam, rect, mid_front, true),
+        Some((0, 1)),
+        "alt-click must reach the edge stacked behind"
     );
 }

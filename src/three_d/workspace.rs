@@ -183,18 +183,27 @@ fn dist_to_segment(p: Pos2, a: Pos2, b: Pos2) -> f32 {
 }
 
 /// Nearest visible edge within the hit distance, as a sorted index pair.
-/// Overlapping edges resolve by depth — the one nearest the camera wins.
+/// Overlapping edges resolve by depth — nearest wins, or furthest when
+/// `prefer_far` is set (Alt-click).
 pub fn edge_under(
     mesh: &Mesh,
     scene: &render::Scene,
     cam: &super::camera::Camera3D,
     rect: Rect,
     pos: Pos2,
+    prefer_far: bool,
 ) -> Option<(u32, u32)> {
     const EDGE_HIT_DIST: f32 = 6.0;
     let mut seen = std::collections::HashSet::new();
     let mut best: Option<((u32, u32), f32, f32)> = None; // (edge, dist, depth)
-    for &fi in &scene.visible_faces {
+    // Normally only edges of front-facing faces are pickable; reaching
+    // behind (Alt) must also consider edges hidden by the model.
+    let candidates: Vec<u32> = if prefer_far {
+        (0..mesh.faces.len() as u32).collect()
+    } else {
+        scene.visible_faces.clone()
+    };
+    for &fi in &candidates {
         let face = &mesh.faces[fi as usize];
         let k = face.verts.len();
         for i in 0..k {
@@ -222,9 +231,9 @@ pub fn edge_under(
                 None => (key, d, depth),
                 Some((bkey, bd, bdepth)) => {
                     let clearly_closer_on_screen = d < bd - COINCIDENT_PX;
-                    let same_spot_but_nearer =
-                        (d - bd).abs() <= COINCIDENT_PX && depth > bdepth;
-                    if clearly_closer_on_screen || same_spot_but_nearer {
+                    let same_spot = (d - bd).abs() <= COINCIDENT_PX;
+                    let wins_depth = if prefer_far { depth < bdepth } else { depth > bdepth };
+                    if clearly_closer_on_screen || (same_spot && wins_depth) {
                         (key, d, depth)
                     } else {
                         (bkey, bd, bdepth)
@@ -258,12 +267,14 @@ const COINCIDENT_PX: f32 = 1.5;
 
 /// Nearest projected vertex within the hit radius. Among candidates that
 /// land on effectively the same screen position, the one closest to the
-/// camera wins.
+/// camera wins — or the one furthest away when `prefer_far` is set
+/// (Alt-click, to reach geometry behind).
 pub fn vertex_under(
     mesh: &Mesh,
     cam: &super::camera::Camera3D,
     rect: Rect,
     pos: Pos2,
+    prefer_far: bool,
 ) -> Option<u32> {
     let mut best: Option<(u32, f32, f32)> = None; // (index, screen dist, depth)
     for (i, &v) in mesh.vertices.iter().enumerate() {
@@ -276,9 +287,9 @@ pub fn vertex_under(
             None => (i as u32, d, depth),
             Some((bi, bd, bdepth)) => {
                 let clearly_closer_on_screen = d < bd - COINCIDENT_PX;
-                let same_spot_but_nearer =
-                    (d - bd).abs() <= COINCIDENT_PX && depth > bdepth;
-                if clearly_closer_on_screen || same_spot_but_nearer {
+                let same_spot = (d - bd).abs() <= COINCIDENT_PX;
+                let wins_depth = if prefer_far { depth < bdepth } else { depth > bdepth };
+                if clearly_closer_on_screen || (same_spot && wins_depth) {
                     (i as u32, d, depth)
                 } else {
                     (bi, bd, bdepth)
@@ -756,6 +767,8 @@ pub fn draw(
 
         let pressed = ui.input(|i| i.pointer.primary_pressed()) && pointer_over && !over_ui;
         let shift = ui.input(|i| i.modifiers.shift);
+        // Alt reaches past the nearest element to the one stacked behind it.
+        let prefer_far = ui.input(|i| i.modifiers.alt);
 
         if pressed {
             if let (Some(pos), Some(mesh)) = (pointer_pos, project.mesh3d.as_ref()) {
@@ -783,7 +796,7 @@ pub fn draw(
                         }
                         None => state.sel_faces.clear(),
                     }
-                } else if let Some(vi) = vertex_under(mesh, &cam_copy, canvas_rect, pos) {
+                } else if let Some(vi) = vertex_under(mesh, &cam_copy, canvas_rect, pos, prefer_far) {
                     // Smart select, priority 1: vertex.
                     state.sel_edges.clear();
                     state.sel_faces.clear();
@@ -812,7 +825,7 @@ pub fn draw(
                             }
                     }
                 } else if let Some(edge) =
-                    scene.as_ref().and_then(|sc| edge_under(mesh, sc, &cam_copy, canvas_rect, pos))
+                    scene.as_ref().and_then(|sc| edge_under(mesh, sc, &cam_copy, canvas_rect, pos, prefer_far))
                 {
                     // Smart select, priority 2: edge.
                     state.sel_verts.clear();
@@ -1054,7 +1067,7 @@ pub fn draw(
             // Hovered edge (lighter) under the selected edges (full accent).
             if !over_ui {
                 if let (Some(pos), Some(scene)) = (pointer_pos, scene.as_ref()) {
-                    if let Some((a, b)) = edge_under(mesh, scene, &cam_copy, canvas_rect, pos) {
+                    if let Some((a, b)) = edge_under(mesh, scene, &cam_copy, canvas_rect, pos, false) {
                         if !state.sel_edges.contains(&(a, b)) {
                             let (pa, _) = cam_copy.project(mesh.vertices[a as usize], canvas_rect);
                             let (pb, _) = cam_copy.project(mesh.vertices[b as usize], canvas_rect);
@@ -1097,7 +1110,7 @@ pub fn draw(
         None => "Orbit".to_string(),
     };
     let hint = match active_tool {
-        ActiveTool::Select3D => "Select: click a vertex, edge, or face · drag move · shift multi · E extrude · F fill 3-4 verts · Del delete",
+        ActiveTool::Select3D => "Select: click vertex/edge/face · alt = the one behind · drag move · shift multi · E extrude · F fill 3-4 verts · Del delete",
         ActiveTool::Extrude => "Extrude: drag a face to pull it out (whole units)",
         ActiveTool::Inset => "Inset: drag a face to grow an inset border",
         ActiveTool::LoopCut => "Loop Cut: hover to preview the ring · click to cut",

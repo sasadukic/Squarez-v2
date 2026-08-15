@@ -11902,6 +11902,7 @@ print("FAIL")
                                         ("Drag (Move/Scale tool)", "Move / resize a whole object on the grid"),
                                         ("Delete / Backspace", "Delete selected faces or vertices"),
                                         ("Shift + Click", "Add/remove from selection"),
+                                        ("Alt + Click", "Select the vertex/edge behind (stacked in line)"),
                                         ("Escape", "Clear selection"),
                                     ]),
                                 ];
