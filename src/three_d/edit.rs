@@ -77,18 +77,19 @@ impl<'a> PixelRecorder<'a> {
     }
 
     /// Copy `src` into `dst` 1:1, anchored at the origin — pixels are never
-    /// resampled (no skewing); texels beyond the old extent get the default
-    /// checkerboard. Used when a reshape changes an island's size.
+    /// resampled (no skewing); texels beyond the old extent extend the
+    /// nearest edge colors (clamp-to-edge), so a grown painted face stays
+    /// seamless instead of exposing a checker strip. Used when a reshape
+    /// changes an island's size.
     fn copy_island_anchored(&mut self, src: Island, dst: Island) {
+        if src.w == 0 || src.h == 0 {
+            return;
+        }
         for j in 0..dst.h {
             for i in 0..dst.w {
-                let c = if i < src.w && j < src.h {
-                    self.layer.get_pixel((src.x + i) as u32, (src.y + j) as u32)
-                } else if (i + j) % 2 == 0 {
-                    DEFAULT_FACE_A
-                } else {
-                    DEFAULT_FACE_B
-                };
+                let sx = src.x + i.min(src.w - 1);
+                let sy = src.y + j.min(src.h - 1);
+                let c = self.layer.get_pixel(sx as u32, sy as u32);
                 self.write((dst.x + i) as u32, (dst.y + j) as u32, c);
             }
         }

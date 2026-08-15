@@ -257,7 +257,7 @@ pub fn paint_wireframe(
             *edge_faces.entry((a.min(b), a.max(b))).or_insert(0) += 1;
         }
     }
-    let silhouette = Stroke::new(2.0, Color32::from_black_alpha(150));
+    let silhouette = Stroke::new(1.5, Color32::from_black_alpha(105));
     let interior = Stroke::new(1.0, theme.muted.gamma_multiply(0.55));
     for (&(a, b), &count) in &edge_faces {
         let is_silhouette = count == 1;

@@ -352,19 +352,15 @@ fn move_vertex_resizes_island_with_blit() {
     let new = out.mesh.faces[0].island;
     assert_eq!((new.w, new.h), (9, 8));
     assert_ne!(new, old, "island must move to a fresh slot");
-    // Anchored 1:1 copy: existing texels are never resampled; the newly
-    // exposed column gets the default checkerboard.
+    // Anchored 1:1 copy: existing texels are never resampled; newly
+    // exposed texels extend the nearest edge colors (clamp-to-edge) so a
+    // painted face grows without a seam strip.
     for &(x, y, _, c) in &out.pixel_edits {
         assert!(x >= new.x as u32 && x < (new.x + new.w) as u32);
         assert!(y >= new.y as u32 && y < (new.y + new.h) as u32);
-        let i = x - new.x as u32;
-        let j = y - new.y as u32;
-        if i < old.w as u32 && j < old.h as u32 {
-            assert_eq!(c, [i as u8, j as u8, 0, 255], "1:1 copy mismatch at ({}, {})", i, j);
-        } else {
-            let expected = if (i + j) % 2 == 0 { DEFAULT_FACE_A } else { DEFAULT_FACE_B };
-            assert_eq!(c, expected, "new texels get the checker at ({}, {})", i, j);
-        }
+        let i = (x - new.x as u32).min(old.w as u32 - 1);
+        let j = (y - new.y as u32).min(old.h as u32 - 1);
+        assert_eq!(c, [i as u8, j as u8, 0, 255], "clamped copy mismatch at ({}, {})", i, j);
     }
     // Geometry actually moved.
     assert_eq!(out.mesh.vertices[0][0], mesh.vertices[0][0] - 1.0);
@@ -669,7 +665,8 @@ fn connected_faces_separates_objects() {
 fn scale_grows_and_shrinks_on_the_grid() {
     let mut mesh = Mesh::cube(8);
     mesh.allocate_all_islands((256, 256)).unwrap();
-    let layer = Layer::new("Texture".to_string(), 256, 256);
+    let mut layer = Layer::new("Texture".to_string(), 256, 256);
+    squarez::three_d::paint_islands_checker(&mut layer, &mesh);
     let verts: Vec<u32> = (0..8).collect();
 
     let grown = scale_verts(&mesh, &layer, &verts, 2, (256, 256)).expect("fits");
