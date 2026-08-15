@@ -13595,10 +13595,14 @@ fn rfd_open() -> Option<std::path::PathBuf> {
 
 /// Load a project from disk, dispatching on the file extension.
 fn load_project_file(path: &std::path::Path) -> Result<Project, Box<dyn std::error::Error>> {
-    match path.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()).as_deref() {
+    let mut project = match path.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()).as_deref() {
         Some("obj") => crate::io::obj::load_obj(path),
         _ => load_sqr(path),
-    }
+    }?;
+    // Older 3D files were packed with tighter island gutters and would
+    // show sampling seams — repack them on load.
+    crate::three_d::migrate_gutters(&mut project);
+    Ok(project)
 }
 
 /// Save a project to disk, dispatching on the file extension

@@ -750,3 +750,43 @@ fn extrude_negative_pushes_a_recess_inward() {
     }
     out.mesh.validate().expect("valid");
 }
+
+#[test]
+fn old_tight_island_packing_gets_repacked() {
+    use squarez::three_d::edit::{islands_need_repack, repack_islands};
+    // Simulate a pre-gutter-widening file: islands packed 1 texel apart.
+    let mut mesh = Mesh::cube(8);
+    let mut x = 1u16;
+    for f in &mut mesh.faces {
+        f.island = Island { x, y: 1, w: 8, h: 8 };
+        x += 9; // 1-texel gaps
+    }
+    assert!(islands_need_repack(&mesh));
+
+    let mut layer = Layer::new("Texture".to_string(), 256, 256);
+    // Distinct color per island so we can verify the moves.
+    for (i, f) in mesh.faces.iter().enumerate() {
+        for y in 0..8u32 {
+            for xx in 0..8u32 {
+                layer.set_pixel(f.island.x as u32 + xx, f.island.y as u32 + y, [i as u8 + 1, 0, 0, 255]);
+            }
+        }
+    }
+    let out = repack_islands(&mesh, &layer, (256, 256)).expect("fits");
+    assert!(!islands_need_repack(&out.mesh), "repacked islands must respect the gutter");
+    // Every face's texture moved with it.
+    for &(x, y, _, _) in &out.pixel_edits {
+        let _ = (x, y);
+    }
+    for (i, f) in out.mesh.faces.iter().enumerate() {
+        let isl = f.island;
+        let expected = [i as u8 + 1, 0, 0, 255];
+        let edit = out
+            .pixel_edits
+            .iter()
+            .find(|&&(x, y, _, _)| x == isl.x as u32 && y == isl.y as u32);
+        if let Some(&(_, _, _, new)) = edit {
+            assert_eq!(new, expected, "face {} texture moved intact", i);
+        }
+    }
+}

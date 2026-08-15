@@ -185,3 +185,46 @@ pub fn pad_island_gutters(pixels: &mut [u8], atlas_w: u32, atlas_h: u32, mesh: &
         copy(x1, y1, x1 + 1, y1 + 1, pixels);
     }
 }
+
+/// Load-time migration: files saved with older, tighter island packing
+/// can't be seam-padded (islands share gutter texels). Repack their atlas
+/// with current gutters, growing it if needed. No-op for healthy files.
+pub fn migrate_gutters(project: &mut crate::project::Project) {
+    if !project.mode.is_three_d() {
+        return;
+    }
+    let Some(mesh) = project.mesh3d.clone() else { return };
+    if !edit::islands_need_repack(&mesh) {
+        return;
+    }
+    loop {
+        let atlas = (project.canvas_width, project.canvas_height);
+        let Some(layer) = project.animations[0].frames[0].layers.first() else { return };
+        match edit::repack_islands(&mesh, layer, atlas) {
+            Ok(outcome) => {
+                let frame = &mut project.animations[0].frames[0];
+                if let Some(layer) = frame.layers.first_mut() {
+                    for &(x, y, _, new) in &outcome.pixel_edits {
+                        layer.set_pixel(x, y, new);
+                    }
+                }
+                frame.dirty = true;
+                project.mesh3d = Some(outcome.mesh);
+                return;
+            }
+            Err(mesh::AtlasFull) => {
+                if project.canvas_height >= 4096 {
+                    return;
+                }
+                let w = project.canvas_width;
+                let new_h = project.canvas_height * 2;
+                for anim in &mut project.animations {
+                    for frame in &mut anim.frames {
+                        frame.resize_canvas(w, new_h);
+                    }
+                }
+                project.canvas_height = new_h;
+            }
+        }
+    }
+}

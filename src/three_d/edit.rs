@@ -861,3 +861,53 @@ pub fn scale_verts(
         select_verts: verts.to_vec(),
     })
 }
+
+/// Do any two islands (or an island and the atlas border) sit closer than
+/// the current GUTTER? True for files saved with older, tighter packing.
+pub fn islands_need_repack(mesh: &Mesh) -> bool {
+    use super::mesh::GUTTER;
+    let g = GUTTER;
+    let islands: Vec<Island> = mesh
+        .faces
+        .iter()
+        .map(|f| f.island)
+        .filter(|i| i.w > 0 && i.h > 0)
+        .collect();
+    for (n, a) in islands.iter().enumerate() {
+        if a.x < g || a.y < g {
+            return true;
+        }
+        for b in islands.iter().skip(n + 1) {
+            let disjoint = a.x + a.w + g <= b.x
+                || b.x + b.w + g <= a.x
+                || a.y + a.h + g <= b.y
+                || b.y + b.h + g <= a.y;
+            if !disjoint && *a != *b {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Re-allocate every island with the current gutter spacing, moving each
+/// face's texels 1:1 to its new location.
+pub fn repack_islands(
+    mesh: &Mesh,
+    layer: &Layer,
+    atlas: (u32, u32),
+) -> Result<EditOutcome, AtlasFull> {
+    let mut out_mesh = mesh.clone();
+    out_mesh.atlas_cursor = Default::default();
+    let mut rec = PixelRecorder::new(layer);
+    for fi in 0..out_mesh.faces.len() {
+        let old = out_mesh.faces[fi].island;
+        if old.w == 0 || old.h == 0 {
+            continue;
+        }
+        let new_isl = out_mesh.alloc_island(old.w, old.h, atlas)?;
+        rec.blit_island(old, new_isl);
+        out_mesh.faces[fi].island = new_isl;
+    }
+    Ok(EditOutcome { mesh: out_mesh, pixel_edits: rec.edits, ..Default::default() })
+}
