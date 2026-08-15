@@ -8,8 +8,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 /// Gap kept around every island so NEAREST sampling never bleeds
-/// into a neighboring face's texels.
-pub const GUTTER: u16 = 1;
+/// into a neighboring face's texels. Two texels wide so each island owns
+/// a 1-texel padding ring (edge colors are dilated into it at texture
+/// upload, hiding sampling seams at face boundaries).
+pub const GUTTER: u16 = 2;
 /// Hard cap on one island side, in texels.
 pub const MAX_ISLAND_SIDE: u16 = 256;
 

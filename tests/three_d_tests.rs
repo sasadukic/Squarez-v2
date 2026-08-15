@@ -92,7 +92,7 @@ fn allocator_reports_full_atlas() {
     assert!(mesh.alloc_island(32, 4, atlas).is_err());
     // fill the atlas vertically until it errors
     let mut count = 0;
-    while mesh.alloc_island(14, 6, atlas).is_ok() {
+    while mesh.alloc_island(12, 6, atlas).is_ok() {
         count += 1;
         assert!(count < 100, "allocator never reported full");
     }

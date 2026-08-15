@@ -136,3 +136,52 @@ pub fn paint_islands_checker(layer: &mut Layer, mesh: &mesh::Mesh) {
         }
     }
 }
+
+/// Dilate every island's border colors one texel outward into its gutter
+/// ring. Run on the composited atlas right before GPU upload: fragments
+/// that sample just past an island boundary then read the face's own edge
+/// color instead of empty gutter — no seams at face boundaries.
+pub fn pad_island_gutters(pixels: &mut [u8], atlas_w: u32, atlas_h: u32, mesh: &mesh::Mesh) {
+    let idx = |x: i64, y: i64| -> Option<usize> {
+        if x < 0 || y < 0 || x >= atlas_w as i64 || y >= atlas_h as i64 {
+            None
+        } else {
+            Some(((y as u32 * atlas_w + x as u32) * 4) as usize)
+        }
+    };
+    let mut copy = |sx: i64, sy: i64, dx: i64, dy: i64, px: &mut [u8]| {
+        if let (Some(si), Some(di)) = (idx(sx, sy), idx(dx, dy)) {
+            let (a, b) = if si < di {
+                let (lo, hi) = px.split_at_mut(di);
+                (&lo[si..si + 4], &mut hi[..4])
+            } else if di < si {
+                let (lo, hi) = px.split_at_mut(si);
+                (&hi[..4], &mut lo[di..di + 4])
+            } else {
+                return;
+            };
+            b.copy_from_slice(a);
+        }
+    };
+    for face in &mesh.faces {
+        let isl = face.island;
+        if isl.w == 0 || isl.h == 0 {
+            continue;
+        }
+        let (x0, y0) = (isl.x as i64, isl.y as i64);
+        let (x1, y1) = (x0 + isl.w as i64 - 1, y0 + isl.h as i64 - 1);
+        for x in x0..=x1 {
+            copy(x, y0, x, y0 - 1, pixels);
+            copy(x, y1, x, y1 + 1, pixels);
+        }
+        for y in y0..=y1 {
+            copy(x0, y, x0 - 1, y, pixels);
+            copy(x1, y, x1 + 1, y, pixels);
+        }
+        // Corners
+        copy(x0, y0, x0 - 1, y0 - 1, pixels);
+        copy(x1, y0, x1 + 1, y0 - 1, pixels);
+        copy(x0, y1, x0 - 1, y1 + 1, pixels);
+        copy(x1, y1, x1 + 1, y1 + 1, pixels);
+    }
+}

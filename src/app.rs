@@ -1825,6 +1825,13 @@ impl App {
                 }
             }
         }
+        // 3D mode: dilate island edge colors into the gutters so boundary
+        // sampling never shows a seam at face borders.
+        if self.project.mode.is_three_d() {
+            if let Some(mesh) = self.project.mesh3d.as_ref() {
+                crate::three_d::pad_island_gutters(&mut pixels, out_w, out_h, mesh);
+            }
+        }
         self.canvas.upload_texture(
             ctx,
             &pixels,
