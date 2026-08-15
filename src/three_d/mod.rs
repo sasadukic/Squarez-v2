@@ -149,7 +149,7 @@ pub fn pad_island_gutters(pixels: &mut [u8], atlas_w: u32, atlas_h: u32, mesh: &
             Some(((y as u32 * atlas_w + x as u32) * 4) as usize)
         }
     };
-    let mut copy = |sx: i64, sy: i64, dx: i64, dy: i64, px: &mut [u8]| {
+    let copy = |sx: i64, sy: i64, dx: i64, dy: i64, px: &mut [u8]| {
         if let (Some(si), Some(di)) = (idx(sx, sy), idx(dx, dy)) {
             let (a, b) = if si < di {
                 let (lo, hi) = px.split_at_mut(di);
