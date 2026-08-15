@@ -13599,9 +13599,9 @@ fn load_project_file(path: &std::path::Path) -> Result<Project, Box<dyn std::err
         Some("obj") => crate::io::obj::load_obj(path),
         _ => load_sqr(path),
     }?;
-    // Older 3D files were packed with tighter island gutters and would
-    // show sampling seams — repack them on load.
-    crate::three_d::migrate_gutters(&mut project);
+    // Older 3D files were packed with tighter island gutters and carried
+    // checker rims baked into painted faces — repack and heal on load.
+    let _migrated = crate::three_d::migrate_gutters(&mut project);
     Ok(project)
 }
 

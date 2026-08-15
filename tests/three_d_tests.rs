@@ -790,3 +790,78 @@ fn old_tight_island_packing_gets_repacked() {
         }
     }
 }
+
+// ── Seam-damage healing tests ────────────────────────────────────────────────
+
+#[test]
+fn pad_island_gutters_dilates_edges() {
+    use squarez::three_d::pad_island_gutters;
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands((64, 64)).unwrap();
+    let mut layer = Layer::new("Texture".to_string(), 64, 64);
+    let isl = mesh.faces[0].island;
+    // Distinct edge colors on the island's border.
+    for i in 0..isl.w as u32 {
+        layer.set_pixel(isl.x as u32 + i, isl.y as u32, [1, i as u8, 0, 255]);
+        layer.set_pixel(isl.x as u32 + i, (isl.y + isl.h - 1) as u32, [2, i as u8, 0, 255]);
+    }
+    let mut px = layer.pixels.clone();
+    pad_island_gutters(&mut px, 64, 64, &mesh);
+    let at = |x: u32, y: u32| -> [u8; 4] {
+        let i = ((y * 64 + x) * 4) as usize;
+        [px[i], px[i + 1], px[i + 2], px[i + 3]]
+    };
+    // Row above the island copies the top edge; row below copies the bottom.
+    for i in 0..isl.w as u32 {
+        assert_eq!(at(isl.x as u32 + i, isl.y as u32 - 1), [1, i as u8, 0, 255]);
+        assert_eq!(at(isl.x as u32 + i, (isl.y + isl.h) as u32), [2, i as u8, 0, 255]);
+    }
+    // A pixel two rows above is untouched (still transparent).
+    assert_eq!(at(isl.x as u32, isl.y as u32 - 2), [0, 0, 0, 0]);
+}
+
+#[test]
+fn heal_checker_rims_removes_baked_strips() {
+    use squarez::three_d::{heal_checker_rims, DEFAULT_FACE_A, DEFAULT_FACE_B};
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands((64, 64)).unwrap();
+    let mut layer = Layer::new("Texture".to_string(), 64, 64);
+    let isl = mesh.faces[0].island;
+    // Painted face...
+    for y in 0..isl.h as u32 {
+        for x in 0..isl.w as u32 {
+            layer.set_pixel(isl.x as u32 + x, isl.y as u32 + y, [10, 60, 120, 255]);
+        }
+    }
+    // ...with a baked checker rim (the historical growth damage).
+    for x in 0..isl.w {
+        for y in [0, isl.h - 1] {
+            let c = if (x + y) % 2 == 0 { DEFAULT_FACE_A } else { DEFAULT_FACE_B };
+            layer.set_pixel((isl.x + x) as u32, (isl.y + y) as u32, c);
+        }
+    }
+    for y in 0..isl.h {
+        for x in [0, isl.w - 1] {
+            let c = if (x + y) % 2 == 0 { DEFAULT_FACE_A } else { DEFAULT_FACE_B };
+            layer.set_pixel((isl.x + x) as u32, (isl.y + y) as u32, c);
+        }
+    }
+    assert!(heal_checker_rims(&mut layer, &mesh));
+    for y in 0..isl.h as u32 {
+        for x in 0..isl.w as u32 {
+            assert_eq!(
+                layer.get_pixel(isl.x as u32 + x, isl.y as u32 + y),
+                [10, 60, 120, 255],
+                "rim texel ({}, {}) should be healed to the paint color", x, y
+            );
+        }
+    }
+    // Fully-checker (unpainted) islands stay untouched.
+    let isl2 = mesh.faces[1].island;
+    squarez::three_d::paint_islands_checker(&mut layer, &mesh);
+    let before: Vec<u8> = layer.pixels.clone();
+    let _ = heal_checker_rims(&mut layer, &mesh);
+    let after_c = layer.get_pixel(isl2.x as u32, isl2.y as u32);
+    let idx = ((isl2.y as u32 * 64 + isl2.x as u32) * 4) as usize;
+    assert_eq!(after_c, [before[idx], before[idx + 1], before[idx + 2], before[idx + 3]]);
+}

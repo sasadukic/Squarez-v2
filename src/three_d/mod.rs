@@ -186,35 +186,103 @@ pub fn pad_island_gutters(pixels: &mut [u8], atlas_w: u32, atlas_h: u32, mesh: &
     }
 }
 
+/// Heal historical island damage: older builds filled newly grown island
+/// rows/columns with checker, baking light strips into painted faces.
+/// For every island whose outermost ring consists solely of the two
+/// default checker tones while the ring inside it holds real paint,
+/// overwrite the rim by clamp-extending the inner colors (up to 2 rings).
+/// Fully-checker (unpainted) islands are left untouched.
+/// Returns true if anything changed.
+pub fn heal_checker_rims(layer: &mut Layer, mesh: &mesh::Mesh) -> bool {
+    let is_default = |c: Rgba| c == DEFAULT_FACE_A || c == DEFAULT_FACE_B;
+    let mut changed = false;
+    for face in &mesh.faces {
+        let isl = face.island;
+        for pass in 0..2u16 {
+            if isl.w <= 2 * (pass + 1) || isl.h <= 2 * (pass + 1) {
+                break;
+            }
+            let (x0, y0) = ((isl.x + pass) as u32, (isl.y + pass) as u32);
+            let (x1, y1) = (
+                (isl.x + isl.w - 1 - pass) as u32,
+                (isl.y + isl.h - 1 - pass) as u32,
+            );
+            let on_ring = |x: u32, y: u32| x == x0 || x == x1 || y == y0 || y == y1;
+            let mut ring_all_default = true;
+            let mut inner_has_paint = false;
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    let c = layer.get_pixel(x, y);
+                    if on_ring(x, y) {
+                        if !is_default(c) {
+                            ring_all_default = false;
+                        }
+                    } else if !is_default(c) {
+                        inner_has_paint = true;
+                    }
+                }
+            }
+            if !(ring_all_default && inner_has_paint) {
+                break;
+            }
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    if on_ring(x, y) {
+                        let sx = x.clamp(x0 + 1, x1 - 1);
+                        let sy = y.clamp(y0 + 1, y1 - 1);
+                        let c = layer.get_pixel(sx, sy);
+                        layer.set_pixel(x, y, c);
+                    }
+                }
+            }
+            changed = true;
+        }
+    }
+    changed
+}
+
 /// Load-time migration: files saved with older, tighter island packing
 /// can't be seam-padded (islands share gutter texels). Repack their atlas
-/// with current gutters, growing it if needed. No-op for healthy files.
-pub fn migrate_gutters(project: &mut crate::project::Project) {
+/// with current gutters (growing it if needed) and heal checker rims baked
+/// into painted faces by old island-growth behavior. No-op for healthy
+/// files; returns true if the project was modified.
+pub fn migrate_gutters(project: &mut crate::project::Project) -> bool {
     if !project.mode.is_three_d() {
-        return;
+        return false;
     }
-    let Some(mesh) = project.mesh3d.clone() else { return };
+    let Some(mesh) = project.mesh3d.clone() else { return false };
     if !edit::islands_need_repack(&mesh) {
-        return;
+        // Healthy packing — still heal any checker rims baked into painted
+        // faces by older builds (conservative + idempotent).
+        let frame = &mut project.animations[0].frames[0];
+        if let Some(layer) = frame.layers.first_mut() {
+            if heal_checker_rims(layer, &mesh) {
+                frame.dirty = true;
+                return true;
+            }
+        }
+        return false;
     }
     loop {
         let atlas = (project.canvas_width, project.canvas_height);
-        let Some(layer) = project.animations[0].frames[0].layers.first() else { return };
+        let Some(layer) = project.animations[0].frames[0].layers.first() else { return false };
         match edit::repack_islands(&mesh, layer, atlas) {
             Ok(outcome) => {
+                let repacked = outcome.mesh;
                 let frame = &mut project.animations[0].frames[0];
                 if let Some(layer) = frame.layers.first_mut() {
                     for &(x, y, _, new) in &outcome.pixel_edits {
                         layer.set_pixel(x, y, new);
                     }
+                    heal_checker_rims(layer, &repacked);
                 }
                 frame.dirty = true;
-                project.mesh3d = Some(outcome.mesh);
-                return;
+                project.mesh3d = Some(repacked);
+                return true;
             }
             Err(mesh::AtlasFull) => {
                 if project.canvas_height >= 4096 {
-                    return;
+                    return false;
                 }
                 let w = project.canvas_width;
                 let new_h = project.canvas_height * 2;

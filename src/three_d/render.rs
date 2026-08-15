@@ -234,10 +234,10 @@ pub fn point_occluded(scene: &Scene, p: Pos2, depth: f32) -> bool {
     false
 }
 
-/// Edge overlay: a dark silhouette outline (edges bordering exactly one
-/// visible face) plus a faint interior wireframe, so topology (loop cuts,
-/// insets) stays visible with every tool. Edges hidden behind nearer
-/// geometry are skipped (midpoint occlusion test).
+/// Edge overlay: a single uniform thin wireframe over every visible edge —
+/// topology (loop cuts, insets) stays visible with every tool, and no edge
+/// ever turns bold or black while orbiting. Edges hidden behind nearer
+/// geometry are clipped away segment-wise.
 pub fn paint_wireframe(
     painter: &egui::Painter,
     mesh: &Mesh,
@@ -246,32 +246,22 @@ pub fn paint_wireframe(
     rect: Rect,
     theme: &Theme,
 ) {
-    // Count how many visible faces borders each edge.
-    let mut edge_faces: std::collections::HashMap<(u32, u32), u32> = std::collections::HashMap::new();
+    // Deduplicate edges over the visible faces.
+    let mut edges: std::collections::HashSet<(u32, u32)> = std::collections::HashSet::new();
     for &fi in &scene.visible_faces {
         let face = &mesh.faces[fi as usize];
         let k = face.verts.len();
         for i in 0..k {
             let a = face.verts[i];
             let b = face.verts[(i + 1) % k];
-            *edge_faces.entry((a.min(b), a.max(b))).or_insert(0) += 1;
+            edges.insert((a.min(b), a.max(b)));
         }
     }
-    let silhouette = Stroke::new(1.5, Color32::from_black_alpha(105));
-    let interior = Stroke::new(1.0, theme.muted.gamma_multiply(0.55));
-    for (&(a, b), &count) in &edge_faces {
-        let is_silhouette = count == 1;
+    let stroke = Stroke::new(1.0, theme.muted.gamma_multiply(0.55));
+    for &(a, b) in &edges {
         let va = mesh.vertices[a as usize];
         let vb = mesh.vertices[b as usize];
-        draw_edge_occlusion_clipped(
-            painter,
-            scene,
-            cam,
-            rect,
-            va,
-            vb,
-            if is_silhouette { silhouette } else { interior },
-        );
+        draw_edge_occlusion_clipped(painter, scene, cam, rect, va, vb, stroke);
     }
 }
 
