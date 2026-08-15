@@ -58,6 +58,9 @@ pub struct ThreeDState {
     pub sel_edges: Vec<(u32, u32)>,
     pub sel_faces: Vec<u32>,
     pub hover_face: Option<u32>,
+    /// Atlas texel under the cursor (paint tools) — drives the on-model
+    /// brush preview.
+    pub hover_texel: Option<(u32, u32)>,
     pub drag: Option<VertexDrag>,
     pub op_drag: Option<OpDrag>,
     /// Pixel edits accumulated during the current paint stroke.
@@ -79,6 +82,7 @@ impl Default for ThreeDState {
             sel_edges: Vec::new(),
             sel_faces: Vec::new(),
             hover_face: None,
+            hover_texel: None,
             drag: None,
             op_drag: None,
             stroke_edits: Vec::new(),
@@ -90,12 +94,21 @@ impl Default for ThreeDState {
 }
 
 impl ThreeDState {
+    /// Abandon any in-flight move/extrude/inset/scale gesture without
+    /// applying its snapshots. Used when history moves under the gesture
+    /// (undo/redo), where replaying a stale snapshot would revert work.
+    pub fn cancel_gesture(&mut self) {
+        self.drag = None;
+        self.op_drag = None;
+    }
+
     /// Drop transient gesture state (selection, stroke) but keep the camera.
     pub fn clear_transient(&mut self) {
         self.sel_verts.clear();
         self.sel_edges.clear();
         self.sel_faces.clear();
         self.hover_face = None;
+        self.hover_texel = None;
         self.drag = None;
         self.op_drag = None;
         self.stroke_edits.clear();

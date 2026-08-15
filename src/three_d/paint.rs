@@ -164,13 +164,13 @@ pub fn handle(
     let primary_released = ui.input(|i| i.pointer.primary_released());
     let li = project.active_layer;
 
-    // Hover feedback for the workspace to draw.
-    state.hover_face = pointer
-        .and_then(|p| {
-            let mesh = project.mesh3d.as_ref().unwrap();
-            pick(scene, p, mesh, atlas)
-        })
-        .map(|h| h.face);
+    // Hover feedback for the workspace to draw (face + exact texel).
+    let hover = pointer.and_then(|p| {
+        let mesh = project.mesh3d.as_ref().unwrap();
+        pick(scene, p, mesh, atlas)
+    });
+    state.hover_face = hover.map(|h| h.face);
+    state.hover_texel = hover.map(|h| (h.texel.0 as u32, h.texel.1 as u32));
 
     let press_started = response.drag_started_by(egui::PointerButton::Primary)
         || (ui.input(|i| i.pointer.primary_pressed()) && response.hovered());

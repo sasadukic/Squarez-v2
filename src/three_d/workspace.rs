@@ -425,10 +425,18 @@ pub fn draw(
             output.modified |= paint_result.modified;
         }
 
-        if paint::is_paint_tool(active_tool) && !over_ui {
-            if let Some(fi) = state.hover_face {
-                if let Some(mesh) = project.mesh3d.as_ref() {
-                    if let Some(face) = mesh.faces.get(fi as usize) {
+        if paint::is_paint_tool(active_tool) {
+            if over_ui {
+                // Cursor left the model area — drop stale hover feedback.
+                state.hover_face = None;
+                state.hover_texel = None;
+            }
+            if let (Some(fi), Some(mesh)) = (state.hover_face, project.mesh3d.as_ref()) {
+                if let Some(face) = mesh.faces.get(fi as usize) {
+                    // Fill paints the whole face: outline the face itself.
+                    // The other tools act on one texel: preview that texel.
+                    let face_outline = matches!(active_tool, ActiveTool::Fill);
+                    if face_outline {
                         let stroke = Stroke::new(1.5, Color32::from_white_alpha(140));
                         let k = face.verts.len();
                         for i in 0..k {
@@ -438,6 +446,109 @@ pub fn draw(
                                 .project(mesh.vertices[face.verts[(i + 1) % k] as usize], canvas_rect);
                             painter.line_segment([a, b], stroke);
                         }
+                    } else if let Some((tx, ty)) = state.hover_texel {
+                        if let Some(quad) = mesh.texel_quad_world(face, tx, ty) {
+                            let pts: Vec<Pos2> = quad
+                                .iter()
+                                .map(|&w| cam_copy.project(w, canvas_rect).0)
+                                .collect();
+                            let fg = color_state.foreground;
+                            let (fill, outline) = match active_tool {
+                                // Pencil: show the exact color that lands.
+                                ActiveTool::Pencil => (
+                                    Color32::from_rgba_unmultiplied(fg[0], fg[1], fg[2], 220),
+                                    Color32::WHITE,
+                                ),
+                                // Eraser: hollow cursor, nothing added.
+                                ActiveTool::Eraser => (Color32::from_black_alpha(70), Color32::WHITE),
+                                // Eyedropper: pure outline.
+                                _ => (Color32::TRANSPARENT, Color32::from_white_alpha(200)),
+                            };
+                            painter.add(egui::Shape::convex_polygon(
+                                pts.clone(),
+                                fill,
+                                Stroke::NONE,
+                            ));
+                            for i in 0..pts.len() {
+                                painter.line_segment(
+                                    [pts[i], pts[(i + 1) % pts.len()]],
+                                    Stroke::new(1.0, outline),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Finalize gestures ───────────────────────────────────────────────────
+    // Runs every frame, independent of the active tool: a gesture ends when
+    // the button is released OR is simply no longer held (tool switch, tab
+    // switch, focus loss). Stranding a gesture here used to leave a stale
+    // mesh+layer snapshot that a later release would slam back over the
+    // document, silently reverting committed work.
+    {
+        let released = ui.input(|i| i.pointer.primary_released());
+        let held = ui.input(|i| i.pointer.primary_down());
+        if released || !held {
+            if let Some(od) = state.op_drag.take() {
+                // Restore pristine state, then commit the final amount
+                // through the normal atlas-growth + undo path.
+                project.mesh3d = Some(od.start_mesh.clone());
+                {
+                    let frame = &mut project.animations[0].frames[0];
+                    if let Some(layer) = frame.layers.get_mut(li) {
+                        *layer = od.start_layer.clone();
+                    }
+                    frame.dirty = true;
+                }
+                output.canvas_dirty = true;
+                if od.applied != 0 {
+                    let (kind, face, n) = (od.kind, od.face, od.applied);
+                    let verts = od.verts.clone();
+                    let before = od.start_mesh.clone();
+                    let kept_faces = state.sel_faces.clone();
+                    if let Some(outcome) = with_atlas_growth(project, li, |m, layer, atlas| match kind {
+                        OpKind::Extrude => edit::extrude_faces_n(m, layer, &[face], n, atlas),
+                        OpKind::Inset => edit::inset_faces(m, layer, &[face], n as u32, atlas),
+                        OpKind::Scale => edit::scale_verts(m, layer, &verts, n, atlas),
+                    }) {
+                        commit_edit(state, project, undo, li, before, outcome, &mut output);
+                        if kind == OpKind::Scale {
+                            // Face indices survive a scale — keep the object highlighted.
+                            state.sel_faces = kept_faces;
+                            state.sel_verts.clear();
+                        }
+                    }
+                }
+            }
+            if let Some(drag) = state.drag.take() {
+                project.mesh3d = Some(drag.start_mesh.clone());
+                {
+                    let frame = &mut project.animations[0].frames[0];
+                    if let Some(layer) = frame.layers.get_mut(li) {
+                        *layer = drag.start_layer.clone();
+                    }
+                    frame.dirty = true;
+                }
+                output.canvas_dirty = true;
+                if drag.applied != [0, 0, 0] {
+                    let moved = drag.verts.clone();
+                    let applied = drag.applied;
+                    let before = drag.start_mesh.clone();
+                    let kept_verts = state.sel_verts.clone();
+                    let kept_edges = state.sel_edges.clone();
+                    let kept_faces = state.sel_faces.clone();
+                    if let Some(outcome) = with_atlas_growth(project, li, |_, layer, atlas| {
+                        edit::move_vertices(&before, layer, &moved, applied, atlas)
+                    }) {
+                        commit_edit(state, project, undo, li, drag.start_mesh, outcome, &mut output);
+                        // Vertex/edge/face identities all survive a move —
+                        // restore the selection exactly as it was.
+                        state.sel_verts = kept_verts;
+                        state.sel_edges = kept_edges;
+                        state.sel_faces = kept_faces;
                     }
                 }
             }
@@ -562,39 +673,6 @@ pub fn draw(
             }
         }
 
-        if ui.input(|i| i.pointer.primary_released()) {
-            if let Some(od) = state.op_drag.take() {
-                // Restore pristine state, then commit the final amount
-                // through the normal atlas-growth + undo path.
-                project.mesh3d = Some(od.start_mesh.clone());
-                {
-                    let frame = &mut project.animations[0].frames[0];
-                    if let Some(layer) = frame.layers.get_mut(li) {
-                        *layer = od.start_layer.clone();
-                    }
-                    frame.dirty = true;
-                }
-                output.canvas_dirty = true;
-                if od.applied != 0 {
-                    let (kind, face, n) = (od.kind, od.face, od.applied);
-                    let verts = od.verts.clone();
-                    let before = od.start_mesh.clone();
-                    let kept_faces = state.sel_faces.clone();
-                    if let Some(outcome) = with_atlas_growth(project, li, |m, layer, atlas| match kind {
-                        OpKind::Extrude => edit::extrude_faces_n(m, layer, &[face], n, atlas),
-                        OpKind::Inset => edit::inset_faces(m, layer, &[face], n as u32, atlas),
-                        OpKind::Scale => edit::scale_verts(m, layer, &verts, n, atlas),
-                    }) {
-                        commit_edit(state, project, undo, li, before, outcome, &mut output);
-                        if kind == OpKind::Scale {
-                            // Face indices survive a scale — keep the object highlighted.
-                            state.sel_faces = kept_faces;
-                            state.sel_verts.clear();
-                        }
-                    }
-                }
-            }
-        }
     }
 
     // ── Loop cut ────────────────────────────────────────────────────────────
@@ -813,40 +891,6 @@ pub fn draw(
                     }
                     // Err(AtlasFull): hold the previous preview; growth
                     // happens on commit.
-                }
-            }
-        }
-
-        // Drag release: restore the pristine snapshots, then commit the
-        // final move through the atlas-growth + undo path.
-        if ui.input(|i| i.pointer.primary_released()) {
-            if let Some(drag) = state.drag.take() {
-                project.mesh3d = Some(drag.start_mesh.clone());
-                {
-                    let frame = &mut project.animations[0].frames[0];
-                    if let Some(layer) = frame.layers.get_mut(li) {
-                        *layer = drag.start_layer.clone();
-                    }
-                    frame.dirty = true;
-                }
-                output.canvas_dirty = true;
-                if drag.applied != [0, 0, 0] {
-                    let moved = drag.verts.clone();
-                    let applied = drag.applied;
-                    let before = drag.start_mesh.clone();
-                    let kept_verts = state.sel_verts.clone();
-                    let kept_edges = state.sel_edges.clone();
-                    let kept_faces = state.sel_faces.clone();
-                    if let Some(outcome) = with_atlas_growth(project, li, |_, layer, atlas| {
-                        edit::move_vertices(&before, layer, &moved, applied, atlas)
-                    }) {
-                        commit_edit(state, project, undo, li, drag.start_mesh, outcome, &mut output);
-                        // Vertex/edge/face identities all survive a move —
-                        // restore the selection exactly as it was.
-                        state.sel_verts = kept_verts;
-                        state.sel_edges = kept_edges;
-                        state.sel_faces = kept_faces;
-                    }
                 }
             }
         }

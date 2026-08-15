@@ -308,6 +308,51 @@ impl Mesh {
         Ok(())
     }
 
+    /// World-space quad corners of a single atlas texel on `face` — used to
+    /// preview exactly which texel a paint stroke would hit. Returns None if
+    /// the texel lies outside the face's island.
+    pub fn texel_quad_world(&self, face: &Face, tx: u32, ty: u32) -> Option<[[f32; 3]; 4]> {
+        let isl = face.island;
+        if tx < isl.x as u32
+            || ty < isl.y as u32
+            || tx >= (isl.x + isl.w) as u32
+            || ty >= (isl.y + isl.h) as u32
+        {
+            return None;
+        }
+        let basis = self.face_plane_basis(face);
+        let (min_u, min_v, _, _) = self.face_uv_bounds(face);
+        let u0 = min_u + (tx - isl.x as u32) as f32;
+        let v0 = min_v + (ty - isl.y as u32) as f32;
+        // Solve the face's plane for the coordinate the basis drops, so the
+        // quad lies exactly on slanted faces too.
+        let n = self.face_normal(face);
+        let p0 = *self.vertices.get(*face.verts.first()? as usize)?;
+        let d = n[0] * p0[0] + n[1] * p0[1] + n[2] * p0[2];
+        let point = |u: f32, v: f32| -> [f32; 3] {
+            match basis {
+                PlaneBasis::Xz => {
+                    let y = if n[1].abs() > 1e-6 { (d - n[0] * u - n[2] * v) / n[1] } else { p0[1] };
+                    [u, y, v]
+                }
+                PlaneBasis::Zy => {
+                    let x = if n[0].abs() > 1e-6 { (d - n[2] * u - n[1] * v) / n[0] } else { p0[0] };
+                    [x, v, u]
+                }
+                PlaneBasis::Xy => {
+                    let z = if n[2].abs() > 1e-6 { (d - n[0] * u - n[1] * v) / n[2] } else { p0[2] };
+                    [u, v, z]
+                }
+            }
+        };
+        Some([
+            point(u0, v0),
+            point(u0 + 1.0, v0),
+            point(u0 + 1.0, v0 + 1.0),
+            point(u0, v0 + 1.0),
+        ])
+    }
+
     /// Undirected edge set derived from faces (sorted index pairs).
     pub fn derive_edges(&self) -> HashSet<(u32, u32)> {
         let mut edges = HashSet::new();

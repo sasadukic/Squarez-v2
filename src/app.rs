@@ -760,15 +760,37 @@ impl Default for LayoutState {
 
 impl App {
     pub fn new(cc: &eframe::CreationContext) -> Self {
+        let layout_json = cc.storage.and_then(|s| s.get_string(LAYOUT_STORAGE_KEY));
+        Self::new_with(&cc.egui_ctx, layout_json)
+    }
+
+    /// Install a project as if it had just been opened (tests + headless
+    /// drivers): marks it created, resets history, and applies mode layout.
+    pub fn open_project_for_test(&mut self, project: Project) {
+        self.project = project;
+        self.current_path = None;
+        self.undo_stack = UndoStack::new();
+        self.thumbnails = Self::thumbnails_for(&self.project);
+        self.active_modified = false;
+        self.three_d = Default::default();
+        self.project_created = true;
+        self.show_new_dialog = false;
+        self.clear_transient_state();
+        self.canvas_dirty = true;
+        self.on_project_changed();
+    }
+
+    /// Construct without an eframe host — used by `new` and by tests that
+    /// drive the UI headlessly through `update_ui`.
+    pub fn new_with(egui_ctx: &egui::Context, layout_json: Option<String>) -> Self {
         // 1.5× zoom on top of OS DPI scaling for 4K displays.
-        cc.egui_ctx.set_zoom_factor(1.5);
-        egui_extras::install_image_loaders(&cc.egui_ctx);
+        egui_ctx.set_zoom_factor(1.5);
+        egui_extras::install_image_loaders(egui_ctx);
 
         // Load persisted layout (panel visibility, collapse, order) if available
-        let layout: Option<LayoutState> = cc.storage
-            .and_then(|s| s.get_string(LAYOUT_STORAGE_KEY))
-            .and_then(|json| serde_json::from_str(&json).ok());
-        load_fonts(&cc.egui_ctx);
+        let layout: Option<LayoutState> =
+            layout_json.and_then(|json| serde_json::from_str(&json).ok());
+        load_fonts(egui_ctx);
         let project = Project::new(64, 64, "Untitled".to_string());
         let thumbnails = project
             .animations
@@ -12662,6 +12684,14 @@ impl eframe::App for App {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.update_ui(ctx);
+    }
+}
+
+impl App {
+    /// The full per-frame UI pass. Split out of the eframe impl so tests can
+    /// drive real frames headlessly with synthetic input events.
+    pub fn update_ui(&mut self, ctx: &egui::Context) {
         // Force collapse on startup/new dialog
         if self.show_new_dialog {
             self.ui_state.collapse_color = true;
@@ -12911,6 +12941,11 @@ impl eframe::App for App {
         let redo = (command && shift && ctx.input(|i| i.key_pressed(egui::Key::Z)))
                 || (ctrl && ctx.input(|i| i.key_pressed(egui::Key::Y)));
 
+        if undo || redo {
+            // History moves invalidate any in-flight 3D gesture: its mesh and
+            // layer snapshots predate the change and must never be replayed.
+            self.three_d.cancel_gesture();
+        }
         if undo {
             // Prefer color-aware undo so ColorState snapshots (ramp edits) are restored.
             self.undo_stack.undo_with_color(&mut self.project, &mut self.color_state);
