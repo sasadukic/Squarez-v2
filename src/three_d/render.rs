@@ -8,7 +8,7 @@
 use egui::{Color32, Pos2, Rect, Stroke};
 
 use super::camera::{Camera3D, SnapView};
-use super::mesh::Mesh;
+use super::mesh::{Mesh, UV_INSET};
 use crate::theme::Theme;
 
 /// Axis colors, shared with the navigation gizmo (Blender convention).
@@ -84,7 +84,7 @@ pub fn build_scene(mesh: &Mesh, cam: &Camera3D, rect: Rect, atlas: (u32, u32)) -
         }
 
         // Screen positions + per-corner normalized UVs via the face's plane basis.
-        let uv = mesh.face_uv_map(face, 0.0);
+        let uv = mesh.face_uv_map(face, UV_INSET);
         let corners: Vec<(Pos2, Pos2, f32)> = face
             .verts
             .iter()

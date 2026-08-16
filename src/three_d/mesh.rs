@@ -15,6 +15,22 @@ pub const GUTTER: u16 = 2;
 /// Hard cap on one island side, in texels.
 pub const MAX_ISLAND_SIDE: u16 = 256;
 
+/// How far inside its island a face's corner UVs are pulled, in texels.
+///
+/// In a projected layout neighbouring islands sit flush against each other,
+/// with no gutter to absorb error. A corner UV that lands exactly on the
+/// island's outer boundary is one interpolation rounding away from flooring
+/// onto the *neighbour's* first texel — which reads a different face's paint
+/// wherever the artwork has a hard color boundary at the face edge, i.e.
+/// exactly where face edges usually are.
+///
+/// Clamping the corners is enough: `build_scene` evaluates UVs only at
+/// vertices and the rasterizer interpolates linearly, so the whole face's
+/// span compresses into `[INSET, w - INSET]`. At 1/64 texel that displaces an
+/// interior texel boundary by far less than a screen pixel at any usable zoom,
+/// while sitting far above f32 interpolation error.
+pub const UV_INSET: f32 = 1.0 / 64.0;
+
 /// A face's rectangle in the texture atlas, in texels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct Island {

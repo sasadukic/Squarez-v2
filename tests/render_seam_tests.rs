@@ -9,7 +9,7 @@
 use egui::{Pos2, Rect, Vec2};
 use squarez::project::{Layer, Rgba};
 use squarez::three_d::camera::Camera3D;
-use squarez::three_d::mesh::Mesh;
+use squarez::three_d::mesh::{Mesh, UV_INSET};
 use squarez::three_d::paint::fill_island;
 use squarez::three_d::render::build_scene;
 use squarez::three_d::pad_island_gutters;
@@ -85,6 +85,13 @@ fn count_violations(mesh: &Mesh, pixels: &[u8], expected: impl Fn(u32) -> Rgba) 
                         let v = w0 * tri.uvs[0].y + w1 * tri.uvs[1].y + w2 * tri.uvs[2].y;
                         // NEAREST fetch with boundary-rounding jitter: a GPU
                         // may resolve exact texel boundaries either way.
+                        //
+                        // +/-0.49 is only survivable because every island here
+                        // has a gutter, whose 1-texel dilation ring carries the
+                        // face's own edge color. Do NOT reuse this margin on a
+                        // mesh whose islands touch — there is no ring there, and
+                        // containment (see uvs_never_leave_their_island) is what
+                        // protects those instead.
                         for jitter in [-0.49f32, 0.0, 0.49] {
                             let tx = (u * ATLAS.0 as f32 + jitter).floor() as i64;
                             let ty = (v * ATLAS.1 as f32 + jitter).floor() as i64;
@@ -99,6 +106,98 @@ fn count_violations(mesh: &Mesh, pixels: &[u8], expected: impl Fn(u32) -> Rgba) 
         }
     }
     violations
+}
+
+/// Number of rendered fragments whose sampled texel falls outside the island
+/// of the face being drawn. `jitter` is interpolation slop, in texels.
+///
+/// This is the containment invariant that lets islands sit flush against each
+/// other: if no fragment ever leaves its own island, a neighbour's paint can
+/// never be read, whatever is packed next door.
+fn count_island_escapes(mesh: &Mesh, jitter: f32) -> usize {
+    let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 400.0));
+    let mut escapes = 0;
+    for k in 0..12 {
+        let cam = Camera3D {
+            yaw: k as f32 * std::f32::consts::TAU / 12.0 + 0.13,
+            pitch: 0.6154,
+            zoom: 12.0,
+            offset: Vec2::ZERO,
+        };
+        let scene = build_scene(mesh, &cam, rect, ATLAS);
+        for tri in &scene.tris {
+            let isl = mesh.faces[tri.face as usize].island;
+            let [a, b, c] = tri.pts;
+            let denom = (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y);
+            if denom.abs() < 1e-6 {
+                continue;
+            }
+            let min_x = tri.pts.iter().map(|p| p.x).fold(f32::MAX, f32::min).floor() as i32;
+            let max_x = tri.pts.iter().map(|p| p.x).fold(f32::MIN, f32::max).ceil() as i32;
+            let min_y = tri.pts.iter().map(|p| p.y).fold(f32::MAX, f32::min).floor() as i32;
+            let max_y = tri.pts.iter().map(|p| p.y).fold(f32::MIN, f32::max).ceil() as i32;
+            for py in min_y..=max_y {
+                for px in min_x..=max_x {
+                    let p = Pos2::new(px as f32 + 0.5, py as f32 + 0.5);
+                    let w1 = ((p.x - a.x) * (c.y - a.y) - (c.x - a.x) * (p.y - a.y)) / denom;
+                    let w2 = ((b.x - a.x) * (p.y - a.y) - (p.x - a.x) * (b.y - a.y)) / denom;
+                    let w0 = 1.0 - w1 - w2;
+                    if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
+                        continue;
+                    }
+                    let u = w0 * tri.uvs[0].x + w1 * tri.uvs[1].x + w2 * tri.uvs[2].x;
+                    let v = w0 * tri.uvs[0].y + w1 * tri.uvs[1].y + w2 * tri.uvs[2].y;
+                    for j in [-jitter, 0.0, jitter] {
+                        let tx = (u * ATLAS.0 as f32 + j).floor() as i64;
+                        let ty = (v * ATLAS.1 as f32 + j).floor() as i64;
+                        let inside = tx >= isl.x as i64
+                            && ty >= isl.y as i64
+                            && tx < (isl.x + isl.w) as i64
+                            && ty < (isl.y + isl.h) as i64;
+                        if !inside {
+                            escapes += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    escapes
+}
+
+#[test]
+fn uvs_never_leave_their_island() {
+    // The margin UV_INSET buys. Note this is a far smaller jitter than the
+    // +/-0.49 used by the seam tests below: that one models a GPU resolving an
+    // exact texel boundary either way, and is absorbed by the 1-texel dilation
+    // ring, which only exists where an island has a gutter. Containment is what
+    // protects islands that touch.
+    let jitter = UV_INSET * 0.9;
+    for (name, mut mesh) in [
+        ("cube", Mesh::cube(8)),
+        ("plane", Mesh::plane(8)),
+        ("cylinder", Mesh::cylinder(8)),
+        ("sphere", Mesh::sphere(8)),
+    ] {
+        mesh.allocate_all_islands(ATLAS).unwrap();
+        assert_eq!(
+            count_island_escapes(&mesh, jitter),
+            0,
+            "{name}: every fragment must sample inside its own face's island"
+        );
+    }
+}
+
+#[test]
+fn escape_detector_catches_a_missing_inset() {
+    // Sanity: the detector must be able to SEE an escape. A jitter well past
+    // the inset is exactly the error the inset is sized to absorb.
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands(ATLAS).unwrap();
+    assert!(
+        count_island_escapes(&mesh, 0.49) > 0,
+        "detector failed to reproduce an escape at jitter far beyond UV_INSET"
+    );
 }
 
 #[test]
