@@ -86,6 +86,51 @@ impl PlaneBasis {
             PlaneBasis::Xy => (p[0], p[1]),
         }
     }
+
+    /// The world axis this basis drops — the one the face's normal is
+    /// dominated by, and the one depth is measured along.
+    pub fn dropped_axis(self) -> usize {
+        match self {
+            PlaneBasis::Xz => 1, // Y
+            PlaneBasis::Zy => 0, // X
+            PlaneBasis::Xy => 2, // Z
+        }
+    }
+}
+
+/// Advance a shelf packer by one `w` x `h` rect, returning its top-left and
+/// keeping `GUTTER` clear around it. Shared by island allocation and by the
+/// projected layout's block placement, so both agree on the packing rule.
+pub fn shelf_place(
+    cursor: &mut AtlasCursor,
+    w: u16,
+    h: u16,
+    atlas: (u32, u32),
+) -> Result<(u16, u16), AtlasFull> {
+    let aw = atlas.0.min(u16::MAX as u32) as u16;
+    let ah = atlas.1.min(u16::MAX as u32) as u16;
+    if (GUTTER as u32) + (w as u32) + (GUTTER as u32) > aw as u32 {
+        return Err(AtlasFull {
+            need_w: (GUTTER as u32) + (w as u32) + (GUTTER as u32),
+            need_h: atlas.1,
+        });
+    }
+    let mut x = cursor.x.max(GUTTER);
+    let mut y = cursor.y.max(GUTTER);
+    let mut row_h = cursor.row_h;
+    if (x as u32) + (w as u32) + (GUTTER as u32) > aw as u32 {
+        x = GUTTER;
+        y = y.saturating_add(row_h).saturating_add(GUTTER);
+        row_h = 0;
+    }
+    if (y as u32) + (h as u32) + (GUTTER as u32) > ah as u32 {
+        return Err(AtlasFull {
+            need_w: atlas.0,
+            need_h: (y as u32) + (h as u32) + (GUTTER as u32),
+        });
+    }
+    *cursor = AtlasCursor { x: x + w + GUTTER, y, row_h: row_h.max(h) };
+    Ok((x, y))
 }
 
 /// One face's world → atlas-texel mapping, the single definition shared by
@@ -340,33 +385,10 @@ impl Mesh {
     /// Allocate one island via the shelf packer. Append-only: freed islands
     /// are never reused (a repack can rebuild the whole atlas if needed).
     pub fn alloc_island(&mut self, w: u16, h: u16, atlas: (u32, u32)) -> Result<Island, AtlasFull> {
-        let aw = atlas.0.min(u16::MAX as u32) as u16;
-        let ah = atlas.1.min(u16::MAX as u32) as u16;
         let w = w.clamp(1, MAX_ISLAND_SIDE);
         let h = h.clamp(1, MAX_ISLAND_SIDE);
-        if GUTTER + w + GUTTER > aw {
-            return Err(AtlasFull {
-                need_w: (GUTTER + w + GUTTER) as u32,
-                need_h: atlas.1,
-            });
-        }
-        let mut x = self.atlas_cursor.x.max(GUTTER);
-        let mut y = self.atlas_cursor.y.max(GUTTER);
-        let mut row_h = self.atlas_cursor.row_h;
-        if x + w + GUTTER > aw {
-            x = GUTTER;
-            y += row_h + GUTTER;
-            row_h = 0;
-        }
-        if y + h + GUTTER > ah {
-            return Err(AtlasFull {
-                need_w: atlas.0,
-                need_h: (y as u32) + (h + GUTTER) as u32,
-            });
-        }
-        let island = Island { x, y, w, h };
-        self.atlas_cursor = AtlasCursor { x: x + w + GUTTER, y, row_h: row_h.max(h) };
-        Ok(island)
+        let (x, y) = shelf_place(&mut self.atlas_cursor, w, h, atlas)?;
+        Ok(Island { x, y, w, h })
     }
 
     /// Allocate islands for every face that doesn't have one yet

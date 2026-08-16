@@ -6,6 +6,7 @@
 pub mod camera;
 pub mod edit;
 pub mod gizmo;
+pub mod layout;
 pub mod mesh;
 pub mod paint;
 pub mod render;

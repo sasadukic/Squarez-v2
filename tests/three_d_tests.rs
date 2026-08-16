@@ -912,3 +912,290 @@ fn clicking_stacked_vertices_picks_the_nearest() {
         "alt-click must reach the edge stacked behind"
     );
 }
+
+// ── Projected atlas layout ───────────────────────────────────────────────────
+
+use squarez::three_d::layout::{is_canonical, plan};
+
+const LAY_ATLAS: (u32, u32) = (256, 256);
+
+fn overlapping_pairs(islands: &[Island]) -> Vec<(usize, usize)> {
+    let mut bad = Vec::new();
+    for i in 0..islands.len() {
+        for j in (i + 1)..islands.len() {
+            let (a, b) = (islands[i], islands[j]);
+            let overlap = a.x + a.w > b.x
+                && b.x + b.w > a.x
+                && a.y + a.h > b.y
+                && b.y + b.h > a.y;
+            if overlap {
+                bad.push((i, j));
+            }
+        }
+    }
+    bad
+}
+
+/// Do two faces lie in the same plane? Coplanar faces are allowed to share
+/// texels — they address the shared region identically — so only overlap
+/// between faces at different depths is a defect.
+fn faces_coplanar(mesh: &Mesh, a: usize, b: usize) -> bool {
+    let unit = |fi: usize| {
+        let n = mesh.face_normal(&mesh.faces[fi]);
+        let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(1e-6);
+        [n[0] / len, n[1] / len, n[2] / len]
+    };
+    let (na, nb) = (unit(a), unit(b));
+    let dot = na[0] * nb[0] + na[1] * nb[1] + na[2] * nb[2];
+    let off = |fi: usize, n: [f32; 3]| {
+        let p = mesh.vertices[mesh.faces[fi].verts[0] as usize];
+        n[0] * p[0] + n[1] * p[1] + n[2] * p[2]
+    };
+    dot > 0.9999 && (off(a, na) - off(b, nb)).abs() < 1e-3
+}
+
+fn point_in_poly(p: (f32, f32), poly: &[(f32, f32)]) -> bool {
+    let mut inside = false;
+    let n = poly.len();
+    for i in 0..n {
+        let (x0, y0) = poly[i];
+        let (x1, y1) = poly[(i + 1) % n];
+        if (y0 > p.1) != (y1 > p.1) {
+            let t = (p.1 - y0) / (y1 - y0);
+            if p.0 < x0 + t * (x1 - x0) {
+                inside = !inside;
+            }
+        }
+    }
+    inside
+}
+
+/// The invariant that actually matters: no atlas texel may be owned by two
+/// faces that are not coplanar, or painting one would paint the other.
+///
+/// Deliberately computed from the geometry rather than from the planner's own
+/// overlap logic — bounding rectangles routinely overlap without the faces
+/// sharing any ground (fan-triangulated caps, sphere bands), so a rect test
+/// would either false-alarm or just restate the implementation.
+fn assert_no_shared_texels(name: &str, mesh: &Mesh, islands: &[Island]) {
+    let mut owner: std::collections::HashMap<(u16, u16), usize> = std::collections::HashMap::new();
+    for (fi, isl) in islands.iter().enumerate() {
+        let face = &mesh.faces[fi];
+        let basis = mesh.face_plane_basis(face);
+        let (min_u, min_v, _, _) = mesh.face_uv_bounds(face);
+        let poly: Vec<(f32, f32)> =
+            face.verts.iter().map(|&vi| basis.project(mesh.vertices[vi as usize])).collect();
+        for j in 0..isl.h {
+            for i in 0..isl.w {
+                let centre = (min_u + i as f32 + 0.5, min_v + j as f32 + 0.5);
+                if !point_in_poly(centre, &poly) {
+                    continue;
+                }
+                let texel = (isl.x + i, isl.y + j);
+                match owner.get(&texel) {
+                    Some(&prev) => assert!(
+                        faces_coplanar(mesh, prev, fi),
+                        "{name}: faces {prev} and {fi} both own texel {texel:?} \
+                         but are not coplanar"
+                    ),
+                    None => {
+                        owner.insert(texel, fi);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn assert_layout_sane(name: &str, mesh: &Mesh, islands: &[Island], atlas: (u32, u32)) {
+    for (i, isl) in islands.iter().enumerate() {
+        assert!(isl.w >= 1 && isl.h >= 1, "{name}: face {i} got a degenerate island {isl:?}");
+        assert!(
+            isl.x >= GUTTER && isl.y >= GUTTER,
+            "{name}: face {i} island {isl:?} touches the atlas border"
+        );
+        assert!(
+            (isl.x + isl.w + GUTTER) as u32 <= atlas.0 && (isl.y + isl.h + GUTTER) as u32 <= atlas.1,
+            "{name}: face {i} island {isl:?} runs past the atlas"
+        );
+    }
+    assert_no_shared_texels(name, mesh, islands);
+}
+
+#[test]
+fn projected_layout_places_primitives_without_overlap() {
+    for (name, mesh) in [
+        ("cube", Mesh::cube(8)),
+        ("plane", Mesh::plane(8)),
+        ("cylinder", Mesh::cylinder(8)),
+        ("sphere", Mesh::sphere(8)),
+    ] {
+        let l = plan(&mesh, LAY_ATLAS, None).expect("primitive must fit a 256x256 atlas");
+        assert_eq!(l.islands.len(), mesh.faces.len());
+        assert_layout_sane(name, &mesh, &l.islands, LAY_ATLAS);
+        assert!(
+            l.overflowed.is_empty(),
+            "{name}: a convex primitive must project without contested slots, got {:?}",
+            l.overflowed
+        );
+    }
+}
+
+#[test]
+fn projected_layout_gives_cube_six_eight_by_eight_islands() {
+    let mesh = Mesh::cube(8);
+    let l = plan(&mesh, LAY_ATLAS, None).unwrap();
+    assert_eq!(l.islands.len(), 6);
+    for (i, isl) in l.islands.iter().enumerate() {
+        assert_eq!((isl.w, isl.h), (8, 8), "face {i} island {isl:?}");
+    }
+    // Top (+Y) and bottom (-Y) project to the identical XZ rect, so they must
+    // land in different blocks — this is why blocks are split by normal sign.
+    let (top, bottom) = (l.islands[1], l.islands[0]);
+    assert!(
+        overlapping_pairs(&[top, bottom]).is_empty(),
+        "top {top:?} and bottom {bottom:?} must not share texels"
+    );
+}
+
+#[test]
+fn projected_layout_is_deterministic_and_idempotent() {
+    for mesh in [Mesh::cube(8), Mesh::cylinder(8), Mesh::sphere(8)] {
+        let first = plan(&mesh, LAY_ATLAS, None).unwrap();
+        for _ in 0..8 {
+            let again = plan(&mesh, LAY_ATLAS, None).unwrap();
+            assert_eq!(first.islands, again.islands, "layout must not vary between runs");
+        }
+        // Applying it makes the mesh canonical, and re-planning is a no-op.
+        let mut applied = mesh.clone();
+        for (face, isl) in applied.faces.iter_mut().zip(first.islands.iter()) {
+            face.island = *isl;
+        }
+        assert!(is_canonical(&applied, LAY_ATLAS), "an applied layout must read as canonical");
+        assert_eq!(plan(&applied, LAY_ATLAS, None).unwrap().islands, first.islands);
+    }
+}
+
+#[test]
+fn coplanar_neighbours_tile_exactly() {
+    // Two coplanar quads sharing an edge: their islands must abut with no gap
+    // and no overlap, so the atlas mapping stays continuous across the seam.
+    let mut mesh = Mesh::plane(8);
+    // Split the quad down the middle in X. plane() is [-4,0,-4] [4,0,-4]
+    // [4,0,4] [-4,0,4] wound 0,3,2,1.
+    mesh.vertices.push([0.0, 0.0, -4.0]); // 4
+    mesh.vertices.push([0.0, 0.0, 4.0]); // 5
+    mesh.faces[0].verts = vec![0, 3, 5, 4];
+    mesh.faces.push(squarez::three_d::mesh::Face {
+        verts: vec![4, 5, 2, 1],
+        island: Island::default(),
+    });
+
+    let l = plan(&mesh, LAY_ATLAS, None).unwrap();
+    assert_layout_sane("split plane", &mesh, &l.islands, LAY_ATLAS);
+    assert!(l.overflowed.is_empty(), "coplanar halves must not contest a slot");
+
+    let (a, b) = (l.islands[0], l.islands[1]);
+    assert_eq!((a.w, a.h), (4, 8));
+    assert_eq!((b.w, b.h), (4, 8));
+    assert_eq!(a.y, b.y, "coplanar halves share a v range");
+    assert_eq!(a.x + a.w, b.x, "halves must abut exactly — no gutter, no gap");
+}
+
+#[test]
+fn stacked_objects_get_their_own_blueprints() {
+    // add_object stacks the new primitive above the old one, so both tops
+    // project to the same XZ footprint. Component splitting must keep them
+    // apart instead of spilling one to the overflow shelf.
+    let base = Mesh::cube(8);
+    let layer = Layer::new("Texture".to_string(), LAY_ATLAS.0, LAY_ATLAS.1);
+    let out = squarez::three_d::edit::add_object(&base, &layer, &Mesh::cube(8), LAY_ATLAS)
+        .expect("second cube must fit");
+    let mesh = out.mesh;
+    assert_eq!(mesh.faces.len(), 12);
+
+    let l = plan(&mesh, LAY_ATLAS, None).unwrap();
+    assert_layout_sane("two cubes", &mesh, &l.islands, LAY_ATLAS);
+    assert!(
+        l.overflowed.is_empty(),
+        "two separate objects must each get their own blueprint, got overflow {:?}",
+        l.overflowed
+    );
+}
+
+#[test]
+fn contested_slot_goes_to_the_frontmost_face() {
+    // One object, two +Y faces at different heights covering the same XZ rect:
+    // only one can keep the projected slot, and it must be the upper one — the
+    // surface you actually see looking down.
+    let mut mesh = Mesh::plane(8);
+    let base = mesh.vertices.len() as u32;
+    for v in [[-4.0, 4.0, -4.0], [4.0, 4.0, -4.0], [4.0, 4.0, 4.0], [-4.0, 4.0, 4.0]] {
+        mesh.vertices.push(v);
+    }
+    // Shares vertex 0 is not possible without changing geometry, so weld the
+    // upper quad onto the lower one's corner to keep a single component.
+    mesh.vertices[base as usize] = [-4.0, 0.0, -4.0];
+    mesh.faces.push(squarez::three_d::mesh::Face {
+        verts: vec![0, base + 3, base + 2, base + 1],
+        island: Island::default(),
+    });
+
+    let l = plan(&mesh, LAY_ATLAS, None).unwrap();
+    assert_eq!(l.overflowed.len(), 1, "exactly one of the two must lose the slot");
+    assert_eq!(l.overflowed[0], 0, "the lower face is the one that spills");
+}
+
+/// A connected strip of `n` coplanar 8x8 quads running along +X, all +Y facing.
+/// The block is as wide as the strip; each individual island stays 8x8.
+fn coplanar_strip(n: u32) -> Mesh {
+    let mut mesh = Mesh { vertices: Vec::new(), faces: Vec::new(), ..Default::default() };
+    for i in 0..=n {
+        mesh.vertices.push([(i * 8) as f32, 0.0, 0.0]);
+        mesh.vertices.push([(i * 8) as f32, 0.0, 8.0]);
+    }
+    for i in 0..n {
+        mesh.faces.push(squarez::three_d::mesh::Face {
+            verts: vec![2 * i, 2 * i + 1, 2 * i + 3, 2 * i + 2],
+            island: Island::default(),
+        });
+    }
+    mesh
+}
+
+#[test]
+fn block_wider_than_the_atlas_spills_instead_of_dead_ending() {
+    // A block wider than the atlas can never be placed, and a taller atlas
+    // would not change its width — so it must degrade to the shelf rather than
+    // report AtlasFull forever. Every island still fits, so nothing is lost
+    // but the blueprint arrangement.
+    let mesh = coplanar_strip(38); // 304 units wide, well past a 256 atlas
+    assert!(mesh.face_normal(&mesh.faces[0])[1] > 0.0, "strip must face +Y");
+
+    let l = plan(&mesh, LAY_ATLAS, None).expect("must degrade, not fail");
+    assert_eq!(l.overflowed.len(), 38, "the whole oversized block spills");
+    assert_layout_sane("wide strip", &mesh, &l.islands, LAY_ATLAS);
+    assert!(l.islands.iter().all(|i| (i.w, i.h) == (8, 8)));
+}
+
+#[test]
+fn a_face_too_wide_for_the_atlas_asks_for_a_bigger_one() {
+    // Distinct from the case above: here the *island* itself cannot fit, which
+    // growth genuinely can fix, so the planner must report it rather than
+    // silently degrade.
+    let mesh = Mesh::plane(300);
+    let err = plan(&mesh, LAY_ATLAS, None).expect_err("a 256-wide island needs a bigger atlas");
+    assert!(err.need_w > LAY_ATLAS.0, "must ask for more width, got {err:?}");
+    assert!(plan(&mesh, (512, 512), None).is_ok(), "and a grown atlas must satisfy it");
+}
+
+#[test]
+fn mixed_phase_objects_do_not_overlap() {
+    // Odd-size primitives sit on half-unit coordinates; an odd and an even
+    // object sharing a block must still never be assigned overlapping rects.
+    let base = Mesh::cube(7);
+    let layer = Layer::new("Texture".to_string(), LAY_ATLAS.0, LAY_ATLAS.1);
+    let out = squarez::three_d::edit::add_object(&base, &layer, &Mesh::cube(8), LAY_ATLAS).unwrap();
+    let l = plan(&out.mesh, LAY_ATLAS, None).unwrap();
+    assert_layout_sane("mixed phase", &out.mesh, &l.islands, LAY_ATLAS);
+}
