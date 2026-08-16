@@ -391,15 +391,21 @@ impl Mesh {
         Ok(Island { x, y, w, h })
     }
 
-    /// Allocate islands for every face that doesn't have one yet
-    /// (island of zero size = unallocated).
+    /// Lay every face's island out at the position the face projects to, so
+    /// the atlas reads as an orthographic blueprint of the model.
+    ///
+    /// This replaces whatever islands the mesh had; it does not fill gaps
+    /// around them, because a face's projected position depends on the whole
+    /// block it belongs to. Deterministic, so running it twice is a no-op.
+    ///
+    /// It moves no pixels — callers holding painted texels must go through
+    /// `edit::relayout`, which carries the paint across.
     pub fn allocate_all_islands(&mut self, atlas: (u32, u32)) -> Result<(), AtlasFull> {
-        for i in 0..self.faces.len() {
-            if self.faces[i].island.w == 0 || self.faces[i].island.h == 0 {
-                let (_, _, w, h) = self.face_uv_bounds(&self.faces[i]);
-                self.faces[i].island = self.alloc_island(w, h, atlas)?;
-            }
+        let layout = super::layout::plan(self, atlas, None)?;
+        for (face, island) in self.faces.iter_mut().zip(layout.islands) {
+            face.island = island;
         }
+        self.atlas_cursor = layout.cursor;
         Ok(())
     }
 
