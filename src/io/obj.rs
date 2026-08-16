@@ -41,13 +41,12 @@ pub fn save_obj(project: &Project, path: &Path) -> Result<(), BoxError> {
     // One vt per face corner (duplicates are fine; keeps the writer dumb).
     // OBJ UV origin is bottom-left, our texel rows are top-down: flip V.
     for face in &mesh.faces {
-        let basis = mesh.face_plane_basis(face);
-        let (min_u, min_v, _, _) = mesh.face_uv_bounds(face);
-        let isl = face.island;
+        // No UV inset here: `island_from_vts` only reconstructs an island from
+        // UVs that land on exact texel boundaries, so an inset would make our
+        // own files fail to round-trip.
+        let uv = mesh.face_uv_map(face, 0.0);
         for &vi in &face.verts {
-            let (u, v) = basis.project(mesh.vertices[vi as usize]);
-            let tx = isl.x as f32 + (u - min_u).clamp(0.0, isl.w as f32);
-            let ty = isl.y as f32 + (v - min_v).clamp(0.0, isl.h as f32);
+            let (tx, ty) = uv.texel(mesh.vertices[vi as usize]);
             obj.push_str(&format!("vt {} {}\n", tx / aw, 1.0 - ty / ah));
         }
     }

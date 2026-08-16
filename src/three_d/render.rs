@@ -84,18 +84,14 @@ pub fn build_scene(mesh: &Mesh, cam: &Camera3D, rect: Rect, atlas: (u32, u32)) -
         }
 
         // Screen positions + per-corner normalized UVs via the face's plane basis.
-        let basis = mesh.face_plane_basis(face);
-        let (min_u, min_v, _, _) = mesh.face_uv_bounds(face);
-        let isl = face.island;
+        let uv = mesh.face_uv_map(face, 0.0);
         let corners: Vec<(Pos2, Pos2, f32)> = face
             .verts
             .iter()
             .map(|&vi| {
                 let p = mesh.vertices[vi as usize];
                 let (pos, depth) = cam.project(p, rect);
-                let (u, v) = basis.project(p);
-                let tx = isl.x as f32 + (u - min_u).clamp(0.0, isl.w as f32);
-                let ty = isl.y as f32 + (v - min_v).clamp(0.0, isl.h as f32);
+                let (tx, ty) = uv.texel(p);
                 (pos, Pos2::new(tx / aw, ty / ah), depth)
             })
             .collect();

@@ -67,6 +67,39 @@ impl PlaneBasis {
     }
 }
 
+/// One face's world → atlas-texel mapping, the single definition shared by
+/// the renderer and the OBJ writer.
+///
+/// `inset` pulls the result away from the island's outer border. Islands may
+/// sit flush against each other in a projected layout, so without it an
+/// interpolated coordinate that drifts a hair past the boundary can floor onto
+/// a *neighbouring* island's texel. The renderer passes `UV_INSET`; the OBJ
+/// writer must pass `0.0`, because `io::obj` only accepts UVs that land on
+/// exact texel boundaries when reconstructing islands on import.
+#[derive(Debug, Clone, Copy)]
+pub struct FaceUvMap {
+    basis: PlaneBasis,
+    min_u: f32,
+    min_v: f32,
+    island: Island,
+    inset: f32,
+}
+
+impl FaceUvMap {
+    /// Atlas texel coordinates for a world position on the face.
+    pub fn texel(&self, p: [f32; 3]) -> (f32, f32) {
+        let (u, v) = self.basis.project(p);
+        let span = |extent: u16, d: f32| -> f32 {
+            let hi = (extent as f32 - self.inset).max(self.inset);
+            d.clamp(self.inset, hi)
+        };
+        (
+            self.island.x as f32 + span(self.island.w, u - self.min_u),
+            self.island.y as f32 + span(self.island.h, v - self.min_v),
+        )
+    }
+}
+
 /// A low-poly mesh. Vertices are grid-snapped (whole numbers stored as f32),
 /// Y-up, right-handed. Meshes are tiny (tens to low hundreds of faces) —
 /// clone freely; undo snapshots the whole thing.
@@ -268,6 +301,19 @@ impl Mesh {
         let w = ((max_u - min_u).ceil() as i64).clamp(1, MAX_ISLAND_SIDE as i64) as u16;
         let h = ((max_v - min_v).ceil() as i64).clamp(1, MAX_ISLAND_SIDE as i64) as u16;
         (min_u, min_v, w, h)
+    }
+
+    /// The face's world → atlas-texel mapping, with the per-face terms
+    /// (basis, bounds, island) resolved once so it can be applied per vertex.
+    pub fn face_uv_map(&self, face: &Face, inset: f32) -> FaceUvMap {
+        let (min_u, min_v, _, _) = self.face_uv_bounds(face);
+        FaceUvMap {
+            basis: self.face_plane_basis(face),
+            min_u,
+            min_v,
+            island: face.island,
+            inset,
+        }
     }
 
     /// Allocate one island via the shelf packer. Append-only: freed islands
