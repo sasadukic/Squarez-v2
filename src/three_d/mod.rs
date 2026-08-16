@@ -11,7 +11,38 @@ pub mod paint;
 pub mod render;
 pub mod workspace;
 
-use crate::project::{Layer, Rgba};
+use crate::project::{Layer, Project, Rgba};
+
+/// Hard cap on atlas growth, per axis, in texels.
+pub const MAX_ATLAS_SIDE: u32 = 4096;
+
+/// Grow the atlas — which is the canvas — toward `need`, doubling each axis
+/// that falls short, capped at `MAX_ATLAS_SIDE`. Layer content is preserved
+/// (top-left anchored) by `Frame::resize_canvas`.
+///
+/// Returns false when neither axis could grow; the caller must then degrade
+/// rather than retry, or it spins.
+pub fn grow_atlas(project: &mut Project, need_w: u32, need_h: u32) -> bool {
+    let grow = |mut side: u32, need: u32| {
+        while side < need && side < MAX_ATLAS_SIDE {
+            side = (side.max(1) * 2).min(MAX_ATLAS_SIDE);
+        }
+        side
+    };
+    let w = grow(project.canvas_width, need_w);
+    let h = grow(project.canvas_height, need_h);
+    if w == project.canvas_width && h == project.canvas_height {
+        return false;
+    }
+    for anim in &mut project.animations {
+        for frame in &mut anim.frames {
+            frame.resize_canvas(w, h);
+        }
+    }
+    project.canvas_width = w;
+    project.canvas_height = h;
+    true
+}
 
 /// An in-flight move gesture (vertex/edge/face drag): pristine mesh + layer
 /// snapshots at drag start, the vertices being moved, and the accumulated
@@ -293,18 +324,10 @@ pub fn migrate_gutters(project: &mut crate::project::Project) -> bool {
                 project.mesh3d = Some(repacked);
                 return true;
             }
-            Err(mesh::AtlasFull) => {
-                if project.canvas_height >= 4096 {
+            Err(need) => {
+                if !grow_atlas(project, need.need_w, need.need_h) {
                     return false;
                 }
-                let w = project.canvas_width;
-                let new_h = project.canvas_height * 2;
-                for anim in &mut project.animations {
-                    for frame in &mut anim.frames {
-                        frame.resize_canvas(w, new_h);
-                    }
-                }
-                project.canvas_height = new_h;
             }
         }
     }

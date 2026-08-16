@@ -35,10 +35,10 @@ enum Action {
 }
 
 const VERTEX_HIT_RADIUS: f32 = 8.0;
-const MAX_ATLAS_HEIGHT: u32 = 4096;
 
-/// Run a mesh operation, doubling the atlas height (preserving content)
-/// as long as the shelf packer reports it full.
+/// Run a mesh operation, growing the atlas (preserving content) toward
+/// whatever dimensions the packer reports it needed. Gives up once the atlas
+/// can no longer grow in the axis that fell short.
 fn with_atlas_growth<F>(project: &mut Project, layer_idx: usize, mut op: F) -> Option<EditOutcome>
 where
     F: FnMut(&Mesh, &Layer, (u32, u32)) -> Result<EditOutcome, AtlasFull>,
@@ -49,18 +49,10 @@ where
         let layer = project.animations[0].frames[0].layers.get(layer_idx)?;
         match op(mesh, layer, atlas) {
             Ok(outcome) => return Some(outcome),
-            Err(AtlasFull) => {
-                if project.canvas_height >= MAX_ATLAS_HEIGHT {
+            Err(need) => {
+                if !super::grow_atlas(project, need.need_w, need.need_h) {
                     return None;
                 }
-                let w = project.canvas_width;
-                let new_h = project.canvas_height * 2;
-                for anim in &mut project.animations {
-                    for frame in &mut anim.frames {
-                        frame.resize_canvas(w, new_h);
-                    }
-                }
-                project.canvas_height = new_h;
             }
         }
     }

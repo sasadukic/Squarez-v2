@@ -40,9 +40,14 @@ pub struct Face {
     pub island: Island,
 }
 
-/// Returned when the shelf packer cannot place an island in the atlas.
+/// Returned when an island cannot be placed in the atlas, carrying the atlas
+/// dimensions that would have been sufficient so the caller can grow the right
+/// axis. Never serialized, so it is free to gain fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AtlasFull;
+pub struct AtlasFull {
+    pub need_w: u32,
+    pub need_h: u32,
+}
 
 /// The 2D projection basis used for both island sizing and painting:
 /// which world axes map to the island's local u/v.
@@ -324,7 +329,10 @@ impl Mesh {
         let w = w.clamp(1, MAX_ISLAND_SIDE);
         let h = h.clamp(1, MAX_ISLAND_SIDE);
         if GUTTER + w + GUTTER > aw {
-            return Err(AtlasFull);
+            return Err(AtlasFull {
+                need_w: (GUTTER + w + GUTTER) as u32,
+                need_h: atlas.1,
+            });
         }
         let mut x = self.atlas_cursor.x.max(GUTTER);
         let mut y = self.atlas_cursor.y.max(GUTTER);
@@ -335,7 +343,10 @@ impl Mesh {
             row_h = 0;
         }
         if y + h + GUTTER > ah {
-            return Err(AtlasFull);
+            return Err(AtlasFull {
+                need_w: atlas.0,
+                need_h: (y as u32) + (h + GUTTER) as u32,
+            });
         }
         let island = Island { x, y, w, h };
         self.atlas_cursor = AtlasCursor { x: x + w + GUTTER, y, row_h: row_h.max(h) };
