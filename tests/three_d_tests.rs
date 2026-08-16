@@ -372,7 +372,8 @@ fn move_vertex_resizes_island_with_blit() {
 fn delete_face_keeps_shared_vertices() {
     let mut mesh = Mesh::cube(8);
     mesh.allocate_all_islands((128, 128)).unwrap();
-    let out = delete_faces(&mesh, &[0]);
+    let layer = Layer::new("Texture".to_string(), 128, 128);
+    let out = delete_faces(&mesh, &layer, &[0], (128, 128)).expect("fits");
     assert_eq!(out.mesh.faces.len(), 5);
     assert_eq!(out.mesh.vertices.len(), 8, "all cube verts still used by other faces");
     out.mesh.validate().expect("valid after face delete");
@@ -382,7 +383,8 @@ fn delete_face_keeps_shared_vertices() {
 fn delete_vertex_removes_its_faces_and_orphans() {
     let mut mesh = Mesh::cube(8);
     mesh.allocate_all_islands((128, 128)).unwrap();
-    let out = delete_vertices(&mesh, &[0]);
+    let layer = Layer::new("Texture".to_string(), 128, 128);
+    let out = delete_vertices(&mesh, &layer, &[0], (128, 128)).expect("fits");
     // v0 belongs to bottom, back, left — three faces removed.
     assert_eq!(out.mesh.faces.len(), 3);
     assert_eq!(out.mesh.vertices.len(), 7, "v0 gone, everything else still referenced");
@@ -514,14 +516,19 @@ fn inset_shrinks_face_and_preserves_painted_center() {
         assert_eq!(v[1], 8.0);
         assert!(v[0].abs() == 2.0 && v[2].abs() == 2.0, "ring vert {:?}", v);
     }
-    // The painted marker got blitted to the center island's corner.
+    // The painted marker ends up at the center island's corner. Assert on the
+    // resulting texel rather than on a pixel edit existing: under a projected
+    // layout the inset center often does not move at all, so there may be
+    // nothing to copy — which is a better outcome, not a missing one.
     let dst = center.island;
-    let blit = out
-        .pixel_edits
-        .iter()
-        .find(|&&(x, y, _, _)| x == dst.x as u32 && y == dst.y as u32)
-        .expect("corner blit exists");
-    assert_eq!(blit.3, [200, 10, 10, 255]);
+    for &(x, y, _, new) in &out.pixel_edits {
+        layer.set_pixel(x, y, new);
+    }
+    assert_eq!(
+        layer.get_pixel(dst.x as u32, dst.y as u32),
+        [200, 10, 10, 255],
+        "painted center must survive the inset"
+    );
     out.mesh.validate().expect("valid");
 }
 
@@ -558,7 +565,7 @@ fn create_face_fills_and_orients_outward() {
     let layer = Layer::new("Texture".to_string(), 128, 128);
     // Remove the top face, then recreate it from its ring — deliberately in
     // the "wrong" (inward) order to exercise the auto-orient.
-    let out = delete_faces(&mesh, &[1]);
+    let out = delete_faces(&mesh, &layer, &[1], (128, 128)).expect("fits");
     assert_eq!(out.mesh.faces.len(), 5);
     let refill = create_face(&out.mesh, &layer, &[5, 6, 7, 4], (128, 128)).expect("fits");
     assert_eq!(refill.mesh.faces.len(), 6);
@@ -586,7 +593,7 @@ fn create_face_sorts_any_click_order() {
     let mut mesh = Mesh::cube(8);
     mesh.allocate_all_islands((128, 128)).unwrap();
     let layer = Layer::new("Texture".to_string(), 128, 128);
-    let base = delete_faces(&mesh, &[1]); // remove the top
+    let base = delete_faces(&mesh, &layer, &[1], (128, 128)).expect("fits"); // remove the top
     // Zig-zag click order (a bowtie if taken literally): 4,6 are opposite corners.
     let out = create_face(&base.mesh, &layer, &[4, 6, 5, 7], (128, 128)).expect("fits");
     assert_eq!(out.mesh.faces.len(), 6, "face must be created from zig-zag order");

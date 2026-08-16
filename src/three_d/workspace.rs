@@ -985,20 +985,34 @@ pub fn draw(
                     }
                 }
             }
+            // Deleting shrinks the blocks the removed faces belonged to, so
+            // these relayout the survivors and can need a bigger atlas — the
+            // reason they go through with_atlas_growth like every other edit.
             (Action::Delete, Some(before)) => {
                 if !state.sel_faces.is_empty() {
-                    let outcome = edit::delete_faces(&before, &state.sel_faces);
-                    commit_edit(state, project, undo, li, before, outcome, &mut output);
+                    let doomed = state.sel_faces.clone();
+                    if let Some(outcome) = with_atlas_growth(project, li, |mesh, layer, atlas| {
+                        edit::delete_faces(mesh, layer, &doomed, atlas)
+                    }) {
+                        commit_edit(state, project, undo, li, before, outcome, &mut output);
+                    }
                 } else if !state.sel_edges.is_empty() {
                     let doomed = faces_with_edges(&before, &state.sel_edges);
                     if !doomed.is_empty() {
-                        let outcome = edit::delete_faces(&before, &doomed);
-                        commit_edit(state, project, undo, li, before, outcome, &mut output);
+                        if let Some(outcome) = with_atlas_growth(project, li, |mesh, layer, atlas| {
+                            edit::delete_faces(mesh, layer, &doomed, atlas)
+                        }) {
+                            commit_edit(state, project, undo, li, before, outcome, &mut output);
+                        }
                     }
                     state.sel_edges.clear();
                 } else if !state.sel_verts.is_empty() {
-                    let outcome = edit::delete_vertices(&before, &state.sel_verts);
-                    commit_edit(state, project, undo, li, before, outcome, &mut output);
+                    let doomed = state.sel_verts.clone();
+                    if let Some(outcome) = with_atlas_growth(project, li, |mesh, layer, atlas| {
+                        edit::delete_vertices(mesh, layer, &doomed, atlas)
+                    }) {
+                        commit_edit(state, project, undo, li, before, outcome, &mut output);
+                    }
                 }
             }
             _ => {}

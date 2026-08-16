@@ -52,17 +52,6 @@ impl<'a> PixelRecorder<'a> {
         }
     }
 
-    /// Fill an island rect with the default checkerboard material
-    /// (island-local parity, matching project creation).
-    fn fill_island_default(&mut self, isl: Island) {
-        for y in 0..isl.h {
-            for x in 0..isl.w {
-                let c = if (x + y) % 2 == 0 { DEFAULT_FACE_A } else { DEFAULT_FACE_B };
-                self.write((isl.x + x) as u32, (isl.y + y) as u32, c);
-            }
-        }
-    }
-
     /// Nearest-neighbor blit from `src` island to `dst` island.
     /// Only used with equal sizes today (an exact 1:1 copy).
     fn blit_island(&mut self, src: Island, dst: Island) {
@@ -75,25 +64,122 @@ impl<'a> PixelRecorder<'a> {
             }
         }
     }
+}
 
-    /// Copy `src` into `dst` 1:1, anchored at the origin — pixels are never
-    /// resampled (no skewing); texels beyond the old extent extend the
-    /// nearest edge colors (clamp-to-edge), so a grown painted face stays
-    /// seamless instead of exposing a checker strip. Used when a reshape
-    /// changes an island's size.
-    fn copy_island_anchored(&mut self, src: Island, dst: Island) {
+/// The default checker material's color at an atlas position.
+///
+/// Parity comes from the atlas coordinate, not an island's corner, so the
+/// pattern stays continuous across faces that abut or share texels in a
+/// projected layout — the default material reads as one surface rather than a
+/// grid of independently-phased patches.
+pub fn default_texel(x: u32, y: u32) -> Rgba {
+    if (x + y).is_multiple_of(2) {
+        DEFAULT_FACE_A
+    } else {
+        DEFAULT_FACE_B
+    }
+}
+
+/// Where a face's texels come from once the projected layout has decided
+/// where its island goes.
+///
+/// Operations declare this per face; they never place islands themselves,
+/// because a face's projected position depends on every other face in its
+/// block. Splitting it this way keeps each operation's paint semantics —
+/// inset crops the parent's centre, a loop cut crops each half — while the
+/// layout stays the single owner of placement.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PaintSource {
+    /// Carry an existing island across 1:1, clamp-extending its edge colors
+    /// if the face grew. `flip_v` mirrors rows, for content authored before
+    /// the atlas v-flip.
+    Keep { src: Island, flip_v: bool },
+    /// Take a sub-rect of an existing island, resampled to fit.
+    Crop { src: Island },
+    /// A face with no history: fill with the default checker material.
+    Checker,
+}
+
+impl PaintSource {
+    fn keep(src: Island) -> Self {
+        PaintSource::Keep { src, flip_v: false }
+    }
+}
+
+/// Every face keeps the island it currently has.
+fn keep_all(mesh: &Mesh) -> Vec<PaintSource> {
+    mesh.faces.iter().map(|f| PaintSource::keep(f.island)).collect()
+}
+
+/// Move every island to the position its face projects to, carrying the
+/// texels named by `sources` (index-aligned with `mesh.faces`) along with it.
+///
+/// Every source texel is read *before* any is written: relayout is a
+/// permutation, so a texel about to be overwritten may still be another
+/// face's source. Reads go through `PixelRecorder::read`, so writes an
+/// operation already recorded are visible.
+fn relayout(
+    mesh: &mut Mesh,
+    rec: &mut PixelRecorder<'_>,
+    sources: &[PaintSource],
+    atlas: (u32, u32),
+    anchor: Option<&super::layout::LayoutAnchor>,
+) -> Result<super::layout::LayoutAnchor, AtlasFull> {
+    let plan = super::layout::plan(mesh, atlas, anchor)?;
+    let mut writes: Vec<(u32, u32, Rgba)> = Vec::new();
+
+    for (fi, &dst) in plan.islands.iter().enumerate() {
+        let source = sources.get(fi).copied().unwrap_or(PaintSource::Checker);
+        let (src, flip_v, resample) = match source {
+            // A face that never had an island has nothing to carry.
+            PaintSource::Keep { src, .. } | PaintSource::Crop { src }
+                if src.w == 0 || src.h == 0 =>
+            {
+                (Island::default(), false, false)
+            }
+            // Nothing moved and nothing to mirror: skip the copy entirely, so
+            // an unchanged layout costs no pixel edits and no undo bytes.
+            PaintSource::Keep { src, flip_v: false } if src == dst => continue,
+            PaintSource::Keep { src, flip_v } => (src, flip_v, false),
+            PaintSource::Crop { src } => (src, false, true),
+            PaintSource::Checker => (Island::default(), false, false),
+        };
         if src.w == 0 || src.h == 0 {
-            return;
+            for j in 0..dst.h {
+                for i in 0..dst.w {
+                    let (ax, ay) = ((dst.x + i) as u32, (dst.y + j) as u32);
+                    writes.push((ax, ay, default_texel(ax, ay)));
+                }
+            }
+            continue;
         }
         for j in 0..dst.h {
             for i in 0..dst.w {
-                let sx = src.x + i.min(src.w - 1);
-                let sy = src.y + j.min(src.h - 1);
-                let c = self.layer.get_pixel(sx as u32, sy as u32);
-                self.write((dst.x + i) as u32, (dst.y + j) as u32, c);
+                let (si, sj) = if resample {
+                    (
+                        (i as u32 * src.w as u32 / dst.w.max(1) as u32) as u16,
+                        (j as u32 * src.h as u32 / dst.h.max(1) as u32) as u16,
+                    )
+                } else {
+                    (i.min(src.w - 1), j.min(src.h - 1))
+                };
+                let si = si.min(src.w - 1);
+                let sj = sj.min(src.h - 1);
+                let sj = if flip_v { src.h - 1 - sj } else { sj };
+                let c = rec.read((src.x + si) as u32, (src.y + sj) as u32);
+                writes.push(((dst.x + i) as u32, (dst.y + j) as u32, c));
             }
         }
     }
+
+    for (x, y, c) in writes {
+        rec.write(x, y, c);
+    }
+    for (face, island) in mesh.faces.iter_mut().zip(plan.islands) {
+        face.island = island;
+    }
+    mesh.atlas_cursor = plan.cursor;
+    Ok(plan.anchor)
 }
 
 /// Drop vertices not referenced by any face, remapping face indices.
@@ -128,30 +214,8 @@ fn gc_vertices(mesh: &mut Mesh) -> Vec<Option<u32>> {
     map
 }
 
-/// Re-allocate the island of any face whose required size changed, blitting
-/// the old pixels across. Mutates `mesh` islands; records writes in `rec`.
-fn refresh_islands(
-    mesh: &mut Mesh,
-    rec: &mut PixelRecorder<'_>,
-    faces: &HashSet<u32>,
-    atlas: (u32, u32),
-) -> Result<(), AtlasFull> {
-    for &fi in faces {
-        let Some(face) = mesh.faces.get(fi as usize) else { continue };
-        let (_, _, w, h) = mesh.face_uv_bounds(face);
-        let old = face.island;
-        if old.w == w && old.h == h {
-            continue;
-        }
-        let new_isl = mesh.alloc_island(w, h, atlas)?;
-        rec.copy_island_anchored(old, new_isl);
-        mesh.faces[fi as usize].island = new_isl;
-    }
-    Ok(())
-}
-
-/// Move `verts` by an integer world-space `delta`. Islands of affected faces
-/// are resized (with blit) when their footprint changes.
+/// Move `verts` by an integer world-space `delta`. Every face keeps its
+/// paint; the layout decides where the islands end up.
 pub fn move_vertices(
     mesh: &Mesh,
     layer: &Layer,
@@ -168,15 +232,9 @@ pub fn move_vertices(
             v[2] += delta[2] as f32;
         }
     }
-    let affected: HashSet<u32> = out_mesh
-        .faces
-        .iter()
-        .enumerate()
-        .filter(|(_, f)| f.verts.iter().any(|vi| moved.contains(vi)))
-        .map(|(i, _)| i as u32)
-        .collect();
+    let sources = keep_all(&out_mesh);
     let mut rec = PixelRecorder::new(layer);
-    refresh_islands(&mut out_mesh, &mut rec, &affected, atlas)?;
+    relayout(&mut out_mesh, &mut rec, &sources, atlas, None)?;
     Ok(EditOutcome {
         mesh: out_mesh,
         pixel_edits: rec.edits,
@@ -221,6 +279,7 @@ pub fn extrude_faces_n(
 ) -> Result<EditOutcome, AtlasFull> {
     let mut out_mesh = mesh.clone();
     let mut rec = PixelRecorder::new(layer);
+    let mut sources = keep_all(&out_mesh);
     let mut caps: Vec<u32> = Vec::new();
     if n == 0 {
         return Ok(EditOutcome { mesh: out_mesh, ..Default::default() });
@@ -252,20 +311,18 @@ pub fn extrude_faces_n(
             let b = face.verts[(i + 1) % k];
             let a2 = dup[i];
             let b2 = dup[(i + 1) % k];
-            let mut side = Face { verts: vec![a, b, b2, a2], island: Island::default() };
-            let (_, _, w, h) = out_mesh.face_uv_bounds(&side);
-            let isl = out_mesh.alloc_island(w, h, atlas)?;
-            rec.fill_island_default(isl);
-            side.island = isl;
+            let side = Face { verts: vec![a, b, b2, a2], island: Island::default() };
             out_mesh.faces.push(side);
+            sources.push(PaintSource::Checker);
         }
 
-        // Cap replaces the original face, reusing its island.
+        // Cap replaces the original face, keeping its paint.
         let cap = Face { verts: dup, island: face.island };
         out_mesh.faces[fi as usize] = cap;
         caps.push(fi);
     }
 
+    relayout(&mut out_mesh, &mut rec, &sources, atlas, None)?;
     Ok(EditOutcome {
         mesh: out_mesh,
         pixel_edits: rec.edits,
@@ -275,7 +332,16 @@ pub fn extrude_faces_n(
 }
 
 /// Delete faces; orphaned vertices are garbage-collected.
-pub fn delete_faces(mesh: &Mesh, faces: &[u32]) -> EditOutcome {
+///
+/// Deleting shrinks the blocks the removed faces belonged to, so the survivors
+/// have to be laid out again — which is why this now needs the layer and can
+/// report a full atlas, unlike the pure topology operation it used to be.
+pub fn delete_faces(
+    mesh: &Mesh,
+    layer: &Layer,
+    faces: &[u32],
+    atlas: (u32, u32),
+) -> Result<EditOutcome, AtlasFull> {
     let doomed: HashSet<u32> = faces.iter().copied().collect();
     let mut out_mesh = mesh.clone();
     out_mesh.faces = out_mesh
@@ -286,18 +352,29 @@ pub fn delete_faces(mesh: &Mesh, faces: &[u32]) -> EditOutcome {
         .map(|(_, f)| f)
         .collect();
     gc_vertices(&mut out_mesh);
-    EditOutcome { mesh: out_mesh, ..Default::default() }
+    let sources = keep_all(&out_mesh);
+    let mut rec = PixelRecorder::new(layer);
+    relayout(&mut out_mesh, &mut rec, &sources, atlas, None)?;
+    Ok(EditOutcome { mesh: out_mesh, pixel_edits: rec.edits, ..Default::default() })
 }
 
 /// Delete vertices along with every face that uses them.
-pub fn delete_vertices(mesh: &Mesh, verts: &[u32]) -> EditOutcome {
+pub fn delete_vertices(
+    mesh: &Mesh,
+    layer: &Layer,
+    verts: &[u32],
+    atlas: (u32, u32),
+) -> Result<EditOutcome, AtlasFull> {
     let doomed: HashSet<u32> = verts.iter().copied().collect();
     let mut out_mesh = mesh.clone();
     out_mesh.faces.retain(|f| !f.verts.iter().any(|vi| doomed.contains(vi)));
     // Doomed-but-still-referenced can't happen after the retain; plain GC
     // also drops the now-unreferenced doomed vertices.
     gc_vertices(&mut out_mesh);
-    EditOutcome { mesh: out_mesh, ..Default::default() }
+    let sources = keep_all(&out_mesh);
+    let mut rec = PixelRecorder::new(layer);
+    relayout(&mut out_mesh, &mut rec, &sources, atlas, None)?;
+    Ok(EditOutcome { mesh: out_mesh, pixel_edits: rec.edits, ..Default::default() })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -358,19 +435,18 @@ pub fn add_object(
         out_mesh.vertices.push([v[0], v[1] + lift, v[2]]);
     }
     let mut rec = PixelRecorder::new(layer);
+    let mut sources = keep_all(&out_mesh);
     let mut new_faces = Vec::new();
     for face in &prim.faces {
-        let mut f = Face {
+        let f = Face {
             verts: face.verts.iter().map(|vi| vi + base).collect(),
             island: Island::default(),
         };
-        let (_, _, w, h) = out_mesh.face_uv_bounds(&f);
-        let isl = out_mesh.alloc_island(w, h, atlas)?;
-        rec.fill_island_default(isl);
-        f.island = isl;
         new_faces.push(out_mesh.faces.len() as u32);
         out_mesh.faces.push(f);
+        sources.push(PaintSource::Checker);
     }
+    relayout(&mut out_mesh, &mut rec, &sources, atlas, None)?;
     Ok(EditOutcome {
         mesh: out_mesh,
         pixel_edits: rec.edits,
@@ -398,6 +474,7 @@ pub fn inset_faces(
 ) -> Result<EditOutcome, AtlasFull> {
     let mut out_mesh = mesh.clone();
     let mut rec = PixelRecorder::new(layer);
+    let mut sources = keep_all(&out_mesh);
     let mut centers: Vec<u32> = Vec::new();
     if d == 0 {
         return Ok(EditOutcome { mesh: out_mesh, ..Default::default() });
@@ -434,21 +511,17 @@ pub fn inset_faces(
         // Border quads: [outer_i, outer_next, inner_next, inner_i].
         let k = face.verts.len();
         for i in 0..k {
-            let mut border = Face {
+            let border = Face {
                 verts: vec![face.verts[i], face.verts[(i + 1) % k], ring[(i + 1) % k], ring[i]],
                 island: Island::default(),
             };
-            let (_, _, bw, bh) = out_mesh.face_uv_bounds(&border);
-            let isl = out_mesh.alloc_island(bw, bh, atlas)?;
-            rec.fill_island_default(isl);
-            border.island = isl;
             out_mesh.faces.push(border);
+            sources.push(PaintSource::Checker);
         }
 
         // Center face replaces the original, keeping its painted center.
-        let mut center = Face { verts: ring, island: Island::default() };
+        let center = Face { verts: ring, island: Island::default() };
         let (_, _, cw, ch) = out_mesh.face_uv_bounds(&center);
-        let isl = out_mesh.alloc_island(cw, ch, atlas)?;
         let old = face.island;
         let src = Island {
             x: old.x + d.min(old.w as u32 - 1) as u16,
@@ -456,12 +529,12 @@ pub fn inset_faces(
             w: cw.min(old.w),
             h: ch.min(old.h),
         };
-        rec.blit_island(src, isl);
-        center.island = isl;
         out_mesh.faces[fi as usize] = center;
+        sources[fi as usize] = PaintSource::Crop { src };
         centers.push(fi);
     }
 
+    relayout(&mut out_mesh, &mut rec, &sources, atlas, None)?;
     Ok(EditOutcome {
         mesh: out_mesh,
         pixel_edits: rec.edits,
@@ -628,6 +701,7 @@ pub fn loop_cut(
 ) -> Result<EditOutcome, AtlasFull> {
     let mut out_mesh = mesh.clone();
     let mut rec = PixelRecorder::new(layer);
+    let mut sources = keep_all(&out_mesh);
     // One cut vertex per crossed edge, shared by both adjacent faces.
     let mut cut_verts: std::collections::HashMap<(u32, u32), u32> = std::collections::HashMap::new();
     let mut get_cut = |m: &mut Mesh, a: u32, b: u32, pt: [f32; 3]| -> u32 {
@@ -650,13 +724,10 @@ pub fn loop_cut(
         let (face_min_u, face_min_v, _, _) = out_mesh.face_uv_bounds(&face);
         let old = face.island;
 
-        let make_half = |m: &mut Mesh,
-                             rec: &mut PixelRecorder<'_>,
-                             verts: Vec<u32>|
-         -> Result<Face, AtlasFull> {
-            let mut half = Face { verts, island: Island::default() };
+        // Each half takes the crop of the parent island that sat under it.
+        let make_half = |m: &Mesh, verts: Vec<u32>| -> (Face, PaintSource) {
+            let half = Face { verts, island: Island::default() };
             let (hmin_u, hmin_v, hw, hh) = m.face_uv_bounds(&half);
-            let isl = m.alloc_island(hw, hh, atlas)?;
             let du = (hmin_u - face_min_u).max(0.0).round() as u16;
             let dv = (hmin_v - face_min_v).max(0.0).round() as u16;
             let src = Island {
@@ -665,17 +736,18 @@ pub fn loop_cut(
                 w: hw.min(old.w),
                 h: hh.min(old.h),
             };
-            rec.blit_island(src, isl);
-            half.island = isl;
-            Ok(half)
+            (half, PaintSource::Crop { src })
         };
 
-        let half_a = make_half(&mut out_mesh, &mut rec, vec![a, p, q, d])?;
-        let half_b = make_half(&mut out_mesh, &mut rec, vec![p, b, c, q])?;
+        let (half_a, src_a) = make_half(&out_mesh, vec![a, p, q, d]);
+        let (half_b, src_b) = make_half(&out_mesh, vec![p, b, c, q]);
         out_mesh.faces[st.face as usize] = half_a;
+        sources[st.face as usize] = src_a;
         out_mesh.faces.push(half_b);
+        sources.push(src_b);
     }
 
+    relayout(&mut out_mesh, &mut rec, &sources, atlas, None)?;
     Ok(EditOutcome {
         mesh: out_mesh,
         pixel_edits: rec.edits,
@@ -755,12 +827,11 @@ pub fn create_face(
         face.verts.reverse();
     }
 
-    let (_, _, w, h) = out_mesh.face_uv_bounds(&face);
-    let isl = out_mesh.alloc_island(w, h, atlas)?;
     let mut rec = PixelRecorder::new(layer);
-    rec.fill_island_default(isl);
-    face.island = isl;
+    let mut sources = keep_all(&out_mesh);
     out_mesh.faces.push(face);
+    sources.push(PaintSource::Checker);
+    relayout(&mut out_mesh, &mut rec, &sources, atlas, None)?;
     let new_idx = out_mesh.faces.len() as u32 - 1;
 
     Ok(EditOutcome {
@@ -840,15 +911,9 @@ pub fn scale_verts(
             }
         }
     }
-    let affected: HashSet<u32> = out_mesh
-        .faces
-        .iter()
-        .enumerate()
-        .filter(|(_, f)| f.verts.iter().any(|vi| moved.contains(vi)))
-        .map(|(i, _)| i as u32)
-        .collect();
+    let sources = keep_all(&out_mesh);
     let mut rec = PixelRecorder::new(layer);
-    refresh_islands(&mut out_mesh, &mut rec, &affected, atlas)?;
+    relayout(&mut out_mesh, &mut rec, &sources, atlas, None)?;
     Ok(EditOutcome {
         mesh: out_mesh,
         pixel_edits: rec.edits,

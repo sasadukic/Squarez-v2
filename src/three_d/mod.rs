@@ -168,15 +168,16 @@ pub fn paint_islands(layer: &mut Layer, mesh: &mesh::Mesh, color: Rgba) {
     }
 }
 
-/// Fill every allocated island with the default 1-texel checkerboard
-/// (island-local parity, so every face's pattern starts the same).
+/// Fill every allocated island with the default 1-texel checkerboard.
+/// Parity is atlas-global (see `edit::default_texel`), so the pattern runs
+/// continuously across faces that abut in a projected layout.
 pub fn paint_islands_checker(layer: &mut Layer, mesh: &mesh::Mesh) {
     for face in &mesh.faces {
         let isl = face.island;
         for ty in 0..isl.h {
             for tx in 0..isl.w {
-                let c = if (tx + ty) % 2 == 0 { DEFAULT_FACE_A } else { DEFAULT_FACE_B };
-                layer.set_pixel((isl.x + tx) as u32, (isl.y + ty) as u32, c);
+                let (x, y) = ((isl.x + tx) as u32, (isl.y + ty) as u32);
+                layer.set_pixel(x, y, edit::default_texel(x, y));
             }
         }
     }
