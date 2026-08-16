@@ -13635,9 +13635,11 @@ fn load_project_file(path: &std::path::Path) -> Result<Project, Box<dyn std::err
         Some("obj") => crate::io::obj::load_obj(path),
         _ => load_sqr(path),
     }?;
-    // Older 3D files were packed with tighter island gutters and carried
-    // checker rims baked into painted faces — repack and heal on load.
-    let _migrated = crate::three_d::migrate_gutters(&mut project);
+    // Older 3D files were shelf-packed, so their islands sit nowhere near
+    // where their faces project. Move them onto the projected layout, carrying
+    // the paint (and mirroring it for the atlas v-flip), and heal any checker
+    // rims baked into painted faces by older builds.
+    let _migrated = crate::three_d::migrate_layout(&mut project);
     Ok(project)
 }
 

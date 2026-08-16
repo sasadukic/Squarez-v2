@@ -1,12 +1,13 @@
 // tests/real_file_check.rs
 //
 // End-to-end validation against the user's actual model file, if present:
-// after the real load + migration path, the atlas must be repacked with
-// healthy gutters and painted islands must carry no baked checker rims.
+// after the real load + migration path the atlas must be in the projected
+// layout, islands must not overlap or run off the atlas, and painted islands
+// must carry no baked checker rims.
 // Self-skips when the file doesn't exist (CI machines, other checkouts).
 
 use squarez::three_d::edit::islands_need_repack;
-use squarez::three_d::{migrate_gutters, DEFAULT_FACE_A, DEFAULT_FACE_B};
+use squarez::three_d::{migrate_layout, DEFAULT_FACE_A, DEFAULT_FACE_B};
 
 #[test]
 fn users_model_loads_seam_clean() {
@@ -17,13 +18,25 @@ fn users_model_loads_seam_clean() {
     }
 
     let mut project = squarez::io::obj::load_obj(&path).expect("user's OBJ should load");
-    migrate_gutters(&mut project);
+    migrate_layout(&mut project);
+    let atlas = (project.canvas_width, project.canvas_height);
 
     let mesh = project.mesh3d.as_ref().expect("3D project");
     assert!(
-        !islands_need_repack(mesh),
-        "islands must respect current gutters after load migration"
+        !islands_need_repack(mesh, atlas),
+        "islands must sit at their projected positions after load migration"
     );
+
+    // Every island inside the atlas, and no two non-coplanar faces sharing
+    // texels (coplanar faces legitimately do — see three_d::layout).
+    for (fi, face) in mesh.faces.iter().enumerate() {
+        let i = face.island;
+        assert!(i.w >= 1 && i.h >= 1, "face {fi} has a degenerate island {i:?}");
+        assert!(
+            (i.x + i.w) as u32 <= atlas.0 && (i.y + i.h) as u32 <= atlas.1,
+            "face {fi} island {i:?} runs past the atlas"
+        );
+    }
 
     // No painted island may keep an all-checker outer rim after healing.
     let layer = &project.animations[0].frames[0].layers[0];

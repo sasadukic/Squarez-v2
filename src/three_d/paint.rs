@@ -62,6 +62,13 @@ pub fn pick(scene: &Scene, pos: Pos2, mesh: &super::mesh::Mesh, atlas: (u32, u32
             let uv_x = tri.uvs[0].x * u + tri.uvs[1].x * v + tri.uvs[2].x * w;
             let uv_y = tri.uvs[0].y * u + tri.uvs[1].y * v + tri.uvs[2].y * w;
             let isl = mesh.faces[tri.face as usize].island;
+            // A zero-size island would make the clamp below have min > max,
+            // which panics. The layout guarantees w,h >= 1, but a face can
+            // legitimately be unallocated (e.g. mid-import), so skip it rather
+            // than take the whole app down.
+            if isl.w == 0 || isl.h == 0 {
+                continue;
+            }
             let tx = (uv_x * atlas.0 as f32).floor() as i64;
             let ty = (uv_y * atlas.1 as f32).floor() as i64;
             let tx = tx.clamp(isl.x as i64, (isl.x + isl.w) as i64 - 1);

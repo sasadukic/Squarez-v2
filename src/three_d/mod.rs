@@ -319,18 +319,25 @@ pub fn heal_checker_rims(layer: &mut Layer, mesh: &mesh::Mesh) -> bool {
     changed
 }
 
-/// Load-time migration: files saved with older, tighter island packing
-/// can't be seam-padded (islands share gutter texels). Repack their atlas
-/// with current gutters (growing it if needed) and heal checker rims baked
-/// into painted faces by old island-growth behavior. No-op for healthy
-/// files; returns true if the project was modified.
-pub fn migrate_gutters(project: &mut crate::project::Project) -> bool {
+/// Load-time migration: move a model laid out by the old shelf packer onto
+/// the projected layout, carrying its paint. No-op for files already laid out
+/// that way; returns true if the project was modified.
+///
+/// The move is lossless. Island *sizes* are a pure function of the mesh and
+/// are unchanged by this layout, so it is an exact permutation of
+/// identically-sized rects, and the v-flip is an exact row mirror.
+///
+/// It always mirrors, because any file that still needs migrating was written
+/// before the flip — a file already in the projected layout is detected as
+/// canonical above and left alone, which also makes this idempotent.
+pub fn migrate_layout(project: &mut crate::project::Project) -> bool {
     if !project.mode.is_three_d() {
         return false;
     }
     let Some(mesh) = project.mesh3d.clone() else { return false };
-    if !edit::islands_need_repack(&mesh) {
-        // Healthy packing — still heal any checker rims baked into painted
+    let atlas = (project.canvas_width, project.canvas_height);
+    if !edit::islands_need_repack(&mesh, atlas) {
+        // Already laid out — still heal any checker rims baked into painted
         // faces by older builds (conservative + idempotent).
         let frame = &mut project.animations[0].frames[0];
         if let Some(layer) = frame.layers.first_mut() {
@@ -344,18 +351,18 @@ pub fn migrate_gutters(project: &mut crate::project::Project) -> bool {
     loop {
         let atlas = (project.canvas_width, project.canvas_height);
         let Some(layer) = project.animations[0].frames[0].layers.first() else { return false };
-        match edit::repack_islands(&mesh, layer, atlas) {
+        match edit::relayout_existing(&mesh, layer, atlas, true) {
             Ok(outcome) => {
-                let repacked = outcome.mesh;
+                let moved = outcome.mesh;
                 let frame = &mut project.animations[0].frames[0];
                 if let Some(layer) = frame.layers.first_mut() {
                     for &(x, y, _, new) in &outcome.pixel_edits {
                         layer.set_pixel(x, y, new);
                     }
-                    heal_checker_rims(layer, &repacked);
+                    heal_checker_rims(layer, &moved);
                 }
                 frame.dirty = true;
-                project.mesh3d = Some(repacked);
+                project.mesh3d = Some(moved);
                 return true;
             }
             Err(need) => {

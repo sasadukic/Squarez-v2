@@ -52,18 +52,6 @@ impl<'a> PixelRecorder<'a> {
         }
     }
 
-    /// Nearest-neighbor blit from `src` island to `dst` island.
-    /// Only used with equal sizes today (an exact 1:1 copy).
-    fn blit_island(&mut self, src: Island, dst: Island) {
-        for j in 0..dst.h as u32 {
-            for i in 0..dst.w as u32 {
-                let sx = src.x as u32 + (i * src.w as u32) / dst.w as u32;
-                let sy = src.y as u32 + (j * src.h as u32) / dst.h as u32;
-                let c = self.layer.get_pixel(sx, sy);
-                self.write(dst.x as u32 + i, dst.y as u32 + j, c);
-            }
-        }
-    }
 }
 
 /// The default checker material's color at an atlas position.
@@ -921,52 +909,44 @@ pub fn scale_verts(
     })
 }
 
-/// Do any two islands (or an island and the atlas border) sit closer than
-/// the current GUTTER? True for files saved with older, tighter packing.
-pub fn islands_need_repack(mesh: &Mesh) -> bool {
-    use super::mesh::GUTTER;
-    let g = GUTTER;
-    let islands: Vec<Island> = mesh
-        .faces
-        .iter()
-        .map(|f| f.island)
-        .filter(|i| i.w > 0 && i.h > 0)
-        .collect();
-    for (n, a) in islands.iter().enumerate() {
-        if a.x < g || a.y < g {
-            return true;
-        }
-        for b in islands.iter().skip(n + 1) {
-            let disjoint = a.x + a.w + g <= b.x
-                || b.x + b.w + g <= a.x
-                || a.y + a.h + g <= b.y
-                || b.y + b.h + g <= a.y;
-            if !disjoint && *a != *b {
-                return true;
-            }
-        }
-    }
-    false
+/// Whether a mesh's islands still need to be moved to their projected
+/// positions — i.e. the file was written by the old shelf packer.
+///
+/// This replaces the old gutter-spacing check. That check asserted every pair
+/// of islands sat at least GUTTER apart, which a projected layout violates by
+/// design: coplanar neighbours abut so their texture stays continuous.
+pub fn islands_need_repack(mesh: &Mesh, atlas: (u32, u32)) -> bool {
+    !super::layout::is_canonical(mesh, atlas)
 }
 
-/// Re-allocate every island with the current gutter spacing, moving each
-/// face's texels 1:1 to its new location.
-pub fn repack_islands(
+/// Move every island to its projected position, carrying each face's paint.
+///
+/// This is the load-time migration for models laid out by the old shelf
+/// packer. It is lossless: island *sizes* are a pure function of the mesh and
+/// are unchanged by the projected layout, so the move is an exact permutation
+/// of identically-sized rects.
+///
+/// `mirror_v` handles content authored before the atlas v-flip. Post-flip
+/// `min_v = -max_y` while the height is identical, so a face's rows are simply
+/// reversed — an exact, invertible mirror, applied only to the two bases whose
+/// v maps to world Y.
+pub fn relayout_existing(
     mesh: &Mesh,
     layer: &Layer,
     atlas: (u32, u32),
+    mirror_v: bool,
 ) -> Result<EditOutcome, AtlasFull> {
     let mut out_mesh = mesh.clone();
-    out_mesh.atlas_cursor = Default::default();
+    let sources: Vec<PaintSource> = out_mesh
+        .faces
+        .iter()
+        .map(|f| {
+            let flip = mirror_v
+                && out_mesh.face_plane_basis(f) != super::mesh::PlaneBasis::Xz;
+            PaintSource::Keep { src: f.island, flip_v: flip }
+        })
+        .collect();
     let mut rec = PixelRecorder::new(layer);
-    for fi in 0..out_mesh.faces.len() {
-        let old = out_mesh.faces[fi].island;
-        if old.w == 0 || old.h == 0 {
-            continue;
-        }
-        let new_isl = out_mesh.alloc_island(old.w, old.h, atlas)?;
-        rec.blit_island(old, new_isl);
-        out_mesh.faces[fi].island = new_isl;
-    }
+    relayout(&mut out_mesh, &mut rec, &sources, atlas)?;
     Ok(EditOutcome { mesh: out_mesh, pixel_edits: rec.edits, ..Default::default() })
 }

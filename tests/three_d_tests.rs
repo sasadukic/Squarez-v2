@@ -761,41 +761,52 @@ fn extrude_negative_pushes_a_recess_inward() {
 }
 
 #[test]
-fn old_tight_island_packing_gets_repacked() {
-    use squarez::three_d::edit::{islands_need_repack, repack_islands};
-    // Simulate a pre-gutter-widening file: islands packed 1 texel apart.
+fn old_shelf_packed_files_migrate_losslessly() {
+    use squarez::three_d::edit::{islands_need_repack, relayout_existing};
+    let atlas = (256u32, 256u32);
+    // A pre-projected-layout file: islands in packing order, nowhere near
+    // where their faces project.
     let mut mesh = Mesh::cube(8);
     let mut x = 1u16;
     for f in &mut mesh.faces {
         f.island = Island { x, y: 1, w: 8, h: 8 };
-        x += 9; // 1-texel gaps
+        x += 9;
     }
-    assert!(islands_need_repack(&mesh));
+    assert!(islands_need_repack(&mesh, atlas), "shelf-packed islands are not canonical");
 
-    let mut layer = Layer::new("Texture".to_string(), 256, 256);
-    // Distinct color per island so we can verify the moves.
+    // Paint every texel distinctly so a lost or misplaced one is detectable —
+    // a per-face flat fill would survive even a scrambled copy.
+    let mut layer = Layer::new("Texture".to_string(), atlas.0, atlas.1);
+    let marker = |i: usize, xx: u32, y: u32| [i as u8 + 1, xx as u8, y as u8, 255];
     for (i, f) in mesh.faces.iter().enumerate() {
         for y in 0..8u32 {
             for xx in 0..8u32 {
-                layer.set_pixel(f.island.x as u32 + xx, f.island.y as u32 + y, [i as u8 + 1, 0, 0, 255]);
+                let c = marker(i, xx, y);
+                layer.set_pixel(f.island.x as u32 + xx, f.island.y as u32 + y, c);
             }
         }
     }
-    let out = repack_islands(&mesh, &layer, (256, 256)).expect("fits");
-    assert!(!islands_need_repack(&out.mesh), "repacked islands must respect the gutter");
-    // Every face's texture moved with it.
-    for &(x, y, _, _) in &out.pixel_edits {
-        let _ = (x, y);
+
+    let out = relayout_existing(&mesh, &layer, atlas, true).expect("fits");
+    assert!(!islands_need_repack(&out.mesh, atlas), "migrated islands must be canonical");
+
+    for &(x, y, _, new) in &out.pixel_edits {
+        layer.set_pixel(x, y, new);
     }
     for (i, f) in out.mesh.faces.iter().enumerate() {
         let isl = f.island;
-        let expected = [i as u8 + 1, 0, 0, 255];
-        let edit = out
-            .pixel_edits
-            .iter()
-            .find(|&&(x, y, _, _)| x == isl.x as u32 && y == isl.y as u32);
-        if let Some(&(_, _, _, new)) = edit {
-            assert_eq!(new, expected, "face {} texture moved intact", i);
+        let basis = out.mesh.face_plane_basis(f);
+        let flipped = basis != squarez::three_d::mesh::PlaneBasis::Xz;
+        for y in 0..8u32 {
+            for xx in 0..8u32 {
+                // v-flipped bases mirror rows; Xz (top/bottom) keeps them.
+                let src_row = if flipped { 7 - y } else { y };
+                assert_eq!(
+                    layer.get_pixel(isl.x as u32 + xx, isl.y as u32 + y),
+                    marker(i, xx, src_row),
+                    "face {i} texel ({xx}, {y}) did not survive the migration"
+                );
+            }
         }
     }
 }
@@ -1293,4 +1304,20 @@ fn relayout_churn_stays_bounded() {
             still.pixel_edits.len()
         );
     }
+}
+
+#[test]
+fn pick_survives_an_unallocated_island() {
+    // pick() clamps into the face's island; a zero-size one makes that clamp
+    // have min > max, which panics. Faces can be unallocated mid-import, so
+    // this must degrade rather than crash.
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands((64, 64)).unwrap();
+    let cam = cam_at(SnapView::Front, 4.0);
+    let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 400.0));
+    let scene = build_scene(&mesh, &cam, rect, (64, 64));
+    for f in &mut mesh.faces {
+        f.island = Island::default();
+    }
+    assert!(pick(&scene, rect.center(), &mesh, (64, 64)).is_none());
 }
