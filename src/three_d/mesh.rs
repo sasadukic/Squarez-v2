@@ -422,7 +422,7 @@ impl Mesh {
     /// It moves no pixels — callers holding painted texels must go through
     /// `edit::relayout`, which carries the paint across.
     pub fn allocate_all_islands(&mut self, atlas: (u32, u32)) -> Result<(), AtlasFull> {
-        let layout = super::layout::plan(self, atlas, None)?;
+        let layout = super::layout::plan(self, atlas)?;
         for (face, island) in self.faces.iter_mut().zip(layout.islands) {
             face.island = island;
         }

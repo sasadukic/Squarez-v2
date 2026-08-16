@@ -123,9 +123,8 @@ fn relayout(
     rec: &mut PixelRecorder<'_>,
     sources: &[PaintSource],
     atlas: (u32, u32),
-    anchor: Option<&super::layout::LayoutAnchor>,
-) -> Result<super::layout::LayoutAnchor, AtlasFull> {
-    let plan = super::layout::plan(mesh, atlas, anchor)?;
+) -> Result<(), AtlasFull> {
+    let plan = super::layout::plan(mesh, atlas)?;
     let mut writes: Vec<(u32, u32, Rgba)> = Vec::new();
 
     for (fi, &dst) in plan.islands.iter().enumerate() {
@@ -179,7 +178,7 @@ fn relayout(
         face.island = island;
     }
     mesh.atlas_cursor = plan.cursor;
-    Ok(plan.anchor)
+    Ok(())
 }
 
 /// Drop vertices not referenced by any face, remapping face indices.
@@ -234,7 +233,7 @@ pub fn move_vertices(
     }
     let sources = keep_all(&out_mesh);
     let mut rec = PixelRecorder::new(layer);
-    relayout(&mut out_mesh, &mut rec, &sources, atlas, None)?;
+    relayout(&mut out_mesh, &mut rec, &sources, atlas)?;
     Ok(EditOutcome {
         mesh: out_mesh,
         pixel_edits: rec.edits,
@@ -322,7 +321,7 @@ pub fn extrude_faces_n(
         caps.push(fi);
     }
 
-    relayout(&mut out_mesh, &mut rec, &sources, atlas, None)?;
+    relayout(&mut out_mesh, &mut rec, &sources, atlas)?;
     Ok(EditOutcome {
         mesh: out_mesh,
         pixel_edits: rec.edits,
@@ -354,7 +353,7 @@ pub fn delete_faces(
     gc_vertices(&mut out_mesh);
     let sources = keep_all(&out_mesh);
     let mut rec = PixelRecorder::new(layer);
-    relayout(&mut out_mesh, &mut rec, &sources, atlas, None)?;
+    relayout(&mut out_mesh, &mut rec, &sources, atlas)?;
     Ok(EditOutcome { mesh: out_mesh, pixel_edits: rec.edits, ..Default::default() })
 }
 
@@ -373,7 +372,7 @@ pub fn delete_vertices(
     gc_vertices(&mut out_mesh);
     let sources = keep_all(&out_mesh);
     let mut rec = PixelRecorder::new(layer);
-    relayout(&mut out_mesh, &mut rec, &sources, atlas, None)?;
+    relayout(&mut out_mesh, &mut rec, &sources, atlas)?;
     Ok(EditOutcome { mesh: out_mesh, pixel_edits: rec.edits, ..Default::default() })
 }
 
@@ -446,7 +445,7 @@ pub fn add_object(
         out_mesh.faces.push(f);
         sources.push(PaintSource::Checker);
     }
-    relayout(&mut out_mesh, &mut rec, &sources, atlas, None)?;
+    relayout(&mut out_mesh, &mut rec, &sources, atlas)?;
     Ok(EditOutcome {
         mesh: out_mesh,
         pixel_edits: rec.edits,
@@ -534,7 +533,7 @@ pub fn inset_faces(
         centers.push(fi);
     }
 
-    relayout(&mut out_mesh, &mut rec, &sources, atlas, None)?;
+    relayout(&mut out_mesh, &mut rec, &sources, atlas)?;
     Ok(EditOutcome {
         mesh: out_mesh,
         pixel_edits: rec.edits,
@@ -747,7 +746,7 @@ pub fn loop_cut(
         sources.push(src_b);
     }
 
-    relayout(&mut out_mesh, &mut rec, &sources, atlas, None)?;
+    relayout(&mut out_mesh, &mut rec, &sources, atlas)?;
     Ok(EditOutcome {
         mesh: out_mesh,
         pixel_edits: rec.edits,
@@ -831,7 +830,7 @@ pub fn create_face(
     let mut sources = keep_all(&out_mesh);
     out_mesh.faces.push(face);
     sources.push(PaintSource::Checker);
-    relayout(&mut out_mesh, &mut rec, &sources, atlas, None)?;
+    relayout(&mut out_mesh, &mut rec, &sources, atlas)?;
     let new_idx = out_mesh.faces.len() as u32 - 1;
 
     Ok(EditOutcome {
@@ -913,7 +912,7 @@ pub fn scale_verts(
     }
     let sources = keep_all(&out_mesh);
     let mut rec = PixelRecorder::new(layer);
-    relayout(&mut out_mesh, &mut rec, &sources, atlas, None)?;
+    relayout(&mut out_mesh, &mut rec, &sources, atlas)?;
     Ok(EditOutcome {
         mesh: out_mesh,
         pixel_edits: rec.edits,

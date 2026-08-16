@@ -58,45 +58,19 @@ pub const BLOCK_ORDER: [BlockKey; 6] = [
     BlockKey { basis: PlaneBasis::Zy, positive: false }, // left   (-X)
 ];
 
-/// Frozen world-space origins for blocks that have already been laid out.
-///
-/// Without it, growing a model in -u or -v moves a block's bounding-box
-/// minimum, which shifts *every* island in that block and rewrites all of
-/// their texels — on every edit, into every undo entry. With it, a block keeps
-/// the origin it was first laid out at and only re-origins when a face would
-/// otherwise land at a negative offset.
-///
-/// Runtime state only: it is deliberately **not** part of `Mesh`. `.sqr` is
-/// bincode, which is positional and non-self-describing, so any new field on a
-/// serialized 3D type would break every existing file and force a format
-/// version bump. Keeping the layout a pure function of `(mesh, atlas)` is what
-/// makes this whole change format-compatible.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct LayoutAnchor {
-    origins: Vec<(u32, BlockKey, f32, f32)>,
-}
-
-impl LayoutAnchor {
-    fn get(&self, comp: u32, key: BlockKey) -> Option<(f32, f32)> {
-        self.origins
-            .iter()
-            .find(|(c, k, _, _)| *c == comp && *k == key)
-            .map(|(_, _, u, v)| (*u, *v))
-    }
-
-    fn set(&mut self, comp: u32, key: BlockKey, u: f32, v: f32) {
-        self.origins.push((comp, key, u, v));
-    }
-}
-
 /// A planned layout: one island per face, index-aligned with `mesh.faces`.
+///
+/// A layout is a pure function of `(mesh, atlas)` — no carried-over state, no
+/// dependence on edit history. That is what keeps the atlas an honest
+/// blueprint of the geometry (the same model always lays out the same way),
+/// and it is also what keeps this change format-compatible: `.sqr` is bincode,
+/// which is positional and non-self-describing, so any extra field on a
+/// serialized 3D type would break every existing file and force a version bump.
 #[derive(Debug, Clone, Default)]
 pub struct Layout {
     pub islands: Vec<Island>,
     /// Shelf state after packing, for `Mesh::atlas_cursor`.
     pub cursor: AtlasCursor,
-    /// Origins actually used — feed back into the next `plan` call.
-    pub anchor: LayoutAnchor,
     /// Faces that could not keep their projected slot because another face in
     /// the same block already covered it, and were shelf-packed instead.
     pub overflowed: Vec<u32>,
@@ -227,20 +201,13 @@ fn face_block(mesh: &Mesh, fi: usize) -> (BlockKey, f32, [f32; 3], f32) {
 
 /// Build the projected layout for `mesh`.
 ///
-/// `anchor` carries block origins forward from a previous layout; pass `None`
-/// for the canonical layout (project load, migration, a fresh mesh).
-///
 /// A block too wide for the atlas does not fail the whole layout — its faces
 /// fall back to the overflow shelf, which always fits because a single island
 /// is capped at `MAX_ISLAND_SIDE`. Growing the atlas cannot fix a
 /// wider-than-atlas block, so failing there would be an unrecoverable dead end.
 /// `AtlasFull` is only returned when the shelf itself runs out, which growth
 /// *can* fix.
-pub fn plan(
-    mesh: &Mesh,
-    atlas: (u32, u32),
-    anchor: Option<&LayoutAnchor>,
-) -> Result<Layout, AtlasFull> {
+pub fn plan(mesh: &Mesh, atlas: (u32, u32)) -> Result<Layout, AtlasFull> {
     let mut out = Layout {
         islands: vec![Island::default(); mesh.faces.len()],
         ..Default::default()
@@ -292,17 +259,11 @@ pub fn plan(
     }
 
     // ── Place faces inside their block, at their projected offset.
-    let mut blocks: Vec<(u32, BlockKey, Vec<Slot>, u16, u16)> = Vec::new();
+    let mut blocks: Vec<(Vec<Slot>, u16, u16)> = Vec::new();
     let mut overflow: Vec<Slot> = Vec::new();
-    for (c, key, mut slots) in groups {
+    for (_c, key, mut slots) in groups {
         let bbox = |f: fn(&Slot) -> f32, s: &[Slot]| s.iter().map(f).fold(f32::MAX, f32::min);
-        let fresh = (bbox(|s| s.min_u, &slots), bbox(|s| s.min_v, &slots));
-        let mut origin = anchor.and_then(|a| a.get(c, key)).unwrap_or(fresh);
-        // A stale origin that would push a face to a negative offset is
-        // discarded; growing in +u/+v never re-origins.
-        if slots.iter().any(|s| s.min_u < origin.0 - 0.5 || s.min_v < origin.1 - 0.5) {
-            origin = fresh;
-        }
+        let origin = (bbox(|s| s.min_u, &slots), bbox(|s| s.min_v, &slots));
 
         // Frontmost first, so the face that wins a contested slot is the one
         // you would actually see from this view.
@@ -345,20 +306,14 @@ pub fn plan(
         if placed.is_empty() {
             continue;
         }
-        blocks.push((c, key, placed, bw, bh));
+        blocks.push((placed, bw, bh));
     }
 
     // ── Shelf-place the blocks themselves, then the overflow faces.
     let mut cursor = AtlasCursor::default();
-    for (c, key, placed, bw, bh) in blocks {
+    for (placed, bw, bh) in blocks {
         match shelf_place(&mut cursor, bw, bh, atlas) {
             Ok((bx, by)) => {
-                out.anchor.set(
-                    c,
-                    key,
-                    placed[0].min_u - placed[0].lx as f32,
-                    placed[0].min_v - placed[0].ly as f32,
-                );
                 for s in placed {
                     out.islands[s.face as usize] =
                         Island { x: bx + s.lx, y: by + s.ly, w: s.w, h: s.h };
@@ -393,10 +348,10 @@ pub fn plan(
 }
 
 /// Whether `mesh`'s islands already are the canonical projected layout — the
-/// one `plan` produces with no anchor. Used to decide whether a loaded file
+/// one `plan` produces. Used to decide whether a loaded file
 /// needs migrating, and to assert the invariant in tests.
 pub fn is_canonical(mesh: &Mesh, atlas: (u32, u32)) -> bool {
-    match plan(mesh, atlas, None) {
+    match plan(mesh, atlas) {
         Ok(l) => l
             .islands
             .iter()

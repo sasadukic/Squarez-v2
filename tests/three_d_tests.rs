@@ -1039,7 +1039,7 @@ fn projected_layout_places_primitives_without_overlap() {
         ("cylinder", Mesh::cylinder(8)),
         ("sphere", Mesh::sphere(8)),
     ] {
-        let l = plan(&mesh, LAY_ATLAS, None).expect("primitive must fit a 256x256 atlas");
+        let l = plan(&mesh, LAY_ATLAS).expect("primitive must fit a 256x256 atlas");
         assert_eq!(l.islands.len(), mesh.faces.len());
         assert_layout_sane(name, &mesh, &l.islands, LAY_ATLAS);
         assert!(
@@ -1053,7 +1053,7 @@ fn projected_layout_places_primitives_without_overlap() {
 #[test]
 fn projected_layout_gives_cube_six_eight_by_eight_islands() {
     let mesh = Mesh::cube(8);
-    let l = plan(&mesh, LAY_ATLAS, None).unwrap();
+    let l = plan(&mesh, LAY_ATLAS).unwrap();
     assert_eq!(l.islands.len(), 6);
     for (i, isl) in l.islands.iter().enumerate() {
         assert_eq!((isl.w, isl.h), (8, 8), "face {i} island {isl:?}");
@@ -1070,9 +1070,9 @@ fn projected_layout_gives_cube_six_eight_by_eight_islands() {
 #[test]
 fn projected_layout_is_deterministic_and_idempotent() {
     for mesh in [Mesh::cube(8), Mesh::cylinder(8), Mesh::sphere(8)] {
-        let first = plan(&mesh, LAY_ATLAS, None).unwrap();
+        let first = plan(&mesh, LAY_ATLAS).unwrap();
         for _ in 0..8 {
-            let again = plan(&mesh, LAY_ATLAS, None).unwrap();
+            let again = plan(&mesh, LAY_ATLAS).unwrap();
             assert_eq!(first.islands, again.islands, "layout must not vary between runs");
         }
         // Applying it makes the mesh canonical, and re-planning is a no-op.
@@ -1081,7 +1081,7 @@ fn projected_layout_is_deterministic_and_idempotent() {
             face.island = *isl;
         }
         assert!(is_canonical(&applied, LAY_ATLAS), "an applied layout must read as canonical");
-        assert_eq!(plan(&applied, LAY_ATLAS, None).unwrap().islands, first.islands);
+        assert_eq!(plan(&applied, LAY_ATLAS).unwrap().islands, first.islands);
     }
 }
 
@@ -1100,7 +1100,7 @@ fn coplanar_neighbours_tile_exactly() {
         island: Island::default(),
     });
 
-    let l = plan(&mesh, LAY_ATLAS, None).unwrap();
+    let l = plan(&mesh, LAY_ATLAS).unwrap();
     assert_layout_sane("split plane", &mesh, &l.islands, LAY_ATLAS);
     assert!(l.overflowed.is_empty(), "coplanar halves must not contest a slot");
 
@@ -1123,7 +1123,7 @@ fn stacked_objects_get_their_own_blueprints() {
     let mesh = out.mesh;
     assert_eq!(mesh.faces.len(), 12);
 
-    let l = plan(&mesh, LAY_ATLAS, None).unwrap();
+    let l = plan(&mesh, LAY_ATLAS).unwrap();
     assert_layout_sane("two cubes", &mesh, &l.islands, LAY_ATLAS);
     assert!(
         l.overflowed.is_empty(),
@@ -1150,7 +1150,7 @@ fn contested_slot_goes_to_the_frontmost_face() {
         island: Island::default(),
     });
 
-    let l = plan(&mesh, LAY_ATLAS, None).unwrap();
+    let l = plan(&mesh, LAY_ATLAS).unwrap();
     assert_eq!(l.overflowed.len(), 1, "exactly one of the two must lose the slot");
     assert_eq!(l.overflowed[0], 0, "the lower face is the one that spills");
 }
@@ -1181,7 +1181,7 @@ fn block_wider_than_the_atlas_spills_instead_of_dead_ending() {
     let mesh = coplanar_strip(38); // 304 units wide, well past a 256 atlas
     assert!(mesh.face_normal(&mesh.faces[0])[1] > 0.0, "strip must face +Y");
 
-    let l = plan(&mesh, LAY_ATLAS, None).expect("must degrade, not fail");
+    let l = plan(&mesh, LAY_ATLAS).expect("must degrade, not fail");
     assert_eq!(l.overflowed.len(), 38, "the whole oversized block spills");
     assert_layout_sane("wide strip", &mesh, &l.islands, LAY_ATLAS);
     assert!(l.islands.iter().all(|i| (i.w, i.h) == (8, 8)));
@@ -1193,9 +1193,9 @@ fn a_face_too_wide_for_the_atlas_asks_for_a_bigger_one() {
     // growth genuinely can fix, so the planner must report it rather than
     // silently degrade.
     let mesh = Mesh::plane(300);
-    let err = plan(&mesh, LAY_ATLAS, None).expect_err("a 256-wide island needs a bigger atlas");
+    let err = plan(&mesh, LAY_ATLAS).expect_err("a 256-wide island needs a bigger atlas");
     assert!(err.need_w > LAY_ATLAS.0, "must ask for more width, got {err:?}");
-    assert!(plan(&mesh, (512, 512), None).is_ok(), "and a grown atlas must satisfy it");
+    assert!(plan(&mesh, (512, 512)).is_ok(), "and a grown atlas must satisfy it");
 }
 
 #[test]
@@ -1205,7 +1205,7 @@ fn mixed_phase_objects_do_not_overlap() {
     let base = Mesh::cube(7);
     let layer = Layer::new("Texture".to_string(), LAY_ATLAS.0, LAY_ATLAS.1);
     let out = squarez::three_d::edit::add_object(&base, &layer, &Mesh::cube(8), LAY_ATLAS).unwrap();
-    let l = plan(&out.mesh, LAY_ATLAS, None).unwrap();
+    let l = plan(&out.mesh, LAY_ATLAS).unwrap();
     assert_layout_sane("mixed phase", &out.mesh, &l.islands, LAY_ATLAS);
 }
 
@@ -1238,4 +1238,59 @@ fn side_blocks_are_upright_on_the_canvas() {
     let low = uv.texel([0.0, 0.0, 4.0]).1;
     let high = uv.texel([0.0, 8.0, 4.0]).1;
     assert!(high < low, "top of the face must sit above its bottom (got {high} vs {low})");
+}
+
+#[test]
+fn relayout_churn_stays_bounded() {
+    // Every edit relayouts the whole mesh, so this pins what that costs: the
+    // texels one vertex nudge rewrites are what lands in a single undo entry.
+    // Measured at the time of writing: cube 272 edits (4 KB), sphere 8,
+    // 44-face cylinder 0. Cheap enough that carrying block origins forward
+    // between edits — which would trade the layout's canonical-ness for
+    // churn — is not worth it.
+    let atlas = (256u32, 256u32);
+    for (name, mut mesh) in [
+        ("cube", Mesh::cube(8)),
+        ("sphere", Mesh::sphere(8)),
+        ("cylinder16", Mesh::cylinder_n(16, 16)),
+    ] {
+        mesh.allocate_all_islands(atlas).unwrap();
+        // Paint every island: a blank atlas makes every copy a no-op write,
+        // which would measure nothing.
+        let mut layer = Layer::new("Texture".to_string(), atlas.0, atlas.1);
+        for (i, face) in mesh.faces.iter().enumerate() {
+            let isl = face.island;
+            for y in isl.y..isl.y + isl.h {
+                for x in isl.x..isl.x + isl.w {
+                    // Vary per texel, not just per face: a uniform fill makes a
+                    // one-texel shift a no-op write and hides the real cost.
+                    layer.set_pixel(x as u32, y as u32, [(i * 7) as u8, x as u8, y as u8, 255]);
+                }
+            }
+        }
+        let total: usize =
+            mesh.faces.iter().map(|f| f.island.w as usize * f.island.h as usize).sum();
+        let grow = squarez::three_d::edit::move_vertices(&mesh, &layer, &[0], [-1, 0, 0], atlas)
+            .expect("fits");
+        println!(
+            "{name}: {} faces, {total} texels total, one nudge rewrote {} edits ({} KB)",
+            mesh.faces.len(),
+            grow.pixel_edits.len(),
+            grow.pixel_edits.len() * 16 / 1024,
+        );
+        assert!(
+            grow.pixel_edits.len() <= total,
+            "{name}: a nudge rewrote {} texels, more than the {total} the atlas holds",
+            grow.pixel_edits.len()
+        );
+
+        // A move that changes no island position must cost nothing at all.
+        let still = squarez::three_d::edit::move_vertices(&mesh, &layer, &[], [1, 0, 0], atlas)
+            .expect("fits");
+        assert!(
+            still.pixel_edits.is_empty(),
+            "{name}: an unchanged layout recorded {} edits",
+            still.pixel_edits.len()
+        );
+    }
 }
