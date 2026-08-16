@@ -382,12 +382,7 @@ pub fn add_object(
 /// Map (u, v) plane-basis coordinates back into a 3D point, carrying the
 /// off-plane coordinate from `original`.
 fn basis_unproject(basis: super::mesh::PlaneBasis, original: [f32; 3], u: f32, v: f32) -> [f32; 3] {
-    use super::mesh::PlaneBasis;
-    match basis {
-        PlaneBasis::Xz => [u, original[1], v],
-        PlaneBasis::Zy => [original[0], v, u],
-        PlaneBasis::Xy => [u, v, original[2]],
-    }
+    basis.unproject(u, v, original[basis.dropped_axis()])
 }
 
 /// Inset each selected quad face by `d` units: the face shrinks to a center

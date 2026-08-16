@@ -249,10 +249,12 @@ fn pick_is_pixel_perfect_in_snap_view() {
 
     for i in 0..8u32 {
         for j in 0..8u32 {
-            // World point at the center of texel (i, j): the front face spans
-            // x in [-4, 4], y in [0, 8]; u = x - min_u, v = y - min_v.
+            // World point at the center of the texel in island column i, row j.
+            // The front face spans x in [-4, 4] and y in [0, 8]; u = x - min_u,
+            // and v = -y, so atlas rows run downward as the world runs up —
+            // island row j is world y = 7 - j.
             let wx = -4.0 + i as f32 + 0.5;
-            let wy = j as f32 + 0.5;
+            let wy = (7 - j) as f32 + 0.5;
             let p = Pos2::new(c.x + wx * zoom, c.y - wy * zoom);
             let hit = pick(&scene, p, &mesh, (64, 64)).expect("hit expected");
             assert_eq!(hit.face as usize, fi);
@@ -1198,4 +1200,35 @@ fn mixed_phase_objects_do_not_overlap() {
     let out = squarez::three_d::edit::add_object(&base, &layer, &Mesh::cube(8), LAY_ATLAS).unwrap();
     let l = plan(&out.mesh, LAY_ATLAS, None).unwrap();
     assert_layout_sane("mixed phase", &out.mesh, &l.islands, LAY_ATLAS);
+}
+
+#[test]
+fn project_and_unproject_are_exact_inverses() {
+    use squarez::three_d::mesh::PlaneBasis;
+    // The v-flip lives in exactly these two functions; everything else derives
+    // from them, so a half-applied flip must fail here first.
+    for basis in [PlaneBasis::Xz, PlaneBasis::Zy, PlaneBasis::Xy] {
+        for p in [[1.0, 2.0, 3.0], [-4.0, 0.0, 7.5], [0.0, -6.0, -2.0]] {
+            let (u, v) = basis.project(p);
+            let back = basis.unproject(u, v, p[basis.dropped_axis()]);
+            assert_eq!(back, p, "{basis:?} round-trip of {p:?} gave {back:?}");
+        }
+    }
+}
+
+#[test]
+fn side_blocks_are_upright_on_the_canvas() {
+    // Atlas rows run downward, so a face's higher world-Y corner must land on
+    // a LOWER atlas row — otherwise the front/side blueprints are upside down.
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands(LAY_ATLAS).unwrap();
+    let front = mesh
+        .faces
+        .iter()
+        .find(|f| mesh.face_normal(f)[2] > 0.5)
+        .expect("cube has a +Z face");
+    let uv = mesh.face_uv_map(front, 0.0);
+    let low = uv.texel([0.0, 0.0, 4.0]).1;
+    let high = uv.texel([0.0, 8.0, 4.0]).1;
+    assert!(high < low, "top of the face must sit above its bottom (got {high} vs {low})");
 }

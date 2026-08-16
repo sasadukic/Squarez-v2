@@ -79,16 +79,37 @@ pub enum PlaneBasis {
 
 impl PlaneBasis {
     /// Project a world position into this basis's (u, v) plane.
+    ///
+    /// World +Y is up but atlas rows run downward, so the two bases that map
+    /// `v` to Y negate it. Without that, the front and side blocks of a
+    /// projected atlas come out upside down — which the 3D view would not
+    /// care about (the mapping is self-consistent either way), but the atlas
+    /// is the canvas, and painting a model's face upside down is not a thing
+    /// anyone wants to do.
     pub fn project(self, p: [f32; 3]) -> (f32, f32) {
         match self {
             PlaneBasis::Xz => (p[0], p[2]),
-            PlaneBasis::Zy => (p[2], p[1]),
-            PlaneBasis::Xy => (p[0], p[1]),
+            PlaneBasis::Zy => (p[2], -p[1]),
+            PlaneBasis::Xy => (p[0], -p[1]),
+        }
+    }
+
+    /// Exact inverse of `project`: rebuild a world position from plane
+    /// coordinates plus the value of the axis this basis drops.
+    ///
+    /// Keep this matched to `project` — they are the only two places the
+    /// v-flip is expressed, and everything else derives from them.
+    pub fn unproject(self, u: f32, v: f32, dropped: f32) -> [f32; 3] {
+        match self {
+            PlaneBasis::Xz => [u, dropped, v],
+            PlaneBasis::Zy => [dropped, -v, u],
+            PlaneBasis::Xy => [u, -v, dropped],
         }
     }
 
     /// The world axis this basis drops — the one the face's normal is
-    /// dominated by, and the one depth is measured along.
+    /// dominated by, and the one depth is measured along. `unproject` writes
+    /// its `dropped` argument straight into this component.
     pub fn dropped_axis(self) -> usize {
         match self {
             PlaneBasis::Xz => 1, // Y
@@ -427,24 +448,24 @@ impl Mesh {
         let v0 = min_v + (ty - isl.y as u32) as f32;
         // Solve the face's plane for the coordinate the basis drops, so the
         // quad lies exactly on slanted faces too.
+        //
+        // `unproject` writes `dropped` straight into the dropped axis, so
+        // n . unproject(u, v, w) == n . unproject(u, v, 0) + n[axis] * w.
+        // Deriving w that way keeps this correct for whatever `project` does,
+        // rather than restating each basis's plane equation by hand.
+        let axis = basis.dropped_axis();
         let n = self.face_normal(face);
         let p0 = *self.vertices.get(*face.verts.first()? as usize)?;
         let d = n[0] * p0[0] + n[1] * p0[1] + n[2] * p0[2];
         let point = |u: f32, v: f32| -> [f32; 3] {
-            match basis {
-                PlaneBasis::Xz => {
-                    let y = if n[1].abs() > 1e-6 { (d - n[0] * u - n[2] * v) / n[1] } else { p0[1] };
-                    [u, y, v]
-                }
-                PlaneBasis::Zy => {
-                    let x = if n[0].abs() > 1e-6 { (d - n[2] * u - n[1] * v) / n[0] } else { p0[0] };
-                    [x, v, u]
-                }
-                PlaneBasis::Xy => {
-                    let z = if n[2].abs() > 1e-6 { (d - n[0] * u - n[1] * v) / n[2] } else { p0[2] };
-                    [u, v, z]
-                }
-            }
+            let base = basis.unproject(u, v, 0.0);
+            let dropped = if n[axis].abs() > 1e-6 {
+                let without = n[0] * base[0] + n[1] * base[1] + n[2] * base[2];
+                (d - without) / n[axis]
+            } else {
+                p0[axis]
+            };
+            basis.unproject(u, v, dropped)
         };
         Some([
             point(u0, v0),
