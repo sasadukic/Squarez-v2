@@ -220,3 +220,50 @@ fn seam_detector_catches_unpadded_atlas() {
     let violations = count_violations(&mesh, &layer.pixels, |fi| face_color(fi as usize));
     assert!(violations > 0, "detector failed to reproduce the seam defect on an unpadded atlas");
 }
+
+#[test]
+fn dilation_never_overwrites_a_neighbours_texels() {
+    // Under a projected layout islands abut with no gutter between them.
+    // Dilating a border outward there would replace a neighbour's real paint
+    // with a stranger's edge color — so every claimed texel must survive the
+    // padding pass byte for byte.
+    let mut mesh = Mesh::plane(8);
+    // Split the quad in X so the two halves share an edge and abut in the atlas.
+    mesh.vertices.push([0.0, 0.0, -4.0]);
+    mesh.vertices.push([0.0, 0.0, 4.0]);
+    mesh.faces[0].verts = vec![0, 3, 5, 4];
+    mesh.faces.push(squarez::three_d::mesh::Face {
+        verts: vec![4, 5, 2, 1],
+        island: squarez::three_d::mesh::Island::default(),
+    });
+    mesh.allocate_all_islands(ATLAS).unwrap();
+    let (a, b) = (mesh.faces[0].island, mesh.faces[1].island);
+    assert_eq!(a.x + a.w, b.x, "halves must abut for this test to mean anything");
+
+    let mut layer = Layer::new("Texture".to_string(), ATLAS.0, ATLAS.1);
+    for (i, face) in mesh.faces.iter().enumerate() {
+        for (x, y, _, new) in fill_island(&mut layer, face.island, face_color(i)) {
+            layer.set_pixel(x, y, new);
+        }
+    }
+
+    let mut padded = layer.pixels.clone();
+    pad_island_gutters(&mut padded, ATLAS.0, ATLAS.1, &mesh);
+
+    for (i, face) in mesh.faces.iter().enumerate() {
+        let isl = face.island;
+        for y in isl.y..isl.y + isl.h {
+            for x in isl.x..isl.x + isl.w {
+                assert_eq!(
+                    sample(&padded, x as i64, y as i64),
+                    face_color(i),
+                    "padding overwrote face {i}'s texel at ({x}, {y})"
+                );
+            }
+        }
+    }
+
+    // ...while the outward sides, which are genuinely unclaimed, still dilate.
+    assert_eq!(sample(&padded, a.x as i64 - 1, a.y as i64), face_color(0));
+    assert_eq!(sample(&padded, (b.x + b.w) as i64, b.y as i64), face_color(1));
+}

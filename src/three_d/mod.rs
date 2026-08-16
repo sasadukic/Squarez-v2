@@ -187,6 +187,12 @@ pub fn paint_islands_checker(layer: &mut Layer, mesh: &mesh::Mesh) {
 /// ring. Run on the composited atlas right before GPU upload: fragments
 /// that sample just past an island boundary then read the face's own edge
 /// color instead of empty gutter — no seams at face boundaries.
+///
+/// Only unclaimed texels are written. In a projected layout islands sit flush
+/// against each other, and dilating into a neighbour would overwrite its real
+/// paint with a stranger's edge color. Those shared boundaries need no
+/// dilation anyway: `mesh::UV_INSET` already keeps every fragment inside its
+/// own island, so nothing ever samples across them.
 pub fn pad_island_gutters(pixels: &mut [u8], atlas_w: u32, atlas_h: u32, mesh: &mesh::Mesh) {
     let idx = |x: i64, y: i64| -> Option<usize> {
         if x < 0 || y < 0 || x >= atlas_w as i64 || y >= atlas_h as i64 {
@@ -195,7 +201,33 @@ pub fn pad_island_gutters(pixels: &mut [u8], atlas_w: u32, atlas_h: u32, mesh: &
             Some(((y as u32 * atlas_w + x as u32) * 4) as usize)
         }
     };
+
+    // Occupancy as a bitset, not a Vec<bool>: this runs on every canvas
+    // rebuild, and at a 4096x4096 atlas a byte per texel would be 16 MB of
+    // allocation per frame while painting.
+    let texels = (atlas_w as usize) * (atlas_h as usize);
+    let mut claimed = vec![0u64; texels.div_ceil(64)];
+    for face in &mesh.faces {
+        let isl = face.island;
+        for y in isl.y as u32..(isl.y as u32 + isl.h as u32).min(atlas_h) {
+            for x in isl.x as u32..(isl.x as u32 + isl.w as u32).min(atlas_w) {
+                let bit = (y as usize) * (atlas_w as usize) + x as usize;
+                claimed[bit / 64] |= 1u64 << (bit % 64);
+            }
+        }
+    }
+    let is_claimed = |x: i64, y: i64| -> bool {
+        if x < 0 || y < 0 || x >= atlas_w as i64 || y >= atlas_h as i64 {
+            return true; // off-atlas: nothing to write there either
+        }
+        let bit = (y as usize) * (atlas_w as usize) + x as usize;
+        claimed[bit / 64] & (1u64 << (bit % 64)) != 0
+    };
+
     let copy = |sx: i64, sy: i64, dx: i64, dy: i64, px: &mut [u8]| {
+        if is_claimed(dx, dy) {
+            return;
+        }
         if let (Some(si), Some(di)) = (idx(sx, sy), idx(dx, dy)) {
             let (a, b) = if si < di {
                 let (lo, hi) = px.split_at_mut(di);
