@@ -66,3 +66,52 @@ fn extrude_undo_redo_in_3d() {
     stack.redo_with_color(&mut p, &mut cs);
     assert_eq!(p.mesh3d.as_ref(), Some(&out.mesh));
 }
+
+#[test]
+fn undo_restores_a_layout_shifting_edit_texel_for_texel() {
+    // Every edit relayouts the whole mesh, so an edit can move islands that
+    // have nothing to do with the geometry that changed. Undo has to put the
+    // entire atlas back, not just the edited face.
+    let mut p = cube_project();
+    let atlas = (p.canvas_width, p.canvas_height);
+
+    // Paint every texel distinctly so a misplaced restore is detectable.
+    for (i, face) in p.mesh3d.as_ref().unwrap().faces.clone().iter().enumerate() {
+        let isl = face.island;
+        for y in isl.y..isl.y + isl.h {
+            for x in isl.x..isl.x + isl.w {
+                let c = [i as u8 + 1, x as u8, y as u8, 255];
+                p.animations[0].frames[0].layers[0].set_pixel(x as u32, y as u32, c);
+            }
+        }
+    }
+    let mesh_before = p.mesh3d.clone().unwrap();
+    let pixels_before = p.animations[0].frames[0].layers[0].pixels.clone();
+
+    // Move a corner outward: the block grows, so islands shift.
+    let layer = p.animations[0].frames[0].layers[0].clone();
+    let out = squarez::three_d::edit::move_vertices(&mesh_before, &layer, &[0], [-2, 0, -2], atlas)
+        .expect("fits");
+    for &(x, y, _, new) in &out.pixel_edits {
+        p.animations[0].frames[0].layers[0].set_pixel(x, y, new);
+    }
+    let mut stack = UndoStack::new();
+    stack.push(Command::MeshEdit {
+        before: mesh_before.clone(),
+        after: out.mesh.clone(),
+        layer_id: 0,
+        pixel_edits: out.pixel_edits.clone(),
+    });
+    p.mesh3d = Some(out.mesh);
+    assert_ne!(
+        p.animations[0].frames[0].layers[0].pixels, pixels_before,
+        "the edit must actually have moved texels for this test to mean anything"
+    );
+
+    stack.undo(&mut p);
+    assert_eq!(p.mesh3d.as_ref().unwrap(), &mesh_before, "mesh must be restored");
+    assert_eq!(
+        p.animations[0].frames[0].layers[0].pixels, pixels_before,
+        "every atlas texel must be restored, not just the edited face's"
+    );
+}

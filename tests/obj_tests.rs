@@ -145,3 +145,36 @@ fn missing_texture_gives_blank_atlas_with_islands_from_vt() {
     assert_eq!(mesh.vertices.len(), 8);
     assert_eq!(mesh.faces.len(), 6);
 }
+
+#[test]
+fn roundtrip_keeps_side_face_orientation_under_the_v_flip() {
+    // Face 0 of a cube is the bottom (Xz basis, no v-flip). Exercise a face
+    // whose basis DOES flip v, with an asymmetric marker so a mirrored
+    // round-trip is detectable — a symmetric one would pass either way.
+    let mut project = cube_project("vflip");
+    let mesh = project.mesh3d.as_ref().unwrap().clone();
+    let (fi, face) = mesh
+        .faces
+        .iter()
+        .enumerate()
+        .find(|(_, f)| mesh.face_plane_basis(f) == squarez::three_d::mesh::PlaneBasis::Xy)
+        .expect("cube has a front/back face");
+    let isl = face.island;
+    let layer = &mut project.animations[0].frames[0].layers[0];
+    layer.set_pixel(isl.x as u32 + 1, isl.y as u32, [255, 0, 0, 255]); // near the top row
+    layer.set_pixel(isl.x as u32 + 1, (isl.y + isl.h - 1) as u32, [0, 0, 255, 255]); // bottom row
+
+    let path = temp_path("vflip.obj");
+    save_obj(&project, &path).expect("save");
+    let loaded = load_obj(&path).expect("load");
+
+    let back = &loaded.mesh3d.as_ref().unwrap().faces[fi];
+    assert_eq!(back.island, isl, "island must survive the roundtrip");
+    let out = &loaded.animations[0].frames[0].layers[0];
+    assert_eq!(out.get_pixel(isl.x as u32 + 1, isl.y as u32), [255, 0, 0, 255]);
+    assert_eq!(
+        out.get_pixel(isl.x as u32 + 1, (isl.y + isl.h - 1) as u32),
+        [0, 0, 255, 255],
+        "top and bottom must not swap through the OBJ round-trip"
+    );
+}

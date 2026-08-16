@@ -22,10 +22,12 @@ fn users_model_loads_seam_clean() {
     let atlas = (project.canvas_width, project.canvas_height);
 
     let mesh = project.mesh3d.as_ref().expect("3D project");
+    assert!(!mesh.faces.is_empty(), "the model must have geometry, or this checks nothing");
     assert!(
         !islands_need_repack(mesh, atlas),
         "islands must sit at their projected positions after load migration"
     );
+    println!("{} faces from the real model migrated cleanly", mesh.faces.len());
 
     // Every island inside the atlas, and no two non-coplanar faces sharing
     // texels (coplanar faces legitimately do — see three_d::layout).
@@ -68,4 +70,53 @@ fn users_model_loads_seam_clean() {
             "face {fi}: painted island still carries a baked checker rim"
         );
     }
+}
+
+/// Every 3D `.sqr` on the user's Desktop, through the real load + migration
+/// path. Self-skips where there are none.
+///
+/// Synthetic meshes are all primitives; these are hand-modelled, so they are
+/// the only place irregular geometry meets the layout.
+#[test]
+fn real_sqr_models_migrate_cleanly() {
+    let Some(home) = std::env::var_os("HOME") else { return };
+    let desktop = std::path::PathBuf::from(home).join("Desktop");
+    let Ok(entries) = std::fs::read_dir(&desktop) else { return };
+
+    let mut checked = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("sqr") {
+            continue;
+        }
+        let Ok(mut project) = squarez::io::sqr::load_sqr(&path) else { continue };
+        if !project.mode.is_three_d() || project.mesh3d.is_none() {
+            continue;
+        }
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        let before = project.mesh3d.clone().unwrap();
+
+        migrate_layout(&mut project);
+        let atlas = (project.canvas_width, project.canvas_height);
+        let mesh = project.mesh3d.as_ref().unwrap();
+
+        assert_eq!(mesh.faces.len(), before.faces.len(), "{name}: face count changed");
+        assert_eq!(mesh.vertices, before.vertices, "{name}: geometry changed");
+        assert!(!islands_need_repack(mesh, atlas), "{name}: not canonical after migration");
+        for (fi, face) in mesh.faces.iter().enumerate() {
+            let i = face.island;
+            assert!(i.w >= 1 && i.h >= 1, "{name}: face {fi} degenerate island {i:?}");
+            assert!(
+                (i.x + i.w) as u32 <= atlas.0 && (i.y + i.h) as u32 <= atlas.1,
+                "{name}: face {fi} island {i:?} runs past the {atlas:?} atlas"
+            );
+        }
+
+        let faces = mesh.faces.len();
+        // Idempotent: a migrated project must not migrate again.
+        assert!(!migrate_layout(&mut project), "{name}: migration is not a fixed point");
+        checked += 1;
+        println!("{name}: {faces} faces migrated cleanly");
+    }
+    println!("checked {checked} real 3D .sqr file(s)");
 }
