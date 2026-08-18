@@ -1321,3 +1321,100 @@ fn pick_survives_an_unallocated_island() {
     }
     assert!(pick(&scene, rect.center(), &mesh, (64, 64)).is_none());
 }
+
+// ── Object-tool outline ──────────────────────────────────────────────────────
+
+/// Cube with a rectangular recess punched into its +Z face.
+fn recessed_cube() -> Mesh {
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands(LAY_ATLAS).unwrap();
+    let layer = Layer::new("Texture".to_string(), LAY_ATLAS.0, LAY_ATLAS.1);
+    let front = mesh
+        .faces
+        .iter()
+        .position(|f| mesh.face_normal(f)[2] > 0.5)
+        .expect("cube has a +Z face") as u32;
+    let ins = squarez::three_d::edit::inset_faces(&mesh, &layer, &[front], 1, LAY_ATLAS).unwrap();
+    squarez::three_d::edit::extrude_faces_n(&ins.mesh, &layer, &[front], -3, LAY_ATLAS)
+        .unwrap()
+        .mesh
+}
+
+fn outline_of(mesh: &Mesh, cam: &Camera3D) -> Vec<(u32, u32)> {
+    let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(480.0, 480.0));
+    let scene = build_scene(mesh, cam, rect, LAY_ATLAS);
+    let sel: Vec<u32> = (0..mesh.faces.len() as u32).collect();
+    squarez::three_d::render::silhouette_edges(mesh, &scene, cam, rect, &sel)
+}
+
+#[test]
+fn object_outline_ignores_interior_recess_contours() {
+    // The Move tool outlines the selected object. A recess's rim and floor sit
+    // *inside* the object's projected shape, so they are interior contours,
+    // not part of its outline — but they are exactly where a visible face
+    // meets a hidden one, which is what the naive rule keys on.
+    let mesh = recessed_cube();
+    // Vertices 0..8 are the original cube corners; everything above belongs to
+    // the inset ring and the recess.
+    for (i, cam) in [
+        Camera3D { yaw: 0.7, pitch: 0.5, zoom: 22.0, offset: Vec2::ZERO },
+        Camera3D { yaw: 0.0, pitch: 0.0, zoom: 22.0, offset: Vec2::ZERO },
+        Camera3D { yaw: 1.6, pitch: 0.2, zoom: 22.0, offset: Vec2::ZERO },
+        Camera3D { yaw: 2.9, pitch: 0.9, zoom: 22.0, offset: Vec2::ZERO },
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let edges = outline_of(&mesh, &cam);
+        assert!(!edges.is_empty(), "angle {i}: outline vanished");
+        for &(a, b) in &edges {
+            assert!(
+                a < 8 && b < 8,
+                "angle {i}: outline includes recess edge {a}-{b}; only the outer \
+                 cube corners (0..8) are on the object's boundary"
+            );
+        }
+    }
+}
+
+#[test]
+fn object_outline_is_a_closed_loop() {
+    // A silhouette is the boundary of a filled region, so it must close: every
+    // vertex it touches is shared by an even number of outline edges. An
+    // interior contour leaking in shows up here as a dangling end.
+    let cam = Camera3D { yaw: 0.7, pitch: 0.5, zoom: 22.0, offset: Vec2::ZERO };
+    for (name, mesh) in [
+        ("cube", Mesh::cube(8)),
+        ("recessed cube", recessed_cube()),
+        ("sphere", Mesh::sphere(8)),
+        ("cylinder", Mesh::cylinder(8)),
+    ] {
+        let mut mesh = mesh;
+        mesh.allocate_all_islands(LAY_ATLAS).unwrap();
+        let edges = outline_of(&mesh, &cam);
+        let mut degree: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+        for &(a, b) in &edges {
+            *degree.entry(a).or_insert(0) += 1;
+            *degree.entry(b).or_insert(0) += 1;
+        }
+        let dangling: Vec<u32> =
+            degree.iter().filter(|(_, &d)| d % 2 == 1).map(|(&v, _)| v).collect();
+        assert!(dangling.is_empty(), "{name}: outline does not close at vertices {dangling:?}");
+    }
+}
+
+#[test]
+fn object_outline_still_traces_convex_shapes() {
+    // The fix must not thin out outlines that were already correct: a convex
+    // primitive has no interior contours, so nothing should be dropped.
+    let cam = Camera3D { yaw: 0.7, pitch: 0.5, zoom: 22.0, offset: Vec2::ZERO };
+    for (name, mesh, want) in [
+        ("cube", Mesh::cube(8), 6),
+        ("sphere", Mesh::sphere(8), 14),
+        ("cylinder", Mesh::cylinder(8), 10),
+    ] {
+        let mut mesh = mesh;
+        mesh.allocate_all_islands(LAY_ATLAS).unwrap();
+        assert_eq!(outline_of(&mesh, &cam).len(), want, "{name}: outline edge count changed");
+    }
+}

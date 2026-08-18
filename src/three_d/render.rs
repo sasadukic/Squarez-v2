@@ -230,6 +230,103 @@ pub fn point_occluded(scene: &Scene, p: Pos2, depth: f32) -> bool {
     false
 }
 
+/// Is the screen point covered by any front-facing triangle of `faces`?
+fn covered_by(scene: &Scene, faces: &std::collections::HashSet<u32>, p: Pos2) -> bool {
+    for tri in &scene.tris {
+        if !tri.front || !faces.contains(&tri.face) {
+            continue;
+        }
+        let [t0, t1, t2] = tri.pts;
+        let (v0, v1, v2) = (t1 - t0, t2 - t0, p - t0);
+        let denom = v0.x * v1.y - v1.x * v0.y;
+        if denom.abs() < 1e-6 {
+            continue;
+        }
+        let b1 = (v2.x * v1.y - v1.x * v2.y) / denom;
+        let b2 = (v0.x * v2.y - v2.x * v0.y) / denom;
+        let b0 = 1.0 - b1 - b2;
+        if b0 >= 0.0 && b1 >= 0.0 && b2 >= 0.0 {
+            return true;
+        }
+    }
+    false
+}
+
+/// The outer screen-space outline of `faces`: the boundary between the area
+/// they cover and the background.
+///
+/// Not the same thing as "edges bordering exactly one visible face". That set
+/// is the boundary of the *visible-face set*, which also fires wherever a
+/// visible face meets a hidden one **inside** the shape — the rim and floor of
+/// a recess, for instance, which are interior contours rather than the
+/// object's outline.
+///
+/// So candidate edges are filtered by what is actually beside them on screen:
+/// step a short way off each side of the edge, and keep it only where one side
+/// is background. Sampling several points along the edge means a partly
+/// exposed edge still counts.
+pub fn silhouette_edges(
+    mesh: &Mesh,
+    scene: &Scene,
+    cam: &Camera3D,
+    rect: Rect,
+    faces: &[u32],
+) -> Vec<(u32, u32)> {
+    /// How far off the edge to look, in screen pixels. Below a texel at any
+    /// usable zoom, and well above projection round-off.
+    const PROBE: f32 = 1.0;
+
+    let selected: std::collections::HashSet<u32> = faces.iter().copied().collect();
+    let visible: std::collections::HashSet<u32> = scene
+        .visible_faces
+        .iter()
+        .copied()
+        .filter(|fi| selected.contains(fi))
+        .collect();
+
+    let mut border: std::collections::HashMap<(u32, u32), u32> = std::collections::HashMap::new();
+    for &fi in &visible {
+        let Some(face) = mesh.faces.get(fi as usize) else { continue };
+        let k = face.verts.len();
+        for i in 0..k {
+            let (a, b) = (face.verts[i], face.verts[(i + 1) % k]);
+            *border.entry((a.min(b), a.max(b))).or_insert(0) += 1;
+        }
+    }
+
+    let mut out: Vec<(u32, u32)> = Vec::new();
+    for (&(a, b), &count) in &border {
+        if count != 1 {
+            continue;
+        }
+        let (Some(&va), Some(&vb)) =
+            (mesh.vertices.get(a as usize), mesh.vertices.get(b as usize))
+        else {
+            continue;
+        };
+        let (pa, _) = cam.project(va, rect);
+        let (pb, _) = cam.project(vb, rect);
+        let dir = pb - pa;
+        let len = dir.length();
+        if len < 1e-3 {
+            // Edge-on: no sides to compare, so keep it rather than guess.
+            out.push((a, b));
+            continue;
+        }
+        let normal = egui::Vec2::new(-dir.y / len, dir.x / len);
+        let exposed = [0.25f32, 0.5, 0.75].iter().any(|&t| {
+            let mid = pa + dir * t;
+            !covered_by(scene, &visible, mid + normal * PROBE)
+                || !covered_by(scene, &visible, mid - normal * PROBE)
+        });
+        if exposed {
+            out.push((a, b));
+        }
+    }
+    out.sort_unstable();
+    out
+}
+
 /// Edge overlay: a single uniform thin wireframe over every visible edge —
 /// topology (loop cuts, insets) stays visible with every tool, and no edge
 /// ever turns bold or black while orbiting. Edges hidden behind nearer
