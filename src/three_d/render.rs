@@ -116,13 +116,204 @@ pub fn build_scene(mesh: &Mesh, cam: &Camera3D, rect: Rect, atlas: (u32, u32)) -
         }
     }
 
-    // Two passes: every interior triangle first, then front triangles,
-    // each far-to-near — interiors can never overdraw the outside, which
-    // avoids average-depth misorders at corners.
+    // Two passes: every interior triangle first, then front triangles —
+    // interiors can never overdraw the outside. Within each pass, order by
+    // actual screen-space occlusion, not just average depth: a large face's
+    // average can sit nearer than a small face resting on top of it, which
+    // made slabs overdraw boxes placed on them.
     scene
         .tris
         .sort_by(|a, b| a.front.cmp(&b.front).then(a.depth.total_cmp(&b.depth)));
+    let split = scene.tris.iter().position(|t| t.front).unwrap_or(scene.tris.len());
+    order_by_occlusion(&mut scene.tris[..split]);
+    order_by_occlusion(&mut scene.tris[split..]);
     scene
+}
+
+/// The overlap polygon of two screen triangles (Sutherland–Hodgman clip of
+/// `sub` against `clip`). Empty when they don't overlap in area.
+fn tri_overlap(sub: &[Pos2; 3], clip: &[Pos2; 3]) -> Vec<Pos2> {
+    let area2 = (clip[1].x - clip[0].x) * (clip[2].y - clip[0].y)
+        - (clip[2].x - clip[0].x) * (clip[1].y - clip[0].y);
+    if area2.abs() < 1e-6 {
+        return Vec::new();
+    }
+    // Orient the clip triangle CCW so "inside" is a consistent side.
+    let ccw = if area2 > 0.0 { *clip } else { [clip[0], clip[2], clip[1]] };
+    let mut poly: Vec<Pos2> = sub.to_vec();
+    for i in 0..3 {
+        let (e0, e1) = (ccw[i], ccw[(i + 1) % 3]);
+        let side = |p: Pos2| (e1.x - e0.x) * (p.y - e0.y) - (e1.y - e0.y) * (p.x - e0.x);
+        let input = std::mem::take(&mut poly);
+        for j in 0..input.len() {
+            let (cur, nxt) = (input[j], input[(j + 1) % input.len()]);
+            let (dc, dn) = (side(cur), side(nxt));
+            if dc >= 0.0 {
+                poly.push(cur);
+            }
+            if (dc >= 0.0) != (dn >= 0.0) {
+                let t = dc / (dc - dn);
+                poly.push(Pos2::new(cur.x + (nxt.x - cur.x) * t, cur.y + (nxt.y - cur.y) * t));
+            }
+        }
+        if poly.is_empty() {
+            return poly;
+        }
+    }
+    poly
+}
+
+/// Interpolated view-space depth of `tri` at screen point `p` (barycentric;
+/// exact under the orthographic camera). None for degenerate triangles.
+fn tri_depth_at(tri: &SceneTri, p: Pos2) -> Option<f32> {
+    let [a, b, c] = tri.pts;
+    let den = (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y);
+    if den.abs() < 1e-6 {
+        return None;
+    }
+    let w1 = ((p.x - a.x) * (c.y - a.y) - (c.x - a.x) * (p.y - a.y)) / den;
+    let w2 = ((b.x - a.x) * (p.y - a.y) - (p.x - a.x) * (b.y - a.y)) / den;
+    let w0 = 1.0 - w1 - w2;
+    Some(w0 * tri.depths[0] + w1 * tri.depths[1] + w2 * tri.depths[2])
+}
+
+/// Reorder one pass so every triangle draws after whatever it occludes.
+///
+/// Average-depth sorting is only a heuristic: it compares triangle centers,
+/// so a large triangle whose center is near the camera outranks a small
+/// triangle resting on top of its far end. The real constraint is pairwise —
+/// where two triangles overlap on screen, the one behind at that overlap must
+/// draw first. Build exactly those constraints (true polygon overlap, depth
+/// compared at the overlap's centroid; exact for planar faces under an
+/// orthographic camera) and emit a topological order, taking the farthest
+/// ready triangle first so unconstrained regions keep the old far-to-near
+/// behavior. Occlusion cycles (rare; impossible for non-intersecting
+/// axis-aligned solids) fall back to average depth.
+///
+/// Expected slice: already sorted far-to-near. O(n²) pair tests with cheap
+/// bbox rejection — meshes are tens to low hundreds of faces.
+fn order_by_occlusion(tris: &mut [SceneTri]) {
+    let n = tris.len();
+    if n < 2 {
+        return;
+    }
+    let bounds: Vec<(Rect, f32, f32)> = tris
+        .iter()
+        .map(|t| {
+            let r = Rect::from_min_max(
+                Pos2::new(
+                    t.pts.iter().map(|p| p.x).fold(f32::MAX, f32::min),
+                    t.pts.iter().map(|p| p.y).fold(f32::MAX, f32::min),
+                ),
+                Pos2::new(
+                    t.pts.iter().map(|p| p.x).fold(f32::MIN, f32::max),
+                    t.pts.iter().map(|p| p.y).fold(f32::MIN, f32::max),
+                ),
+            );
+            let lo = t.depths.iter().copied().fold(f32::MAX, f32::min);
+            let hi = t.depths.iter().copied().fold(f32::MIN, f32::max);
+            (r, lo, hi)
+        })
+        .collect();
+
+    let mut succ: Vec<Vec<u32>> = vec![Vec::new(); n];
+    let mut indeg = vec![0u32; n];
+    for i in 0..n {
+        for j in (i + 1)..n {
+            // Same face: coplanar by construction, no occlusion between them.
+            if tris[i].face == tris[j].face || !bounds[i].0.intersects(bounds[j].0) {
+                continue;
+            }
+            let poly = tri_overlap(&tris[i].pts, &tris[j].pts);
+            if poly.len() < 3 {
+                continue;
+            }
+            // Shoelace area: ignore degenerate slivers (shared edges between
+            // adjacent faces clip to zero-area polygons).
+            let area = poly
+                .windows(2)
+                .map(|w| w[0].x * w[1].y - w[1].x * w[0].y)
+                .sum::<f32>()
+                + poly[poly.len() - 1].x * poly[0].y
+                - poly[0].x * poly[poly.len() - 1].y;
+            if area.abs() < 0.05 {
+                continue;
+            }
+            let k = poly.len() as f32;
+            let centroid = Pos2::new(
+                poly.iter().map(|p| p.x).sum::<f32>() / k,
+                poly.iter().map(|p| p.y).sum::<f32>() / k,
+            );
+            let (Some(di), Some(dj)) =
+                (tri_depth_at(&tris[i], centroid), tri_depth_at(&tris[j], centroid))
+            else {
+                continue;
+            };
+            if (di - dj).abs() < 1e-3 {
+                continue; // coplanar across faces: order is irrelevant
+            }
+            // Larger depth = nearer the camera; the smaller draws first.
+            let (behind, front) = if di < dj { (i, j) } else { (j, i) };
+            succ[behind].push(front as u32);
+            indeg[front] += 1;
+        }
+    }
+
+    // Kahn's algorithm, farthest-first among the ready set.
+    let mut ready: std::collections::BinaryHeap<(std::cmp::Reverse<ordered::F32>, usize)> =
+        (0..n)
+            .filter(|&k| indeg[k] == 0)
+            .map(|k| (std::cmp::Reverse(ordered::F32(tris[k].depth)), k))
+            .collect();
+    let mut done = vec![false; n];
+    let mut order: Vec<usize> = Vec::with_capacity(n);
+    while order.len() < n {
+        let k = loop {
+            match ready.pop() {
+                Some((_, k)) if !done[k] => break Some(k),
+                Some(_) => continue,
+                None => break None,
+            }
+        };
+        // Empty ready set with work left = an occlusion cycle; break it by
+        // taking the farthest remaining triangle.
+        let k = k.unwrap_or_else(|| {
+            (0..n)
+                .filter(|&k| !done[k])
+                .min_by(|&a, &b| tris[a].depth.total_cmp(&tris[b].depth))
+                .expect("order incomplete implies something remains")
+        });
+        done[k] = true;
+        order.push(k);
+        for &s in &succ[k] {
+            let s = s as usize;
+            if !done[s] {
+                indeg[s] -= 1;
+                if indeg[s] == 0 {
+                    ready.push((std::cmp::Reverse(ordered::F32(tris[s].depth)), s));
+                }
+            }
+        }
+    }
+    let sorted: Vec<SceneTri> = order.into_iter().map(|k| tris[k]).collect();
+    tris.copy_from_slice(&sorted);
+}
+
+/// Total-ordered f32 wrapper so depths can key a heap.
+mod ordered {
+    #[derive(PartialEq)]
+    pub struct F32(pub f32);
+    impl Eq for F32 {}
+    impl PartialOrd for F32 {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+    impl Ord for F32 {
+        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+            self.0.total_cmp(&other.0)
+        }
+    }
 }
 
 /// Draw the textured triangles as one egui mesh sampling `texture_id`
