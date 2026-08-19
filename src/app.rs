@@ -12088,6 +12088,7 @@ print("FAIL")
                                         ("Drag (Extrude/Inset tool)", "Pull a face out / grow an inset border"),
                                         ("Hover + Click (Loop Cut)", "Preview and cut an edge loop"),
                                         ("Drag (Move/Scale tool)", "Move / resize a whole object on the grid"),
+                                        ("Shift + Click (Move tool)", "Add models to the selection; drag moves them all"),
                                         ("Delete / Backspace", "Delete selected faces or vertices"),
                                         ("Shift + Click", "Add/remove from selection"),
                                         ("Alt + Click", "Select the vertex/edge behind (stacked in line)"),

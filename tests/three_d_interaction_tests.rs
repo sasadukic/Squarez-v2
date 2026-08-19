@@ -150,3 +150,111 @@ fn dangling_drag_cannot_clobber_an_undo() {
         "a stale drag snapshot must never overwrite the undone state"
     );
 }
+
+/// Press+release a plain click at `p`, settle, and return the selection.
+fn click_at(ctx: &egui::Context, app: &mut App, p: Pos2, shift: bool) -> Vec<u32> {
+    let m = if shift { Modifiers::SHIFT } else { Modifiers::default() };
+    frame(ctx, app, vec![
+        egui::Event::PointerMoved(p),
+        egui::Event::PointerButton { pos: p, button: PointerButton::Primary, pressed: true, modifiers: m },
+    ], m);
+    frame(ctx, app, vec![
+        egui::Event::PointerButton { pos: p, button: PointerButton::Primary, pressed: false, modifiers: m },
+    ], m);
+    frame(ctx, app, vec![], Modifiers::default());
+    let mut sel = app.three_d.sel_faces.clone();
+    sel.sort_unstable();
+    sel
+}
+
+/// Scan the workspace for a screen point whose plain click selects exactly
+/// `target` — robust against layout/zoom-to-fit placing the models anywhere.
+fn find_click_point(ctx: &egui::Context, app: &mut App, target: &[u32]) -> Pos2 {
+    let c = model_point();
+    for dy in (-13..=13).map(|k| k as f32 * 12.0) {
+        for dx in (-13..=13).map(|k| k as f32 * 12.0) {
+            let p = Pos2::new(c.x + dx, c.y + dy);
+            if click_at(ctx, app, p, false) == target {
+                return p;
+            }
+        }
+    }
+    panic!("no screen point selects faces {target:?}");
+}
+
+#[test]
+fn shift_click_moves_several_models_as_one() {
+    let ctx = egui::Context::default();
+    let mut app = App::new_with(&ctx, None);
+    let mut p = three_d_project();
+    // Second model stacked above the first (add_object lifts it clear).
+    let layer = p.animations[0].frames[0].layers[0].clone();
+    let out = squarez::three_d::edit::add_object(
+        p.mesh3d.as_ref().unwrap(),
+        &layer,
+        &Mesh::cube(6),
+        (128, 128),
+    )
+    .unwrap();
+    for &(x, y, _, new) in &out.pixel_edits {
+        p.animations[0].frames[0].layers[0].set_pixel(x, y, new);
+    }
+    p.mesh3d = Some(out.mesh);
+    app.open_project_for_test(p);
+    app.active_tool = ActiveTool::MoveObject;
+    for _ in 0..3 {
+        frame(&ctx, &mut app, vec![], Modifiers::default());
+    }
+
+    let cube_a: Vec<u32> = (0..6).collect();
+    let cube_b: Vec<u32> = (6..12).collect();
+    let both: Vec<u32> = (0..12).collect();
+
+    let pa = find_click_point(&ctx, &mut app, &cube_a);
+    let pb = find_click_point(&ctx, &mut app, &cube_b);
+
+    // Plain click selects one model; shift-click adds the other.
+    assert_eq!(click_at(&ctx, &mut app, pa, false), cube_a);
+    assert_eq!(click_at(&ctx, &mut app, pb, true), both, "shift-click must add the second model");
+    // Shift-click on a selected model toggles it back out...
+    assert_eq!(click_at(&ctx, &mut app, pb, true), cube_a);
+    // ...and back in for the move.
+    assert_eq!(click_at(&ctx, &mut app, pb, true), both);
+
+    // Drag from the FIRST model: everything selected must move together.
+    let before = app.project.mesh3d.clone().unwrap();
+    frame(&ctx, &mut app, vec![
+        egui::Event::PointerMoved(pa),
+        egui::Event::PointerButton { pos: pa, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::default() },
+    ], Modifiers::default());
+    for i in 1..=6 {
+        let q = Pos2::new(pa.x + i as f32 * 10.0, pa.y);
+        frame(&ctx, &mut app, vec![egui::Event::PointerMoved(q)], Modifiers::default());
+    }
+    let q = Pos2::new(pa.x + 60.0, pa.y);
+    frame(&ctx, &mut app, vec![
+        egui::Event::PointerButton { pos: q, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::default() },
+    ], Modifiers::default());
+    frame(&ctx, &mut app, vec![], Modifiers::default());
+
+    let after = app.project.mesh3d.clone().unwrap();
+    let delta: Vec<[f32; 3]> = before
+        .vertices
+        .iter()
+        .zip(after.vertices.iter())
+        .map(|(b, a)| [a[0] - b[0], a[1] - b[1], a[2] - b[2]])
+        .collect();
+    assert!(
+        delta[0] != [0.0, 0.0, 0.0],
+        "the drag must actually move the selection"
+    );
+    assert!(
+        delta.iter().all(|d| *d == delta[0]),
+        "every vertex of BOTH models must move by the same delta: {delta:?}"
+    );
+    assert!(app.undo_stack.can_undo(), "the group move must land in history");
+
+    // Plain click on empty space still clears a multi-selection.
+    let empty = Pos2::new(model_point().x, 60.0);
+    assert_eq!(click_at(&ctx, &mut app, empty, false), Vec::<u32>::new());
+}

@@ -798,27 +798,52 @@ pub fn draw(
             if let (Some(pos), Some(mesh)) = (pointer_pos, project.mesh3d.as_ref()) {
                 if is_move_object {
                     // Click an object: select its whole connected component
-                    // and start moving it.
+                    // and start moving it. Shift toggles models in and out of
+                    // the selection instead, so several can move as one.
                     let hit = scene.as_ref().and_then(|sc| paint::pick(sc, pos, mesh, atlas));
                     match hit {
                         Some(hit) => {
                             let component = edit::connected_faces(mesh, hit.face);
-                            state.sel_faces = component.clone();
                             state.sel_verts.clear();
                             state.sel_edges.clear();
-                            if let Some(start_layer) =
-                                project.animations[0].frames[0].layers.get(li).cloned()
-                            {
-                                state.drag = Some(VertexDrag {
-                                    start_mesh: mesh.clone(),
-                                    start_layer,
-                                    verts: face_selection_verts(&component, mesh),
-                                    raw: [0.0; 3],
-                                    applied: [0; 3],
-                                });
+                            let already_selected =
+                                component.iter().all(|f| state.sel_faces.contains(f));
+                            if shift {
+                                // Toggle the whole model; no drag on a
+                                // shift-click — it is a selection edit.
+                                if already_selected {
+                                    state.sel_faces.retain(|f| !component.contains(f));
+                                } else {
+                                    for f in component {
+                                        if !state.sel_faces.contains(&f) {
+                                            state.sel_faces.push(f);
+                                        }
+                                    }
+                                }
+                            } else {
+                                // Plain click: pressing on any model of the
+                                // current selection drags them all together;
+                                // pressing elsewhere selects just that model.
+                                if !already_selected {
+                                    state.sel_faces = component;
+                                }
+                                if let Some(start_layer) =
+                                    project.animations[0].frames[0].layers.get(li).cloned()
+                                {
+                                    state.drag = Some(VertexDrag {
+                                        start_mesh: mesh.clone(),
+                                        start_layer,
+                                        verts: face_selection_verts(&state.sel_faces, mesh),
+                                        raw: [0.0; 3],
+                                        applied: [0; 3],
+                                    });
+                                }
                             }
                         }
-                        None => state.sel_faces.clear(),
+                        // Empty space: plain click deselects; a missed
+                        // shift-click keeps the set being built.
+                        None if !shift => state.sel_faces.clear(),
+                        None => {}
                     }
                 } else if let Some(vi) = vertex_under(mesh, &cam_copy, canvas_rect, pos, prefer_far) {
                     // Smart select, priority 1: vertex.
@@ -1133,7 +1158,7 @@ pub fn draw(
         ActiveTool::Extrude => "Extrude: drag a face to pull it out (whole units)",
         ActiveTool::Inset => "Inset: drag a face to grow an inset border",
         ActiveTool::LoopCut => "Loop Cut: hover to preview the ring · click to cut",
-        ActiveTool::MoveObject => "Move: click an object · drag to move it on the grid",
+        ActiveTool::MoveObject => "Move: click an object · shift-click to add more · drag moves them all",
         ActiveTool::ScaleObject => "Scale: click an object · drag right/up to resize in whole units",
         t if paint::is_paint_tool(t) => "Paint on the model · RMB orbit · MMB pan · 1-6 snap views",
         _ => "RMB orbit · MMB pan · scroll zoom · 1-6 snap views",
