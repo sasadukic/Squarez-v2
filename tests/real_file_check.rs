@@ -120,3 +120,36 @@ fn real_sqr_models_migrate_cleanly() {
     }
     println!("checked {checked} real 3D .sqr file(s)");
 }
+
+/// Every .sqr on the user's Desktop must at least LOAD. Three of them were
+/// written by intermediate builds whose Project tail predates the current
+/// layout; they were unloadable ("unexpected end of file") until the
+/// tail-progression mirrors landed in io/sqr.rs. Self-skips elsewhere.
+#[test]
+fn every_desktop_sqr_loads() {
+    let Some(home) = std::env::var_os("HOME") else { return };
+    let desktop = std::path::PathBuf::from(home).join("Desktop");
+    let Ok(entries) = std::fs::read_dir(&desktop) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("sqr") {
+            continue;
+        }
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        let p = squarez::io::sqr::load_sqr(&path)
+            .unwrap_or_else(|e| panic!("{name} failed to load: {e}"));
+        assert!(!p.animations.is_empty(), "{name}: loaded empty");
+        for (ai, anim) in p.animations.iter().enumerate() {
+            for (fi, frame) in anim.frames.iter().enumerate() {
+                for (li, layer) in frame.layers.iter().enumerate() {
+                    assert!(
+                        layer.is_group
+                            || layer.pixels.len()
+                                == (layer.width * layer.height * 4) as usize,
+                        "{name}: anim {ai} frame {fi} layer {li} has a corrupt pixel buffer"
+                    );
+                }
+            }
+        }
+    }
+}

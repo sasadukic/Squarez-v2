@@ -260,3 +260,129 @@ fn v2_roundtrip_preserves_mesh3d() {
     assert_eq!(loaded.mode, squarez::project::ProjectMode::ThreeD);
     assert_eq!(loaded.mesh3d, Some(mesh));
 }
+
+// ── v1 payloads, tail-field progression ──────────────────────────────────────
+// Three real-world builds serialized the current Layer/Frame/Animation shapes
+// with a shorter Project tail. Recovered by byte-level dissection of files
+// that failed to load: ends-at-tile_h, +mode, +mode+sprite_stack_max_layers.
+
+use squarez::project::Animation;
+
+fn tail_era_animations() -> Vec<Animation> {
+    let mut p = Project::new(8, 8, "x".to_string());
+    p.animations[0].frames[0].layers[0].set_pixel(2, 3, [9, 8, 7, 255]);
+    p.animations.clone()
+}
+
+fn write_v1(path: &std::path::Path, payload: &[u8]) {
+    let compressed = lz4_flex::compress_prepend_size(payload);
+    let mut bytes = b"SQR\0\x01".to_vec();
+    bytes.extend(compressed);
+    std::fs::write(path, bytes).unwrap();
+}
+
+#[derive(Serialize)]
+struct TailNoMode {
+    name: String,
+    canvas_width: u32,
+    canvas_height: u32,
+    palette: Vec<[u8; 4]>,
+    animations: Vec<Animation>,
+    active_animation: usize,
+    active_frame: usize,
+    active_layer: usize,
+    layer_id_counter: u64,
+    tiles_w: u32,
+    tiles_h: u32,
+    tile_w: u32,
+    tile_h: u32,
+}
+
+#[derive(Serialize)]
+enum TailMode {
+    #[allow(dead_code)]
+    Normal,
+    SpriteStack,
+}
+
+#[derive(Serialize)]
+struct TailWithMode {
+    base: TailNoMode,
+    mode: TailMode,
+}
+
+#[derive(Serialize)]
+struct TailWithModeStack {
+    base: TailNoMode,
+    mode: TailMode,
+    sprite_stack_max_layers: Option<u32>,
+}
+
+fn tail_base(name: &str) -> TailNoMode {
+    TailNoMode {
+        name: name.to_string(),
+        canvas_width: 8,
+        canvas_height: 8,
+        palette: vec![[1, 2, 3, 255]],
+        animations: tail_era_animations(),
+        active_animation: 0,
+        active_frame: 0,
+        active_layer: 0,
+        layer_id_counter: 2,
+        tiles_w: 4,
+        tiles_h: 1,
+        tile_w: 2,
+        tile_h: 8,
+    }
+}
+
+#[test]
+fn loads_v1_files_that_end_at_tile_h() {
+    // Serde flattens nothing here: TailNoMode's own serialization IS the
+    // historical byte stream (bincode is positional and untagged).
+    let payload = bincode::serialize(&tail_base("soldier-era")).unwrap();
+    let path = std::env::temp_dir().join("squarez_tail_nomode.sqr");
+    write_v1(&path, &payload);
+
+    let p = load_sqr(&path).expect("no-mode era must load");
+    assert_eq!(p.name, "soldier-era");
+    assert_eq!((p.tiles_w, p.tiles_h), (4, 1), "tile grid must survive");
+    assert_eq!(p.mode, squarez::project::ProjectMode::Normal);
+    assert_eq!(
+        p.animations[0].frames[0].layers[0].get_pixel(2, 3),
+        [9, 8, 7, 255],
+        "pixels must survive"
+    );
+}
+
+#[test]
+fn loads_v1_files_with_mode_but_no_stack_limit() {
+    // A struct nested first serializes identically to its fields inlined.
+    let payload = bincode::serialize(&TailWithMode {
+        base: tail_base("spritestack-era"),
+        mode: TailMode::SpriteStack,
+    })
+    .unwrap();
+    let path = std::env::temp_dir().join("squarez_tail_mode.sqr");
+    write_v1(&path, &payload);
+
+    let p = load_sqr(&path).expect("mode era must load");
+    assert_eq!(p.mode, squarez::project::ProjectMode::SpriteStack, "mode must survive");
+    assert_eq!(p.sprite_stack_max_layers, None);
+}
+
+#[test]
+fn loads_v1_files_with_mode_and_stack_limit() {
+    let payload = bincode::serialize(&TailWithModeStack {
+        base: tail_base("lighthouse-era"),
+        mode: TailMode::SpriteStack,
+        sprite_stack_max_layers: Some(32),
+    })
+    .unwrap();
+    let path = std::env::temp_dir().join("squarez_tail_modestack.sqr");
+    write_v1(&path, &payload);
+
+    let p = load_sqr(&path).expect("mode+stack era must load");
+    assert_eq!(p.mode, squarez::project::ProjectMode::SpriteStack);
+    assert_eq!(p.sprite_stack_max_layers, Some(32), "stack limit must survive");
+}

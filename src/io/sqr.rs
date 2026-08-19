@@ -30,20 +30,217 @@ pub fn load_sqr(path: &Path) -> Result<Project, Box<dyn std::error::Error>> {
             // Version 2: current Project layout (Frame has no mesh; Project has mesh3d).
             2 => Ok(bincode::deserialize::<Project>(&decoded)?),
             // Version 1: bincode is positional, so old payloads must be decoded through
-            // exact structural mirrors of the layouts that produced them.
-            1 => match bincode::deserialize::<LegacyProjectV2>(&decoded) {
-                Ok(legacy) => Ok(legacy.into_project()),
-                Err(v2_error) => match bincode::deserialize::<LegacyProjectV1>(&decoded) {
-                    Ok(legacy) => Ok(legacy.into_project()),
-                    Err(_) => Err(Box::new(v2_error)),
-                },
-            },
+            // exact structural mirrors of the layouts that produced them. The version
+            // byte was never bumped as Project evolved, so several distinct layouts
+            // all claim "version 1" — try them longest-first (bincode tolerates
+            // trailing bytes, so a shorter mirror could silently swallow a longer
+            // file and drop its tail fields), and sanity-check each decode so a
+            // misparse falls through to the next mirror instead of loading garbage.
+            1 => load_v1(&decoded),
             v => Err(format!("Unsupported .sqr version: {}", v).into()),
         }
     } else {
         match crate::io::v2::load_v2(path) {
             Ok(project) => Ok(project),
             Err(e) => Err(Box::new(e)),
+        }
+    }
+}
+
+/// Decode a version-1 payload through the known historical layouts.
+fn load_v1(decoded: &[u8]) -> Result<Project, Box<dyn std::error::Error>> {
+    // Frame-mesh era: every Frame carried a (discarded) mesh. Distinct branch
+    // of history from the tail-field progression below, so it goes first.
+    let first_error = match bincode::deserialize::<LegacyProjectV2>(decoded) {
+        Ok(legacy) => {
+            let p = legacy.into_project();
+            if plausible(&p) {
+                return Ok(p);
+            }
+            "frame-mesh layout decoded but failed sanity checks".into()
+        }
+        Err(e) => Box::<dyn std::error::Error>::from(e),
+    };
+    // Tail-field progression, newest first: Project grew mode, then
+    // sprite_stack_max_layers, then (in version 2) mesh3d.
+    if let Ok(legacy) = bincode::deserialize::<LegacyProjectModeStack>(decoded) {
+        let p = legacy.into_project();
+        if plausible(&p) {
+            return Ok(p);
+        }
+    }
+    if let Ok(legacy) = bincode::deserialize::<LegacyProjectMode>(decoded) {
+        let p = legacy.into_project();
+        if plausible(&p) {
+            return Ok(p);
+        }
+    }
+    if let Ok(legacy) = bincode::deserialize::<LegacyProjectNoMode>(decoded) {
+        let p = legacy.into_project();
+        if plausible(&p) {
+            return Ok(p);
+        }
+    }
+    if let Ok(legacy) = bincode::deserialize::<LegacyProjectV1>(decoded) {
+        let p = legacy.into_project();
+        if plausible(&p) {
+            return Ok(p);
+        }
+    }
+    Err(first_error)
+}
+
+/// Does a decoded project look like a real project rather than a misparse?
+/// bincode has no schema, so a wrong mirror can "succeed" by reading pixel
+/// data as struct fields — but it will not produce layers whose buffers
+/// agree with their dimensions.
+fn plausible(p: &Project) -> bool {
+    let dims_ok = (1..=16384).contains(&p.canvas_width) && (1..=16384).contains(&p.canvas_height);
+    dims_ok
+        && !p.animations.is_empty()
+        && p.animations.iter().all(|a| {
+            a.frames.iter().all(|f| {
+                f.layers.iter().all(|l| {
+                    l.is_group || l.pixels.len() as u64 == l.width as u64 * l.height as u64 * 4
+                })
+            })
+        })
+}
+
+// ── Version-1 payloads, tail-field progression ────────────────────────────────
+// These three builds serialized the current Layer/Frame/Animation shapes; only
+// the Project tail differs. Recovered by byte-level dissection of real files:
+// Soldier.sqr (ends at tile_h), SpriteStack.sqr (+ mode), lighthouse.sqr
+// (+ mode + sprite_stack_max_layers).
+
+#[derive(Debug, Clone, Deserialize)]
+struct LegacyProjectNoMode {
+    name: String,
+    canvas_width: u32,
+    canvas_height: u32,
+    palette: Vec<[u8; 4]>,
+    animations: Vec<Animation>,
+    active_animation: usize,
+    active_frame: usize,
+    active_layer: usize,
+    layer_id_counter: u64,
+    tiles_w: u32,
+    tiles_h: u32,
+    tile_w: u32,
+    tile_h: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LegacyProjectMode {
+    name: String,
+    canvas_width: u32,
+    canvas_height: u32,
+    palette: Vec<[u8; 4]>,
+    animations: Vec<Animation>,
+    active_animation: usize,
+    active_frame: usize,
+    active_layer: usize,
+    layer_id_counter: u64,
+    tiles_w: u32,
+    tiles_h: u32,
+    tile_w: u32,
+    tile_h: u32,
+    mode: LegacyProjectModeV2,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LegacyProjectModeStack {
+    name: String,
+    canvas_width: u32,
+    canvas_height: u32,
+    palette: Vec<[u8; 4]>,
+    animations: Vec<Animation>,
+    active_animation: usize,
+    active_frame: usize,
+    active_layer: usize,
+    layer_id_counter: u64,
+    tiles_w: u32,
+    tiles_h: u32,
+    tile_w: u32,
+    tile_h: u32,
+    mode: LegacyProjectModeV2,
+    sprite_stack_max_layers: Option<u32>,
+}
+
+impl LegacyProjectNoMode {
+    fn into_project(self) -> Project {
+        Project {
+            name: self.name,
+            canvas_width: self.canvas_width,
+            canvas_height: self.canvas_height,
+            palette: self.palette,
+            animations: self.animations,
+            active_animation: self.active_animation,
+            active_frame: self.active_frame,
+            active_layer: self.active_layer,
+            layer_id_counter: self.layer_id_counter,
+            tiles_w: self.tiles_w,
+            tiles_h: self.tiles_h,
+            tile_w: self.tile_w,
+            tile_h: self.tile_h,
+            mode: crate::project::ProjectMode::Normal,
+            sprite_stack_max_layers: None,
+            mesh3d: None,
+        }
+    }
+}
+
+impl LegacyProjectMode {
+    fn into_project(self) -> Project {
+        Project {
+            name: self.name,
+            canvas_width: self.canvas_width,
+            canvas_height: self.canvas_height,
+            palette: self.palette,
+            animations: self.animations,
+            active_animation: self.active_animation,
+            active_frame: self.active_frame,
+            active_layer: self.active_layer,
+            layer_id_counter: self.layer_id_counter,
+            tiles_w: self.tiles_w,
+            tiles_h: self.tiles_h,
+            tile_w: self.tile_w,
+            tile_h: self.tile_h,
+            mode: self.mode.into_mode(),
+            sprite_stack_max_layers: None,
+            mesh3d: None,
+        }
+    }
+}
+
+impl LegacyProjectModeStack {
+    fn into_project(self) -> Project {
+        Project {
+            name: self.name,
+            canvas_width: self.canvas_width,
+            canvas_height: self.canvas_height,
+            palette: self.palette,
+            animations: self.animations,
+            active_animation: self.active_animation,
+            active_frame: self.active_frame,
+            active_layer: self.active_layer,
+            layer_id_counter: self.layer_id_counter,
+            tiles_w: self.tiles_w,
+            tiles_h: self.tiles_h,
+            tile_w: self.tile_w,
+            tile_h: self.tile_h,
+            mode: self.mode.into_mode(),
+            sprite_stack_max_layers: self.sprite_stack_max_layers,
+            mesh3d: None,
+        }
+    }
+}
+
+impl LegacyProjectModeV2 {
+    fn into_mode(self) -> crate::project::ProjectMode {
+        match self {
+            LegacyProjectModeV2::Normal => crate::project::ProjectMode::Normal,
+            LegacyProjectModeV2::SpriteStack => crate::project::ProjectMode::SpriteStack,
         }
     }
 }
