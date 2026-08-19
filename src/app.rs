@@ -780,22 +780,21 @@ impl App {
         self.on_project_changed();
     }
 
-    /// Delete the layer at the active frame's `active_layer` index across
-    /// EVERY animation and frame, as one undo step.
+    /// Delete the layer at `idx` across EVERY animation and frame, as one
+    /// undo step.
     ///
     /// Layer structure is global — AddLayer inserts into every frame — so
     /// deletion must be global too. A single-frame delete leaves the frames'
     /// layer lists diverged, after which every index-based layer command
     /// (including AddLayer's own undo) addresses the wrong layer in the
-    /// other frames.
-    pub fn delete_active_layer(&mut self) {
+    /// other frames. The same goes for duplicate and merge below.
+    pub fn delete_layer_at(&mut self, idx: usize) {
         let ai = self.project.active_animation;
         let fi = self.project.active_frame;
         let len = self.project.animations[ai].frames[fi].layers.len();
-        if len <= 1 {
+        if len <= 1 || idx >= len {
             return;
         }
-        let idx = self.project.active_layer.min(len - 1);
         let mut snapshots = Vec::new();
         for anim in &mut self.project.animations {
             for frame in &mut anim.frames {
@@ -816,7 +815,99 @@ impl App {
         }
         self.undo_stack.push(Command::DeleteLayer { index: idx, snapshots });
         self.active_modified = true;
-        self.project.active_layer = self.project.active_layer.saturating_sub(1);
+        self.project.active_layer = self.project.active_layer.min(len - 2);
+        if self.project.active_layer >= idx && self.project.active_layer > 0 {
+            self.project.active_layer -= 1;
+        }
+        self.canvas_dirty = true;
+    }
+
+    /// Delete the active layer everywhere — see `delete_layer_at`.
+    pub fn delete_active_layer(&mut self) {
+        self.delete_layer_at(self.project.active_layer);
+    }
+
+    /// Duplicate the layer at `idx` (copy inserted at `idx + 1`, fresh layer
+    /// id) across EVERY animation and frame, as one undo step.
+    pub fn duplicate_layer_at(&mut self, idx: usize) {
+        let ai = self.project.active_animation;
+        let fi = self.project.active_frame;
+        let len = self.project.animations[ai].frames[fi].layers.len();
+        if idx >= len {
+            return;
+        }
+        if self.project.mode == crate::project::ProjectMode::SpriteStack {
+            if let Some(max) = self.project.sprite_stack_max_layers {
+                if len >= max as usize {
+                    return;
+                }
+            }
+        }
+        let new_id = self.project.next_layer_id();
+        let mut snapshots = Vec::new();
+        for anim in &mut self.project.animations {
+            for frame in &mut anim.frames {
+                let copy = match frame.layers.get(idx) {
+                    Some(src) => {
+                        let mut c = src.clone();
+                        c.name = format!("{} copy", c.name);
+                        c.id = new_id;
+                        c
+                    }
+                    None => Layer::new_with_id(
+                        "Layer copy".to_string(),
+                        self.project.canvas_width,
+                        self.project.canvas_height,
+                        new_id,
+                    ),
+                };
+                let at = (idx + 1).min(frame.layers.len());
+                frame.layers.insert(at, copy.clone());
+                snapshots.push(copy);
+                frame.dirty = true;
+            }
+        }
+        self.undo_stack.push(Command::DuplicateLayer { index: idx, snapshots });
+        self.active_modified = true;
+        self.project.active_layer = idx + 1;
+        self.canvas_dirty = true;
+    }
+
+    /// Merge the layer at `idx` into the one below it across EVERY animation
+    /// and frame, as one undo step.
+    pub fn merge_layer_down_at(&mut self, idx: usize) {
+        let ai = self.project.active_animation;
+        let fi = self.project.active_frame;
+        let len = self.project.animations[ai].frames[fi].layers.len();
+        if idx == 0 || idx >= len {
+            return;
+        }
+        let mut tops = Vec::new();
+        let mut bottoms = Vec::new();
+        for anim in &mut self.project.animations {
+            for frame in &mut anim.frames {
+                if frame.layers.len() > idx {
+                    let top = frame.layers.remove(idx);
+                    let bottom = frame.layers[idx - 1].clone();
+                    frame.layers[idx - 1] = crate::project::merge_layer_over(&top, &bottom);
+                    tops.push(top);
+                    bottoms.push(bottom);
+                } else {
+                    let blank = Layer::new_with_id(
+                        "Layer".to_string(),
+                        self.project.canvas_width,
+                        self.project.canvas_height,
+                        0,
+                    );
+                    tops.push(blank.clone());
+                    bottoms.push(blank);
+                }
+                frame.dirty = true;
+            }
+        }
+        self.undo_stack.push(Command::MergeLayerDown { index: idx, tops, bottoms });
+        self.active_modified = true;
+        self.project.active_layer = self.project.active_layer.min(len.saturating_sub(2));
         self.canvas_dirty = true;
     }
 
@@ -5664,44 +5755,12 @@ impl App {
         }
 
         if let Some(a) = action {
-            let layers = &mut self.project.animations[ai].frames[fi].layers;
+            // Global, undoable layer operations — every frame of every
+            // animation, one undo step each.
             match a {
-                0 => {
-                    let mut copy = layers[idx].clone();
-                    copy.name = format!("{} copy", copy.name);
-                    layers.insert(idx + 1, copy);
-                    self.project.active_layer = idx + 1;
-                    self.canvas_dirty = true;
-                }
-                1 => {
-                    let top = layers[idx].clone();
-                    let bottom = &mut layers[idx - 1];
-                    let pixel_count = (bottom.width * bottom.height) as usize;
-                    for i in 0..pixel_count {
-                        let sa = top.pixels[i * 4 + 3] as f32 / 255.0;
-                        if sa > 0.0 {
-                            let da = bottom.pixels[i * 4 + 3] as f32 / 255.0;
-                            let out_a = sa + da * (1.0 - sa);
-                            if out_a > 0.0 {
-                                for c in 0..3 {
-                                    let sc = top.pixels[i * 4 + c] as f32 / 255.0;
-                                    let dc = bottom.pixels[i * 4 + c] as f32 / 255.0;
-                                    bottom.pixels[i * 4 + c] =
-                                        ((sc * sa + dc * da * (1.0 - sa)) / out_a * 255.0).round() as u8;
-                                }
-                                bottom.pixels[i * 4 + 3] = (out_a * 255.0).round() as u8;
-                            }
-                        }
-                    }
-                    layers.remove(idx);
-                    self.project.active_layer = self.project.active_layer.min(layers.len().saturating_sub(1));
-                    self.canvas_dirty = true;
-                }
-                2 => {
-                    layers.remove(idx);
-                    self.project.active_layer = self.project.active_layer.min(layers.len().saturating_sub(1));
-                    self.canvas_dirty = true;
-                }
+                0 => self.duplicate_layer_at(idx),
+                1 => self.merge_layer_down_at(idx),
+                2 => self.delete_layer_at(idx),
                 _ => {}
             }
         }

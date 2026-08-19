@@ -441,3 +441,31 @@ impl Layer {
         self.pixels[idx + 3] = color[3];
     }
 }
+
+/// Alpha-composite `top` over `bottom`, returning the merged lower layer.
+/// The single definition of merge-down, shared by the layers panel and the
+/// undo system — redo must reproduce the merge bit-for-bit.
+pub fn merge_layer_over(top: &Layer, bottom: &Layer) -> Layer {
+    let mut out = bottom.clone();
+    let pixel_count = (out.width * out.height) as usize;
+    if top.pixels.len() < pixel_count * 4 || out.pixels.len() < pixel_count * 4 {
+        return out;
+    }
+    for i in 0..pixel_count {
+        let sa = top.pixels[i * 4 + 3] as f32 / 255.0;
+        if sa > 0.0 {
+            let da = out.pixels[i * 4 + 3] as f32 / 255.0;
+            let out_a = sa + da * (1.0 - sa);
+            if out_a > 0.0 {
+                for c in 0..3 {
+                    let sc = top.pixels[i * 4 + c] as f32 / 255.0;
+                    let dc = out.pixels[i * 4 + c] as f32 / 255.0;
+                    out.pixels[i * 4 + c] =
+                        ((sc * sa + dc * da * (1.0 - sa)) / out_a * 255.0).round() as u8;
+                }
+                out.pixels[i * 4 + 3] = (out_a * 255.0).round() as u8;
+            }
+        }
+    }
+    out
+}

@@ -41,6 +41,22 @@ pub enum Command {
         index: usize,
         snapshots: Vec<crate::project::Layer>,
     },
+    /// Inserts/removes a copy of the layer at `index` (at `index + 1`) across
+    /// ALL animations and frames. One pre-made copy per frame, in
+    /// (animation, frame) iteration order — redo must reproduce the pixels as
+    /// they were at duplication time, not whatever the source holds later.
+    DuplicateLayer {
+        index: usize,
+        snapshots: Vec<crate::project::Layer>,
+    },
+    /// Merges the layer at `index` into the one below it (and removes it)
+    /// across ALL animations and frames. Per frame, in iteration order: the
+    /// removed top layer and the lower layer as it was before the merge.
+    MergeLayerDown {
+        index: usize,
+        tops: Vec<crate::project::Layer>,
+        bottoms: Vec<crate::project::Layer>,
+    },
     /// Snapshot the ColorState before/after a grouped color edit (undo/redo restores it).
     SetColorStateSnapshot {
         before: ColorState,
@@ -187,6 +203,52 @@ pub fn apply_command(project: &mut Project, color_state: Option<&mut ColorState>
                         Direction::Forward  => frame.layers.insert(*index, crate::project::Layer::new_with_id(name.clone(), w, h, *id)),
                         Direction::Backward => { if frame.layers.len() > *index { frame.layers.remove(*index); } }
                     }
+                }
+            }
+        }
+        Command::DuplicateLayer { index, snapshots } => {
+            let mut snap = snapshots.iter();
+            for anim in &mut project.animations {
+                for frame in &mut anim.frames {
+                    match dir {
+                        Direction::Forward => {
+                            if let Some(s) = snap.next() {
+                                let at = (*index + 1).min(frame.layers.len());
+                                frame.layers.insert(at, s.clone());
+                            }
+                        }
+                        Direction::Backward => {
+                            if frame.layers.len() > *index + 1 {
+                                frame.layers.remove(*index + 1);
+                            }
+                        }
+                    }
+                    frame.dirty = true;
+                }
+            }
+        }
+        Command::MergeLayerDown { index, tops, bottoms } => {
+            let mut top = tops.iter();
+            let mut bottom = bottoms.iter();
+            for anim in &mut project.animations {
+                for frame in &mut anim.frames {
+                    let (Some(t), Some(b)) = (top.next(), bottom.next()) else { continue };
+                    match dir {
+                        Direction::Forward => {
+                            if *index >= 1 && frame.layers.len() > *index {
+                                frame.layers[*index - 1] =
+                                    crate::project::merge_layer_over(t, b);
+                                frame.layers.remove(*index);
+                            }
+                        }
+                        Direction::Backward => {
+                            if *index >= 1 && frame.layers.len() >= *index {
+                                frame.layers[*index - 1] = b.clone();
+                                frame.layers.insert(*index, t.clone());
+                            }
+                        }
+                    }
+                    frame.dirty = true;
                 }
             }
         }

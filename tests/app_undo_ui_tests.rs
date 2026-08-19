@@ -144,3 +144,83 @@ fn layer_delete_spans_all_frames_and_undoes_losslessly() {
         }
     }
 }
+
+/// Two frames, two layers, distinct pixel markers everywhere.
+fn two_frame_two_layer_app(ctx: &egui::Context) -> App {
+    let mut app = App::new_with(ctx, None);
+    let mut p = Project::new(8, 8, "layers".to_string());
+    p.animations[0].frames.push(squarez::project::Frame::new(8, 8, 1));
+    for (fi, frame) in p.animations[0].frames.iter_mut().enumerate() {
+        frame.layers.push(squarez::project::Layer::new_with_id("Layer 2".to_string(), 8, 8, 2));
+        for (li, layer) in frame.layers.iter_mut().enumerate() {
+            layer.set_pixel(0, 0, [fi as u8 + 1, li as u8 + 1, 0, 255]);
+        }
+    }
+    app.open_project_for_test(p);
+    app
+}
+
+#[test]
+fn layer_duplicate_spans_all_frames_and_undoes() {
+    let ctx = egui::Context::default();
+    let mut app = two_frame_two_layer_app(&ctx);
+
+    app.duplicate_layer_at(0);
+    for (fi, frame) in app.project.animations[0].frames.iter().enumerate() {
+        assert_eq!(frame.layers.len(), 3, "frame {fi}: duplicate must reach every frame");
+        assert_eq!(
+            frame.layers[1].get_pixel(0, 0),
+            [fi as u8 + 1, 1, 0, 255],
+            "frame {fi}: the copy carries this frame's own pixels"
+        );
+        assert_ne!(
+            frame.layers[1].id, frame.layers[0].id,
+            "frame {fi}: the copy must get a fresh layer id"
+        );
+    }
+
+    app.undo_stack.undo(&mut app.project);
+    for (fi, frame) in app.project.animations[0].frames.iter().enumerate() {
+        assert_eq!(frame.layers.len(), 2, "frame {fi}: undo must remove the copy everywhere");
+    }
+}
+
+#[test]
+fn layer_merge_down_spans_all_frames_and_undoes() {
+    let ctx = egui::Context::default();
+    let mut app = two_frame_two_layer_app(&ctx);
+    let before: Vec<Vec<squarez::project::Layer>> = app.project.animations[0]
+        .frames
+        .iter()
+        .map(|f| f.layers.clone())
+        .collect();
+
+    app.merge_layer_down_at(1);
+    for (fi, frame) in app.project.animations[0].frames.iter().enumerate() {
+        assert_eq!(frame.layers.len(), 1, "frame {fi}: merge must reach every frame");
+        // Top marker is opaque, so it wins at (0,0) in the merged result.
+        assert_eq!(
+            frame.layers[0].get_pixel(0, 0),
+            [fi as u8 + 1, 2, 0, 255],
+            "frame {fi}: merged pixels must come from this frame's own top layer"
+        );
+    }
+
+    app.undo_stack.undo(&mut app.project);
+    for (fi, frame) in app.project.animations[0].frames.iter().enumerate() {
+        assert_eq!(frame.layers.len(), 2, "frame {fi}: undo must restore both layers");
+        for (li, layer) in frame.layers.iter().enumerate() {
+            assert_eq!(
+                layer.pixels, before[fi][li].pixels,
+                "frame {fi} layer {li}: pixels must be restored byte-identically"
+            );
+        }
+    }
+
+    // Redo must reproduce the merge bit-for-bit.
+    app.undo_stack.redo(&mut app.project);
+    for (fi, frame) in app.project.animations[0].frames.iter().enumerate() {
+        assert_eq!(frame.layers.len(), 1, "frame {fi}: redo must re-merge");
+        assert_eq!(frame.layers[0].get_pixel(0, 0), [fi as u8 + 1, 2, 0, 255]);
+    }
+}
