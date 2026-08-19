@@ -147,6 +147,60 @@ pub fn fill_island(
     edits
 }
 
+/// Fill exactly the texels `face` owns — the island texels whose centers lie
+/// inside the face's projected outline.
+///
+/// The island is a bounding RECTANGLE, and in the projected layout a
+/// triangle's rectangle legitimately overlaps its coplanar neighbours'
+/// texels (a fan-triangulated cap tiles the disc, but every triangle's bbox
+/// covers parts of the others). Filling the whole rect would recolor ground
+/// the neighbours are standing on. Ownership by texel center is the same
+/// rule the layout uses, so the fill seam lands where the rendered edge is.
+pub fn fill_face(
+    layer: &mut Layer,
+    mesh: &super::mesh::Mesh,
+    face_idx: u32,
+    replacement: Rgba,
+) -> Vec<(u32, u32, Rgba, Rgba)> {
+    let Some(face) = mesh.faces.get(face_idx as usize) else {
+        return Vec::new();
+    };
+    let isl = face.island;
+    let basis = mesh.face_plane_basis(face);
+    let (min_u, min_v, _, _) = mesh.face_uv_bounds(face);
+    let poly: Vec<(f32, f32)> =
+        face.verts.iter().map(|&vi| basis.project(mesh.vertices[vi as usize])).collect();
+    let inside = |p: (f32, f32)| -> bool {
+        let n = poly.len();
+        let mut inside = false;
+        for i in 0..n {
+            let (x0, y0) = poly[i];
+            let (x1, y1) = poly[(i + 1) % n];
+            if (y0 > p.1) != (y1 > p.1) {
+                let t = (p.1 - y0) / (y1 - y0);
+                if p.0 < x0 + t * (x1 - x0) {
+                    inside = !inside;
+                }
+            }
+        }
+        inside
+    };
+    let mut edits = Vec::new();
+    for y in 0..isl.h as u32 {
+        for x in 0..isl.w as u32 {
+            if !inside((min_u + x as f32 + 0.5, min_v + y as f32 + 0.5)) {
+                continue;
+            }
+            let (gx, gy) = (isl.x as u32 + x, isl.y as u32 + y);
+            let old = layer.get_pixel(gx, gy);
+            if old != replacement {
+                edits.push((gx, gy, old, replacement));
+            }
+        }
+    }
+    edits
+}
+
 /// Handle one frame of paint input. Call with the scene already built for
 /// this frame; mutates the active layer and pushes undo commands on release.
 #[allow(clippy::too_many_arguments)]
@@ -226,7 +280,7 @@ pub fn handle(
                             }
                             // Fill acts once per press, not continuously.
                             ActiveTool::Fill if press_started => {
-                                let edits = fill_island(layer, isl, color_state.foreground);
+                                let edits = fill_face(layer, mesh, hit.face, color_state.foreground);
                                 if !edits.is_empty() {
                                     for &(x, y, _, new) in &edits {
                                         layer.set_pixel(x, y, new);

@@ -1418,3 +1418,65 @@ fn object_outline_still_traces_convex_shapes() {
         assert_eq!(outline_of(&mesh, &cam).len(), want, "{name}: outline edge count changed");
     }
 }
+
+#[test]
+fn fill_stays_inside_the_faces_own_outline() {
+    // Islands are bounding rects, and a cap triangle's rect overlaps its
+    // coplanar neighbours' texels. Fill must paint the texels the face OWNS
+    // (centers inside its outline) — all of them and nothing else — or
+    // filling one cap wedge recolors chunks of the neighbouring wedges.
+    let mut mesh = Mesh::cylinder(8);
+    mesh.allocate_all_islands(LAY_ATLAS).unwrap();
+    let mut layer = Layer::new("Texture".to_string(), LAY_ATLAS.0, LAY_ATLAS.1);
+
+    // A cap triangle (3 verts) whose bbox genuinely overlaps a neighbour's.
+    let target = mesh
+        .faces
+        .iter()
+        .position(|f| f.verts.len() == 3)
+        .expect("cylinder has cap triangles") as u32;
+
+    let owned = |fi: u32| -> std::collections::HashSet<(u32, u32)> {
+        let face = &mesh.faces[fi as usize];
+        let basis = mesh.face_plane_basis(face);
+        let (min_u, min_v, _, _) = mesh.face_uv_bounds(face);
+        let poly: Vec<(f32, f32)> =
+            face.verts.iter().map(|&vi| basis.project(mesh.vertices[vi as usize])).collect();
+        let isl = face.island;
+        let mut set = std::collections::HashSet::new();
+        for y in 0..isl.h as u32 {
+            for x in 0..isl.w as u32 {
+                if point_in_poly((min_u + x as f32 + 0.5, min_v + y as f32 + 0.5), &poly) {
+                    set.insert((isl.x as u32 + x, isl.y as u32 + y));
+                }
+            }
+        }
+        set
+    };
+
+    let mine = owned(target);
+    assert!(!mine.is_empty(), "target face must own some texels");
+    let rect_area =
+        mesh.faces[target as usize].island.w as usize * mesh.faces[target as usize].island.h as usize;
+    assert!(
+        mine.len() < rect_area,
+        "the triangle must own fewer texels than its bounding rect, or this test checks nothing"
+    );
+
+    let edits =
+        squarez::three_d::paint::fill_face(&mut layer, &mesh, target, [200, 30, 30, 255]);
+    let painted: std::collections::HashSet<(u32, u32)> =
+        edits.iter().map(|&(x, y, _, _)| (x, y)).collect();
+
+    assert_eq!(painted, mine, "fill must paint exactly the texels the face owns");
+    for other in 0..mesh.faces.len() as u32 {
+        if other == target {
+            continue;
+        }
+        let theirs = owned(other);
+        assert!(
+            painted.is_disjoint(&theirs),
+            "fill of face {target} touched texels owned by face {other}"
+        );
+    }
+}
