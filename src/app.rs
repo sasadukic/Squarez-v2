@@ -73,8 +73,10 @@ pub struct App {
     // Logical tab list = other_tabs[..active_tab_idx] + [active] + other_tabs[active_tab_idx..]
     other_tabs: Vec<InactiveTab>,
     active_tab_idx: usize,
-    active_modified: bool,
+    pub active_modified: bool,
     close_tab_pending: Option<usize>, // tab index awaiting save-confirm dialog
+    /// Crash-recovery snapshots found at launch, awaiting Restore/Discard.
+    pending_recovery: Option<Vec<crate::recovery::RecoveryEntry>>,
     drag_start: Option<(u32, u32)>,
     stroke_edits: Vec<crate::tools::PixelEdit>,
     last_pencil_pos: Option<(u32, u32)>,
@@ -1000,6 +1002,10 @@ impl App {
             active_tab_idx: 0,
             active_modified: false,
             close_tab_pending: None,
+            pending_recovery: {
+                let found = crate::recovery::pending(&crate::recovery::default_dir());
+                if found.is_empty() { None } else { Some(found) }
+            },
             drag_start: None,
             stroke_edits: Vec::new(),
             last_pencil_pos: None,
@@ -1328,7 +1334,7 @@ impl App {
 
     // ── Multi-file tab helpers ────────────────────────────────────────────────
 
-    fn tab_count(&self) -> usize {
+    pub fn tab_count(&self) -> usize {
         self.other_tabs.len() + 1
     }
 
@@ -1389,7 +1395,8 @@ impl App {
     /// Returns true when any floating modal is currently on screen.
     /// Used to enforce one-modal-at-a-time: no second dialog can open while one is already open.
     fn any_modal_open(&self) -> bool {
-        self.show_new_dialog
+        self.pending_recovery.is_some()
+            || self.show_new_dialog
             || self.show_resize_tilemap_dialog
             || self.close_tab_pending.is_some()
             || self.ramp_lab.open
@@ -1671,43 +1678,66 @@ impl App {
         if let Some(path) = self.current_path.clone() {
             if save_project_file(&self.project, &path).is_ok() {
                 self.active_modified = false;
+                // The saved work no longer needs a crash snapshot; rebuild the
+                // set so a later crash doesn't offer a stale copy of it.
+                self.autosave_all_tabs();
                 return true;
             }
         }
         false
     }
 
-    /// Directory for autosave recovery files of never-saved projects.
-    fn recovery_dir() -> std::path::PathBuf {
-        std::env::var_os("HOME")
-            .map(|h| std::path::PathBuf::from(h).join(".squarez").join("recovery"))
-            .unwrap_or_else(|| std::env::temp_dir().join("squarez_recovery"))
+    /// Does any tab hold work that exists nowhere on disk but here?
+    fn any_unsaved_changes(&self) -> bool {
+        let active_dirty = self.active_modified || self.current_path.is_none();
+        active_dirty && self.project_created
+            || self.other_tabs.iter().any(|t| t.modified || t.current_path.is_none())
     }
 
+    /// Snapshot every tab with unsaved changes into the recovery directory.
+    ///
+    /// This never writes to a tab's own file: an explicit Save is the only
+    /// thing that touches the user's documents. If the app dies, the next
+    /// launch offers these snapshots back; a clean exit with everything
+    /// saved wipes them.
     fn autosave_all_tabs(&mut self) {
-        if let Some(ref path) = self.current_path {
-            if save_project_file(&self.project, path).is_ok() {
-                self.active_modified = false;
-            }
-        } else {
-            let backup_dir = Self::recovery_dir();
-            let _ = std::fs::create_dir_all(&backup_dir);
-            let backup_path = backup_dir.join("recovery_active.sqr");
-            let _ = save_sqr(&self.project, &backup_path);
+        if !self.project_created {
+            return;
         }
+        let mut tabs: Vec<(&Project, Option<&std::path::Path>)> = Vec::new();
+        if self.active_modified || self.current_path.is_none() {
+            tabs.push((&self.project, self.current_path.as_deref()));
+        }
+        for tab in &self.other_tabs {
+            if tab.modified || tab.current_path.is_none() {
+                tabs.push((&tab.project, tab.current_path.as_deref()));
+            }
+        }
+        let _ = crate::recovery::write_snapshot(&crate::recovery::default_dir(), &tabs);
+    }
 
-        for (i, tab) in self.other_tabs.iter_mut().enumerate() {
-            if let Some(ref path) = tab.current_path {
-                if save_project_file(&tab.project, path).is_ok() {
-                    tab.modified = false;
-                }
-            } else {
-                let backup_dir = Self::recovery_dir();
-                let _ = std::fs::create_dir_all(&backup_dir);
-                let backup_path = backup_dir.join(format!("recovery_inactive_{}.sqr", i));
-                let _ = save_sqr(&tab.project, &backup_path);
+    /// Reopen every recovered tab: project from the snapshot, Save target
+    /// from the original path, and marked modified — the snapshot IS the
+    /// unsaved work.
+    pub fn restore_pending_recovery(&mut self) {
+        let Some(entries) = self.pending_recovery.take() else { return };
+        let dir = crate::recovery::default_dir();
+        for entry in entries {
+            let Ok(project) = load_project_file(&dir.join(&entry.file)) else { continue };
+            self.open_in_new_tab(project, entry.original_path.clone());
+            if entry.original_path.is_none() {
+                self.project.name = entry.name.clone();
             }
+            self.active_modified = true;
         }
+        self.show_new_dialog = false;
+        crate::recovery::wipe(&dir);
+    }
+
+    /// Drop the offered snapshots for good.
+    pub fn discard_pending_recovery(&mut self) {
+        self.pending_recovery = None;
+        crate::recovery::wipe(&crate::recovery::default_dir());
     }
 
     /// Close with check: show save dialog if modified, else close immediately.
@@ -12142,6 +12172,131 @@ print("FAIL")
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Crash-recovery prompt (shown at launch when snapshots survived)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    fn draw_recovery_dialog(&mut self, ctx: &egui::Context) {
+        let Some(entries) = self.pending_recovery.as_ref() else { return };
+        let names: Vec<String> = entries.iter().map(|e| e.name.clone()).collect();
+        let theme = self.theme.clone();
+        let mut action: Option<u8> = None; // 0 = restore, 1 = discard
+
+        // Dim everything behind the prompt.
+        let screen = ctx.screen_rect();
+        egui::Area::new("recovery_dim".into())
+            .fixed_pos(Pos2::ZERO)
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                ui.painter().rect_filled(screen, 0.0, Color32::from_black_alpha(120));
+            });
+
+        egui::Area::new("recovery_popup".into())
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                Frame::new()
+                    .fill(theme.panel)
+                    .stroke(egui::Stroke::NONE)
+                    .corner_radius(egui::CornerRadius::same(6))
+                    .shadow(egui::Shadow {
+                        offset: [0, 14],
+                        blur: 36,
+                        spread: 0,
+                        color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
+                    })
+                    .inner_margin(Margin { left: 12, right: 12, top: 0, bottom: 10 })
+                    .show(ui, |ui| {
+                        let row_w = 260.0;
+                        ui.set_width(row_w);
+
+                        ui.add_space(10.0);
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(row_w, 18.0),
+                            egui::Layout::top_down(egui::Align::Center),
+                            |ui| {
+                                let (rect, _) = ui.allocate_exact_size(
+                                    Vec2::new(row_w, 18.0),
+                                    egui::Sense::hover(),
+                                );
+                                ui.painter().text(
+                                    rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    "Restore unsaved work?",
+                                    FontId::new(FONT_SIZE_SM, FontFamily::Name("bold".into())),
+                                    theme.fg,
+                                );
+                                let line_y = rect.bottom() + 4.0;
+                                ui.painter().line_segment(
+                                    [
+                                        egui::Pos2::new(rect.left(), line_y),
+                                        egui::Pos2::new(rect.right(), line_y),
+                                    ],
+                                    egui::Stroke::new(1.0, theme.border),
+                                );
+                            },
+                        );
+                        ui.add_space(10.0);
+
+                        // What survived, one line per tab.
+                        for name in &names {
+                            let (rect, _) = ui.allocate_exact_size(
+                                Vec2::new(row_w, 16.0),
+                                egui::Sense::hover(),
+                            );
+                            ui.painter().text(
+                                rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                name,
+                                FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
+                                theme.fg_desc,
+                            );
+                        }
+                        ui.add_space(12.0);
+
+                        // ── Buttons ──
+                        let btn_h = 19.0;
+                        let btn_spacing = 4.0;
+                        let labels: &[&str] = &["Restore", "Discard"];
+                        let single_btn_w =
+                            (row_w - btn_spacing * (labels.len() - 1) as f32) / labels.len() as f32;
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(row_w, btn_h),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.spacing_mut().item_spacing = Vec2::new(btn_spacing, 0.0);
+                                for (idx, &label) in labels.iter().enumerate() {
+                                    let (rect, resp) = ui.allocate_exact_size(
+                                        Vec2::new(single_btn_w, btn_h),
+                                        egui::Sense::click(),
+                                    );
+                                    if resp.hovered() {
+                                        ui.painter().rect_filled(rect, 0.0, theme.surface);
+                                    }
+                                    let col = if resp.hovered() { theme.fg } else { theme.fg_desc };
+                                    ui.painter().text(
+                                        rect.center(),
+                                        egui::Align2::CENTER_CENTER,
+                                        label,
+                                        FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
+                                        col,
+                                    );
+                                    if resp.clicked() {
+                                        action = Some(idx as u8);
+                                    }
+                                }
+                            },
+                        );
+                    });
+            });
+
+        match action {
+            Some(0) => self.restore_pending_recovery(),
+            Some(1) => self.discard_pending_recovery(),
+            _ => {}
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Save-confirm dialog (shown when closing a modified tab)
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -12874,6 +13029,17 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.update_ui(ctx);
     }
+
+    /// Exit is the moment the snapshots' fate is decided: unsaved changes get
+    /// a final fresh snapshot (so quitting past the save dialog is still
+    /// recoverable next launch); a fully saved session wipes them.
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if self.any_unsaved_changes() {
+            self.autosave_all_tabs();
+        } else {
+            crate::recovery::wipe(&crate::recovery::default_dir());
+        }
+    }
 }
 
 impl App {
@@ -13358,6 +13524,7 @@ impl App {
             &mut self.project,
         );
         self.draw_save_confirm_dialog(ctx);
+        self.draw_recovery_dialog(ctx); // topmost: launch-time restore prompt
         self.draw_anim_tile_menu(ctx);
         self.draw_tab_resize_menu(ctx);
 

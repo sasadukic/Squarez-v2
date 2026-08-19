@@ -14,6 +14,7 @@ pub mod tools;
 pub mod three_d;
 pub mod color;
 pub mod io;
+pub mod recovery;
 pub mod ui_state;
 pub mod top_bar;
 pub mod ui_metrics;
