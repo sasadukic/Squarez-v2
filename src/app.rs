@@ -240,9 +240,7 @@ pub struct App {
     // Floating tab resize options context menu state: (tab_index, screen_pos, opened_at)
     tab_resize_menu: Option<(usize, egui::Pos2, f64)>,
     // View > Show sub-menu open state
-    view_show_open: bool,
     // Screen-space right-top of the "Show" row, used to position side submenu
-    view_show_pos: Option<egui::Pos2>,
     // Sidebar section order (drag-to-reorder)
     sidebar_order: Vec<Panel>,
     // Drag-to-reorder state (only active in narrow/all-collapsed mode with Cmd held)
@@ -717,18 +715,17 @@ pub fn get_default_brushes() -> Vec<CustomBrush> {
 enum TopMenu {
     File,
     Edit,
-    View,
     Layer,
     Animation,
     Windows,
 }
 
 impl TopMenu {
-    /// Menu-bar order, left to right.
-    const ALL: [TopMenu; 6] = [
+    /// Menu-bar order, left to right. Panel visibility lives in Windows
+    /// alone — a View menu duplicating it was removed as redundant.
+    const ALL: [TopMenu; 5] = [
         TopMenu::File,
         TopMenu::Edit,
-        TopMenu::View,
         TopMenu::Layer,
         TopMenu::Animation,
         TopMenu::Windows,
@@ -738,7 +735,6 @@ impl TopMenu {
         match self {
             Self::File => "File",
             Self::Edit => "Edit",
-            Self::View => "View",
             Self::Layer => "Layer",
             Self::Animation => "Animation",
             Self::Windows => "Windows",
@@ -1144,8 +1140,6 @@ impl App {
             timeline_scroll_accum: 0.0,
             frame_drag: None,
             tab_resize_menu: None,
-            view_show_open: false,
-            view_show_pos: None,
             sidebar_order: {
                 let mut order = layout.as_ref().map(|l| l.sidebar_order.clone()).unwrap_or_else(|| {
                     vec![Panel::Palette, Panel::Color, Panel::Brushes, Panel::Layers, Panel::Animations, Panel::Preview, Panel::Tiles]
@@ -2600,7 +2594,6 @@ impl App {
         self.tile_browser.open = false;
         self.ramp_lab.open = false;
         self.show_shortcuts_window = false;
-        self.view_show_open = false;
         self.top_menu_open = Some((menu, pos));
         self.top_menu_opened_at = ctx.input(|i| i.time);
         self.top_menu_hover_left = None;
@@ -2774,17 +2767,6 @@ impl App {
                                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                                 }
                             }
-                            TopMenu::View => {
-                                let _ = dropdown_row(ui, &theme, "Zoom with mouse wheel", None, false);
-                                let show_resp = dropdown_row(ui, &theme, "Show ▸", None, true);
-                                if show_resp.clicked() {
-                                    self.view_show_open = !self.view_show_open;
-                                    self.dropdown_full_h = 0.0;
-                                }
-                                // Store right-top of the Show row so the side submenu can be
-                                // positioned next to it on this and subsequent frames.
-                                self.view_show_pos = Some(show_resp.rect.right_top());
-                            }
                             TopMenu::Layer => {
                                 let ai = self.project.active_animation;
                                 let mut fi = self.project.active_frame;
@@ -2893,63 +2875,6 @@ impl App {
             ctx.request_repaint(); // ensure spring ticks
         }
 
-        // ── Side submenu: View > Show ─────────────────────────────────────
-        let mut side_submenu_rect: Option<egui::Rect> = None;
-        if !close_menu && matches!(menu, TopMenu::View) && self.view_show_open {
-            if let Some(show_top_right) = self.view_show_pos {
-                let sub_pos = Pos2::new(show_top_right.x + 2.0, show_top_right.y);
-                let sub_resp = egui::Area::new(egui::Id::new("view_show_submenu"))
-                    .order(egui::Order::Foreground)
-                    .fixed_pos(sub_pos)
-                    .show(ctx, |ui| {
-                        Frame::new()
-                            .fill(theme.panel)
-                            .corner_radius(egui::CornerRadius::same(DROPDOWN_CORNER_RADIUS))
-                            .shadow(egui::Shadow {
-                                offset: [0, 14],
-                                blur: 36,
-                                spread: 0,
-                                color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
-                            })
-                            .inner_margin(Margin::same(0))
-                            .show(ui, |ui| {
-                                ui.set_width(DROPDOWN_WIDTH);
-                                if dropdown_row(ui, &theme, "Palette", window_check(self.ui_state.is_visible(Panel::Palette)), true).clicked() {
-                                    self.ui_state.toggle_visible(Panel::Palette);
-                                }
-                                if dropdown_row(ui, &theme, "Color Mixer", window_check(self.ui_state.is_visible(Panel::Color)), true).clicked() {
-                                    self.ui_state.toggle_visible(Panel::Color);
-                                }
-                                if dropdown_row(ui, &theme, "Preview", window_check(self.ui_state.is_visible(Panel::Preview)), true).clicked() {
-                                    self.ui_state.toggle_visible(Panel::Preview);
-                                }
-                                if dropdown_row(ui, &theme, "Layers", window_check(self.ui_state.is_visible(Panel::Layers)), true).clicked() {
-                                    self.ui_state.toggle_visible(Panel::Layers);
-                                }
-                                if dropdown_row(ui, &theme, "Animations", window_check(self.ui_state.is_visible(Panel::Animations)), true).clicked() {
-                                    self.ui_state.toggle_visible(Panel::Animations);
-                                }
-                                if dropdown_row(ui, &theme, "Timeline", window_check(self.ui_state.is_visible(Panel::Timeline)), true).clicked() {
-                                    self.ui_state.toggle_visible(Panel::Timeline);
-                                }
-                                if dropdown_row(ui, &theme, "Tiles", window_check(self.ui_state.is_visible(Panel::Tiles)), true).clicked() {
-                                    self.ui_state.toggle_visible(Panel::Tiles);
-                                }
-                                if dropdown_row(ui, &theme, "Brushes", window_check(self.ui_state.is_visible(Panel::Brushes)), true).clicked() {
-                                    self.ui_state.toggle_visible(Panel::Brushes);
-                                }
-                                if dropdown_row(ui, &theme, "Reset layout", None, true).clicked() {
-                                    self.ui_state = UiState::default();
-                                    self.sidebar_order = vec![Panel::Palette, Panel::Color, Panel::Brushes, Panel::Layers, Panel::Animations, Panel::Preview, Panel::Tiles];
-                                    self.view_show_open = false;
-                                    close_menu = true;
-                                }
-                            });
-                    });
-                side_submenu_rect = Some(sub_resp.response.rect);
-            }
-        }
-
                         if close_menu {
             let now = ctx.input(|i| i.time);
             self.close_top_menu_with_animation(now);
@@ -2963,10 +2888,7 @@ impl App {
         let dropdown_rect = area_response.response.rect;
             if menu_age > 0.15 && ctx.input(|i| i.pointer.any_click()) {
                 let outside = ctx.input(|i| i.pointer.interact_pos())
-                    .map_or(true, |p| {
-                        !dropdown_rect.contains(p)
-                        && !side_submenu_rect.map_or(false, |r| r.contains(p))
-                    });
+                    .map_or(true, |p| !dropdown_rect.contains(p));
                 if outside {
                     let now = ctx.input(|i| i.time);
                     self.close_top_menu_with_animation(now);
@@ -2976,10 +2898,7 @@ impl App {
 
         // Hover timeout: close if mouse has been outside the dropdown for >= 2 s
         let pointer_inside = ctx.input(|i| i.pointer.hover_pos())
-            .map_or(false, |p| {
-                dropdown_rect.contains(p)
-                || side_submenu_rect.map_or(false, |r| r.contains(p))
-            });
+            .map_or(false, |p| dropdown_rect.contains(p));
         if pointer_inside {
             self.top_menu_hover_left = None;
         } else {

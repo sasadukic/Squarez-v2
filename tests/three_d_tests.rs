@@ -1480,3 +1480,30 @@ fn fill_stays_inside_the_faces_own_outline() {
         );
     }
 }
+
+#[test]
+fn shading_toggle_renders_texels_true_in_orbit() {
+    // The workspace's Shading: Off toggle — an orbit view must render every
+    // front face in its raw texel colors (shade == white), with interiors
+    // still dimmed for depth legibility.
+    use squarez::three_d::render::build_scene_with_shading;
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands((64, 64)).unwrap();
+    let orbit = Camera3D::default();
+
+    let flat = build_scene_with_shading(&mesh, &orbit, rect100(), (64, 64), false);
+    for tri in &flat.tris {
+        if tri.front {
+            assert_eq!(tri.shade, [1.0, 1.0, 1.0], "flat mode must not tint front faces");
+        } else {
+            assert_eq!(tri.shade, [0.5, 0.5, 0.5], "interiors stay dimmed in flat mode");
+        }
+    }
+
+    // And shaded mode through the same entry point still lights the scene.
+    let lit = build_scene_with_shading(&mesh, &orbit, rect100(), (64, 64), true);
+    assert!(
+        lit.tris.iter().any(|t| t.front && t.shade != [1.0, 1.0, 1.0]),
+        "shaded mode must keep the lit viewport look"
+    );
+}

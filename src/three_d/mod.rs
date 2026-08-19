@@ -104,6 +104,9 @@ pub struct ThreeDState {
     pub last_paint: Option<(u32, (i64, i64))>,
     /// Wheel/trackpad disambiguation timestamp (same trick as CanvasState).
     pub last_mouse_wheel_time: f64,
+    /// Render faces in their raw texel colors instead of the lit viewport
+    /// look. Snapped views are always unlit; this forces it in orbit too.
+    pub unlit: bool,
 }
 
 impl Default for ThreeDState {
@@ -121,6 +124,7 @@ impl Default for ThreeDState {
             stroke_painted: std::collections::HashSet::new(),
             last_paint: None,
             last_mouse_wheel_time: 0.0,
+            unlit: false,
         }
     }
 }

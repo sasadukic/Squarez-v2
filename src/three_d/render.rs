@@ -46,6 +46,20 @@ pub struct Scene {
 /// Project every front-facing face into screen-space triangles, sorted
 /// far → near. `atlas` is the texture dimensions in texels.
 pub fn build_scene(mesh: &Mesh, cam: &Camera3D, rect: Rect, atlas: (u32, u32)) -> Scene {
+    build_scene_with_shading(mesh, cam, rect, atlas, true)
+}
+
+/// `build_scene` with the viewport lighting under caller control: `shaded:
+/// false` renders every face in its raw texel colors (the workspace's
+/// shading toggle). Interior surfaces stay dimmed either way — that dimming
+/// is depth legibility, not lighting.
+pub fn build_scene_with_shading(
+    mesh: &Mesh,
+    cam: &Camera3D,
+    rect: Rect,
+    atlas: (u32, u32),
+    shaded: bool,
+) -> Scene {
     let mut scene = Scene::default();
     let aw = atlas.0.max(1) as f32;
     let ah = atlas.1.max(1) as f32;
@@ -54,7 +68,7 @@ pub fn build_scene(mesh: &Mesh, cam: &Camera3D, rect: Rect, atlas: (u32, u32)) -
     // Blender's solid viewport — with a pixel-art touch: lit faces shift
     // slightly warm, shadowed faces slightly cool, instead of a flat gray
     // multiply. Snapped views render unlit so texel colors read true.
-    let unlit = cam.snapped().is_some();
+    let unlit = !shaded || cam.snapped().is_some();
     const LIGHT: [f32; 3] = [-0.324, 0.417, 0.849]; // normalized
     const WARM: [f32; 3] = [1.0, 0.985, 0.94];
     const COOL: [f32; 3] = [0.9, 0.94, 1.0];

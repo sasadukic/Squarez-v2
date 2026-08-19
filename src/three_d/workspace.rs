@@ -388,7 +388,7 @@ pub fn draw(
     let scene = project
         .mesh3d
         .as_ref()
-        .map(|mesh| render::build_scene(mesh, &cam_copy, canvas_rect, atlas));
+        .map(|mesh| render::build_scene_with_shading(mesh, &cam_copy, canvas_rect, atlas, !state.unlit));
 
     if let (Some(mesh), Some(scene)) = (project.mesh3d.as_ref(), scene.as_ref()) {
         render::paint_contact_shadow(&painter, mesh, &cam_copy, canvas_rect);
@@ -454,6 +454,34 @@ pub fn draw(
                 action = Some(act);
             }
             x += w + 6.0;
+        }
+    }
+
+    // ── Shading toggle (top-right corner) ───────────────────────────────────
+    // Flat mode shows every face in its raw texel colors — what actually sits
+    // in the atlas — instead of the lit viewport look.
+    {
+        let label = if state.unlit { "Shading: Off" } else { "Shading: On" };
+        let w = 14.0 + label.len() as f32 * 6.5;
+        let rect = Rect::from_min_size(
+            Pos2::new(canvas_rect.max.x - w - 8.0, canvas_rect.min.y + 8.0),
+            Vec2::new(w, 24.0),
+        );
+        let resp = ui.interact(rect, ui.id().with("threed_shading_toggle"), Sense::click());
+        let bg = if resp.hovered() { theme.surface } else { theme.panel };
+        painter.rect_filled(rect, 3.0, bg);
+        painter.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            label,
+            FontId::proportional(11.0),
+            if state.unlit { theme.fg_desc } else { theme.fg },
+        );
+        if resp.hovered() {
+            over_buttons = true;
+        }
+        if resp.clicked() {
+            state.unlit = !state.unlit;
         }
     }
 
