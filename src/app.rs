@@ -780,6 +780,46 @@ impl App {
         self.on_project_changed();
     }
 
+    /// Delete the layer at the active frame's `active_layer` index across
+    /// EVERY animation and frame, as one undo step.
+    ///
+    /// Layer structure is global — AddLayer inserts into every frame — so
+    /// deletion must be global too. A single-frame delete leaves the frames'
+    /// layer lists diverged, after which every index-based layer command
+    /// (including AddLayer's own undo) addresses the wrong layer in the
+    /// other frames.
+    pub fn delete_active_layer(&mut self) {
+        let ai = self.project.active_animation;
+        let fi = self.project.active_frame;
+        let len = self.project.animations[ai].frames[fi].layers.len();
+        if len <= 1 {
+            return;
+        }
+        let idx = self.project.active_layer.min(len - 1);
+        let mut snapshots = Vec::new();
+        for anim in &mut self.project.animations {
+            for frame in &mut anim.frames {
+                if frame.layers.len() > idx {
+                    snapshots.push(frame.layers.remove(idx));
+                } else {
+                    // A frame already diverged (pre-fix files): snapshot a
+                    // placeholder so undo re-inserts *something* aligned.
+                    snapshots.push(Layer::new_with_id(
+                        "Layer".to_string(),
+                        self.project.canvas_width,
+                        self.project.canvas_height,
+                        0,
+                    ));
+                }
+                frame.dirty = true;
+            }
+        }
+        self.undo_stack.push(Command::DeleteLayer { index: idx, snapshots });
+        self.active_modified = true;
+        self.project.active_layer = self.project.active_layer.saturating_sub(1);
+        self.canvas_dirty = true;
+    }
+
     /// Construct without an eframe host — used by `new` and by tests that
     /// drive the UI headlessly through `update_ui`.
     pub fn new_with(egui_ctx: &egui::Context, layout_json: Option<String>) -> Self {
@@ -2552,16 +2592,7 @@ impl App {
                                     close_menu = true;
                                 }
                                 if dropdown_row(ui, &theme, "Delete active layer", None, true).clicked() {
-                                    let layers = &mut self.project.animations[ai].frames[fi].layers;
-                                    if layers.len() > 1 {
-                                        let idx = self.project.active_layer.min(layers.len() - 1);
-                                        let snapshot = layers[idx].clone();
-                                        self.undo_stack.push(Command::DeleteLayer { animation_id: ai, frame_id: fi, index: idx, snapshot });
-                                        self.active_modified = true;
-                                        layers.remove(idx);
-                                        self.project.active_layer = self.project.active_layer.saturating_sub(1).min(layers.len() - 1);
-                                        self.canvas_dirty = true;
-                                    }
+                                    self.delete_active_layer();
                                     close_menu = true;
                                 }
                             }

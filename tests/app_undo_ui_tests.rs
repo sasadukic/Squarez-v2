@@ -96,3 +96,51 @@ fn cmd_z_undoes_a_3d_paint_stroke() {
         "Cmd+Z must revert a 3D paint stroke"
     );
 }
+
+#[test]
+fn layer_delete_spans_all_frames_and_undoes_losslessly() {
+    // AddLayer inserts into every frame of every animation; delete must have
+    // the same scope. A single-frame delete leaves the frames' layer lists
+    // diverged, after which AddLayer's own undo (remove-at-index everywhere)
+    // deletes the WRONG layer from the untouched frames.
+    let ctx = egui::Context::default();
+    let mut app = App::new_with(&ctx, None);
+    let mut p = Project::new(8, 8, "layers".to_string());
+    // Two frames, two layers each, with a distinct marker in every buffer.
+    p.animations[0].frames.push(squarez::project::Frame::new(8, 8, 1));
+    for (fi, frame) in p.animations[0].frames.iter_mut().enumerate() {
+        frame.layers.push(squarez::project::Layer::new_with_id(
+            "Layer 2".to_string(),
+            8,
+            8,
+            2,
+        ));
+        for (li, layer) in frame.layers.iter_mut().enumerate() {
+            layer.set_pixel(0, 0, [fi as u8 + 1, li as u8 + 1, 0, 255]);
+        }
+    }
+    app.open_project_for_test(p);
+    app.project.active_layer = 1;
+
+    app.delete_active_layer();
+    for (fi, frame) in app.project.animations[0].frames.iter().enumerate() {
+        assert_eq!(frame.layers.len(), 1, "frame {fi}: delete must reach every frame");
+        assert_eq!(
+            frame.layers[0].get_pixel(0, 0),
+            [fi as u8 + 1, 1, 0, 255],
+            "frame {fi}: the surviving layer must be the one NOT deleted"
+        );
+    }
+
+    app.undo_stack.undo(&mut app.project);
+    for (fi, frame) in app.project.animations[0].frames.iter().enumerate() {
+        assert_eq!(frame.layers.len(), 2, "frame {fi}: undo must restore every frame");
+        for (li, layer) in frame.layers.iter().enumerate() {
+            assert_eq!(
+                layer.get_pixel(0, 0),
+                [fi as u8 + 1, li as u8 + 1, 0, 255],
+                "frame {fi} layer {li}: pixels must survive the round-trip"
+            );
+        }
+    }
+}

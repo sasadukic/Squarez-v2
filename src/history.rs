@@ -33,11 +33,13 @@ pub enum Command {
         name: String,
         id: u64,
     },
+    /// Removes/restores the layer at `index` across ALL animations and ALL
+    /// frames — the same global scope as AddLayer, or the per-frame layer
+    /// structures diverge and every later index-based command hits the wrong
+    /// layer. One snapshot per frame, in (animation, frame) iteration order.
     DeleteLayer {
-        animation_id: usize,
-        frame_id: usize,
         index: usize,
-        snapshot: crate::project::Layer,
+        snapshots: Vec<crate::project::Layer>,
     },
     /// Snapshot the ColorState before/after a grouped color edit (undo/redo restores it).
     SetColorStateSnapshot {
@@ -188,11 +190,25 @@ pub fn apply_command(project: &mut Project, color_state: Option<&mut ColorState>
                 }
             }
         }
-        Command::DeleteLayer { animation_id, frame_id, index, snapshot } => {
-            let frame = &mut project.animations[*animation_id].frames[*frame_id];
-            match dir {
-                Direction::Forward  => { frame.layers.remove(*index); }
-                Direction::Backward => frame.layers.insert(*index, snapshot.clone()),
+        Command::DeleteLayer { index, snapshots } => {
+            let mut snap = snapshots.iter();
+            for anim in &mut project.animations {
+                for frame in &mut anim.frames {
+                    match dir {
+                        Direction::Forward => {
+                            if frame.layers.len() > *index {
+                                frame.layers.remove(*index);
+                            }
+                        }
+                        Direction::Backward => {
+                            if let Some(s) = snap.next() {
+                                let at = (*index).min(frame.layers.len());
+                                frame.layers.insert(at, s.clone());
+                            }
+                        }
+                    }
+                    frame.dirty = true;
+                }
             }
         }
         Command::SetColorStateSnapshot { before, after } => {
