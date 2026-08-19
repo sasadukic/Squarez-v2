@@ -13,7 +13,7 @@ use crate::project::{Animation, Frame as ProjectFrame, Layer, Project, Rgba};
 use crate::theme::{load_fonts, Theme, FONT_SIZE_SM};
 use crate::top_bar::{
     menu_zone_width, BRAND_WIDTH, DROPDOWN_CORNER_RADIUS, DROPDOWN_ROW_HEIGHT, DROPDOWN_TOP_GAP,
-    DROPDOWN_WIDTH, MENU_FONT_SIZE, TOP_BAR_HEIGHT,
+    DROPDOWN_WIDTH, MENU_FONT_SIZE, MENU_LEFT_GAP, SELECTED_MENU_HAS_FILL, TOP_BAR_HEIGHT,
 };
 use crate::tools::{apply_eraser, apply_eyedropper, apply_ellipse, apply_fill, fill_enclosed_region, apply_line, apply_pencil, apply_rect, bresenham_positions, iso_box_preview, iso_box_pixels, iso_cylinder_preview, iso_cylinder_pixels, ActiveTool, SelectState, SelectInteraction, Handle, FloatBuffer, DragAnchor, sample_transformed};
 use crate::ui_metrics::RIGHT_SECTION_STACK_GAP;
@@ -714,6 +714,7 @@ pub fn get_default_brushes() -> Vec<CustomBrush> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TopMenu {
     File,
+    Edit,
     View,
     Layer,
     Animation,
@@ -721,9 +722,20 @@ enum TopMenu {
 }
 
 impl TopMenu {
+    /// Menu-bar order, left to right.
+    const ALL: [TopMenu; 6] = [
+        TopMenu::File,
+        TopMenu::Edit,
+        TopMenu::View,
+        TopMenu::Layer,
+        TopMenu::Animation,
+        TopMenu::Windows,
+    ];
+
     fn label(self) -> &'static str {
         match self {
             Self::File => "File",
+            Self::Edit => "Edit",
             Self::View => "View",
             Self::Layer => "Layer",
             Self::Animation => "Animation",
@@ -778,6 +790,29 @@ impl App {
         self.clear_transient_state();
         self.canvas_dirty = true;
         self.on_project_changed();
+    }
+
+    /// Undo one step — shared by the ⌘Z shortcut and the Edit menu.
+    pub fn do_undo(&mut self) {
+        // History moves invalidate any in-flight 3D gesture: its mesh and
+        // layer snapshots predate the change and must never be replayed.
+        self.three_d.cancel_gesture();
+        // Color-aware so ColorState snapshots (ramp edits) are restored.
+        self.undo_stack.undo_with_color(&mut self.project, &mut self.color_state);
+        self.canvas_dirty = true;
+        if self.project.is_tiled() {
+            self.mark_all_thumbnails_dirty();
+        }
+    }
+
+    /// Redo one step — shared by the ⇧⌘Z / ^Y shortcuts and the Edit menu.
+    pub fn do_redo(&mut self) {
+        self.three_d.cancel_gesture();
+        self.undo_stack.redo_with_color(&mut self.project, &mut self.color_state);
+        self.canvas_dirty = true;
+        if self.project.is_tiled() {
+            self.mark_all_thumbnails_dirty();
+        }
     }
 
     /// Delete the layer at `idx` across EVERY animation and frame, as one
@@ -2023,8 +2058,9 @@ impl App {
     }
 
     fn draw_top_bar(&mut self, ctx: &egui::Context) {
-        let file_icons_w: f32 = 0.0;
-        let tabs_x  = BRAND_WIDTH + file_icons_w;
+        let menus_w: f32 = MENU_LEFT_GAP
+            + TopMenu::ALL.iter().map(|m| menu_zone_width(m.label())).sum::<f32>();
+        let tabs_x  = BRAND_WIDTH + menus_w;
         let screen_w = ctx.screen_rect().width();
 
         // ── Compute tab sizes before entering the Area ────────────────────
@@ -2048,7 +2084,7 @@ impl App {
         let tab_area_w  = total_tabs_w.min(max_tab_area_w);
         let needs_scroll = total_tabs_w > max_tab_area_w;
 
-        // Background only covers logo + file button — tab cells paint their own fills.
+        // Background covers logo + menu strip — tab cells paint their own fills.
         let bar_rect = egui::Rect::from_min_size(Pos2::ZERO, Vec2::new(tabs_x, TOP_BAR_HEIGHT));
 
         let active_idx = self.active_tab_idx;
@@ -2067,6 +2103,28 @@ impl App {
 
                     // Logo (non-interactive)
                     self.draw_logo(ui, &theme);
+
+                    // ── Menu bar ─────────────────────────────────────────────
+                    ui.add_space(MENU_LEFT_GAP);
+                    let open_now: Option<TopMenu> = self.top_menu_open.map(|(m, _)| m);
+                    for m in TopMenu::ALL {
+                        let selected = open_now == Some(m);
+                        let resp = top_menu_zone(ui, &theme, m.label(), selected);
+                        let pos = Pos2::new(resp.rect.left(), resp.rect.bottom() + DROPDOWN_TOP_GAP);
+                        // Click toggles; hovering another label while a menu is
+                        // open switches to it (standard menu-bar behavior).
+                        let hover_switch = open_now.is_some() && !selected && resp.hovered();
+                        if resp.clicked() && !self.any_modal_open() {
+                            if selected {
+                                let now = ctx.input(|i| i.time);
+                                self.close_top_menu_with_animation(now);
+                            } else {
+                                self.open_top_menu(m, pos, ctx);
+                            }
+                        } else if hover_switch {
+                            self.open_top_menu(m, pos, ctx);
+                        }
+                    }
 
                     // ── Tab strip ────────────────────────────────────────────
                     let mut switch_to: Option<usize> = None;
@@ -2498,6 +2556,29 @@ impl App {
         self.top_menu_hover_left = None;
     }
 
+    /// Open (or switch to) a top menu, closing every other floating UI and
+    /// resetting the dropdown's open animation.
+    fn open_top_menu(&mut self, menu: TopMenu, pos: Pos2, ctx: &egui::Context) {
+        self.export_menu_open = None;
+        self.canvas_ctx_menu = None;
+        self.layer_ctx_menu = None;
+        self.frame_menu = None;
+        self.anim_tile_menu = None;
+        self.tab_resize_menu = None;
+        self.open_tool_submenu = None;
+        self.palette_browser.open = false;
+        self.tile_browser.open = false;
+        self.ramp_lab.open = false;
+        self.show_shortcuts_window = false;
+        self.view_show_open = false;
+        self.top_menu_open = Some((menu, pos));
+        self.top_menu_opened_at = ctx.input(|i| i.time);
+        self.top_menu_hover_left = None;
+        self.dropdown_full_h = 0.0;
+        self.dropdown_clip_h = 0.0;
+        self.dropdown_clip_vel = 0.0;
+    }
+
     fn draw_top_menu_dropdown(&mut self, ctx: &egui::Context) {
         let Some((menu, pos)) = self.top_menu_open else { return; };
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -2573,6 +2654,22 @@ impl App {
                         }
 
                         match menu {
+                            TopMenu::Edit => {
+                                let can_undo = self.undo_stack.can_undo();
+                                let can_redo = self.undo_stack.can_redo();
+                                if dropdown_row(ui, &theme, "Undo", Some("⌘Z"), can_undo).clicked()
+                                    && can_undo
+                                {
+                                    self.do_undo();
+                                    close_menu = true;
+                                }
+                                if dropdown_row(ui, &theme, "Redo", Some("⇧⌘Z"), can_redo).clicked()
+                                    && can_redo
+                                {
+                                    self.do_redo();
+                                    close_menu = true;
+                                }
+                            }
                             TopMenu::File => {
                                 // Vertical text rows: New | Open | Save | Exit
                                 if dropdown_row(ui, &theme, "New", None, true).clicked() {
@@ -13032,25 +13129,11 @@ impl App {
         let redo = (command && shift && ctx.input(|i| i.key_pressed(egui::Key::Z)))
                 || (ctrl && ctx.input(|i| i.key_pressed(egui::Key::Y)));
 
-        if undo || redo {
-            // History moves invalidate any in-flight 3D gesture: its mesh and
-            // layer snapshots predate the change and must never be replayed.
-            self.three_d.cancel_gesture();
-        }
         if undo {
-            // Prefer color-aware undo so ColorState snapshots (ramp edits) are restored.
-            self.undo_stack.undo_with_color(&mut self.project, &mut self.color_state);
-            self.canvas_dirty = true;
-            if self.project.is_tiled() {
-                self.mark_all_thumbnails_dirty();
-            }
+            self.do_undo();
         }
         if redo {
-            self.undo_stack.redo_with_color(&mut self.project, &mut self.color_state);
-            self.canvas_dirty = true;
-            if self.project.is_tiled() {
-                self.mark_all_thumbnails_dirty();
-            }
+            self.do_redo();
         }
 
         // File shortcuts: ⌘N / ⌘O / ⌘S / ⇧⌘S / ⌘E, Edit: ⌘V
@@ -13300,8 +13383,9 @@ fn rich(text: &str, color: Color32, size: f32) -> RichText {
 fn top_menu_zone(ui: &mut egui::Ui, theme: &Theme, label: &str, selected: bool) -> egui::Response {
     let size = Vec2::new(menu_zone_width(label), TOP_BAR_HEIGHT);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
-    // Highlight fill is drawn externally by the spring highlight in draw_top_bar.
-    // Only draw the text here.
+    if selected && SELECTED_MENU_HAS_FILL {
+        ui.painter().rect_filled(rect, 0.0, theme.surface);
+    }
     let is_active = selected || response.hovered();
     ui.painter().text(
         rect.center(),
