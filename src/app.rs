@@ -234,7 +234,7 @@ pub struct App {
     // Real-time preview pixels for shape tools (overlaid during drag, cleared on commit)
     shape_preview: Vec<(u32, u32, Rgba)>,
     // Selection tool state: current rect (x0, y0, x1, y1) in canvas pixel coords
-    select_state: SelectState,
+    pub select_state: SelectState,
     // Accumulated scroll delta for timeline frame navigation (slows down scroll speed)
     timeline_scroll_accum: f32,
     // Drag-to-reorder state for animation frames in the timeline
@@ -12089,6 +12089,8 @@ print("FAIL")
                                         ("Hover + Click (Loop Cut)", "Preview and cut an edge loop"),
                                         ("Drag (Move/Scale tool)", "Move / resize a whole object on the grid"),
                                         ("Shift + Click (Move tool)", "Add models to the selection; drag moves them all"),
+                                        ("⌘A / ^A", "Select all models"),
+                                        ("⌘D / ^D", "Deselect all"),
                                         ("Delete / Backspace", "Delete selected faces or vertices"),
                                         ("Shift + Click", "Add/remove from selection"),
                                         ("Alt + Click", "Select the vertex/edge behind (stacked in line)"),
@@ -13362,20 +13364,34 @@ impl App {
             }
             if edit_cut   { self.cut_to_clipboard(); }
             if select_all_shortcut {
-                if self.select_state.has_float() {
-                    self.commit_float_to_layer();
+                if self.project.mode.is_three_d() {
+                    // 3D: select every model in the viewport. The 2D pixel
+                    // select-all below would float the whole texture atlas.
+                    if let Some(mesh) = self.project.mesh3d.as_ref() {
+                        self.three_d.sel_faces = (0..mesh.faces.len() as u32).collect();
+                        self.three_d.sel_verts.clear();
+                        self.three_d.sel_edges.clear();
+                    }
+                } else {
+                    if self.select_state.has_float() {
+                        self.commit_float_to_layer();
+                    }
+                    let w = self.project.canvas_width;
+                    let h = self.project.canvas_height;
+                    let mut mask = crate::tools::SelectionMask::new(w, h);
+                    mask.mask.fill(true);
+                    self.select_state.mask = Some(mask);
+                    self.select_state.rect = None;
+                    self.lift_mask_to_float();
+                    self.canvas_dirty = true;
                 }
-                let w = self.project.canvas_width;
-                let h = self.project.canvas_height;
-                let mut mask = crate::tools::SelectionMask::new(w, h);
-                mask.mask.fill(true);
-                self.select_state.mask = Some(mask);
-                self.select_state.rect = None;
-                self.lift_mask_to_float();
-                self.canvas_dirty = true;
             }
             if deselect_shortcut {
-                if self.select_state.has_float() {
+                if self.project.mode.is_three_d() {
+                    self.three_d.sel_faces.clear();
+                    self.three_d.sel_verts.clear();
+                    self.three_d.sel_edges.clear();
+                } else if self.select_state.has_float() {
                     self.commit_float_to_layer();
                 } else {
                     self.select_state.clear();

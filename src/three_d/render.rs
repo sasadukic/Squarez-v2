@@ -458,28 +458,30 @@ fn covered_by(scene: &Scene, faces: &std::collections::HashSet<u32>, p: Pos2) ->
 }
 
 /// The outer screen-space outline of `faces`: the boundary between the area
-/// they cover and the background.
+/// they cover and the background, clipped segment-wise to what the viewer can
+/// actually see. Returns `(edge id, screen start, screen end)` per sub-segment.
 ///
-/// Not the same thing as "edges bordering exactly one visible face". That set
-/// is the boundary of the *visible-face set*, which also fires wherever a
-/// visible face meets a hidden one **inside** the shape — the rim and floor of
-/// a recess, for instance, which are interior contours rather than the
-/// object's outline.
-///
-/// So candidate edges are filtered by what is actually beside them on screen:
-/// step a short way off each side of the edge, and keep it only where one side
-/// is background. Sampling several points along the edge means a partly
-/// exposed edge still counts.
+/// Candidate edges are the ones bordering exactly one visible selected face —
+/// but that set is the boundary of the *visible-face set*, which also fires
+/// on interior contours (a recess's rim), and an edge that IS on the group
+/// boundary for part of its length may run behind or across other geometry
+/// for the rest (a table edge passing behind an object standing on it). So
+/// every candidate is sampled along its length and only the runs that are
+/// both locally on the outer boundary AND not hidden behind nearer geometry
+/// survive. The result hugs the group's outline from any camera, with no
+/// stretch ever crossing something in front of it.
 pub fn silhouette_edges(
     mesh: &Mesh,
     scene: &Scene,
     cam: &Camera3D,
     rect: Rect,
     faces: &[u32],
-) -> Vec<(u32, u32)> {
+) -> Vec<((u32, u32), Pos2, Pos2)> {
     /// How far off the edge to look, in screen pixels. Below a texel at any
     /// usable zoom, and well above projection round-off.
     const PROBE: f32 = 1.0;
+    /// Sampling pitch along the edge, in screen pixels.
+    const STEP_PX: f32 = 5.0;
 
     let selected: std::collections::HashSet<u32> = faces.iter().copied().collect();
     let visible: std::collections::HashSet<u32> = scene
@@ -499,7 +501,7 @@ pub fn silhouette_edges(
         }
     }
 
-    let mut out: Vec<(u32, u32)> = Vec::new();
+    let mut out: Vec<((u32, u32), Pos2, Pos2)> = Vec::new();
     for (&(a, b), &count) in &border {
         if count != 1 {
             continue;
@@ -509,26 +511,50 @@ pub fn silhouette_edges(
         else {
             continue;
         };
-        let (pa, _) = cam.project(va, rect);
-        let (pb, _) = cam.project(vb, rect);
+        let (pa, da) = cam.project(va, rect);
+        let (pb, db) = cam.project(vb, rect);
         let dir = pb - pa;
         let len = dir.length();
         if len < 1e-3 {
-            // Edge-on: no sides to compare, so keep it rather than guess.
-            out.push((a, b));
-            continue;
+            continue; // edge-on: nothing drawable
         }
         let normal = egui::Vec2::new(-dir.y / len, dir.x / len);
-        let exposed = [0.25f32, 0.5, 0.75].iter().any(|&t| {
-            let mid = pa + dir * t;
-            !covered_by(scene, &visible, mid + normal * PROBE)
-                || !covered_by(scene, &visible, mid - normal * PROBE)
-        });
-        if exposed {
-            out.push((a, b));
+        let steps = ((len / STEP_PX).ceil() as usize).clamp(3, 96);
+
+        // Walk the edge; a sample survives when at least one side of it is
+        // background (locally on the outer boundary) and nothing nearer
+        // covers it (locally in front). Contiguous survivors form segments.
+        let mut run_start: Option<f32> = None;
+        let mut last_kept = 0.0f32;
+        for i in 0..=steps {
+            let t = i as f32 / steps as f32;
+            let p = pa + dir * t;
+            let depth = da + (db - da) * t;
+            let keep = !point_occluded(scene, p, depth)
+                && (!covered_by(scene, &visible, p + normal * PROBE)
+                    || !covered_by(scene, &visible, p - normal * PROBE));
+            match (keep, run_start) {
+                (true, None) => {
+                    run_start = Some(t);
+                    last_kept = t;
+                }
+                (true, Some(_)) => last_kept = t,
+                (false, Some(s)) => {
+                    if last_kept > s {
+                        out.push(((a, b), pa + dir * s, pa + dir * last_kept));
+                    }
+                    run_start = None;
+                }
+                (false, None) => {}
+            }
+        }
+        if let Some(s) = run_start {
+            if last_kept > s {
+                out.push(((a, b), pa + dir * s, pa + dir * last_kept));
+            }
         }
     }
-    out.sort_unstable();
+    out.sort_unstable_by_key(|x| x.0);
     out
 }
 

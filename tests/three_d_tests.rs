@@ -1341,10 +1341,18 @@ fn recessed_cube() -> Mesh {
 }
 
 fn outline_of(mesh: &Mesh, cam: &Camera3D) -> Vec<(u32, u32)> {
+    // Unique edge ids over the returned sub-segments.
     let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(480.0, 480.0));
     let scene = build_scene(mesh, cam, rect, LAY_ATLAS);
     let sel: Vec<u32> = (0..mesh.faces.len() as u32).collect();
-    squarez::three_d::render::silhouette_edges(mesh, &scene, cam, rect, &sel)
+    let mut ids: Vec<(u32, u32)> =
+        squarez::three_d::render::silhouette_edges(mesh, &scene, cam, rect, &sel)
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
 }
 
 #[test]
@@ -1506,4 +1514,80 @@ fn shading_toggle_renders_texels_true_in_orbit() {
         lit.tris.iter().any(|t| t.front && t.shade != [1.0, 1.0, 1.0]),
         "shaded mode must keep the lit viewport look"
     );
+}
+
+#[test]
+fn group_outline_never_crosses_nearer_geometry() {
+    // The reported scene: a desk slab with an object standing on it, both
+    // selected. The slab's back edge is genuinely on the group's outline for
+    // part of its length, but where the object stands in front of it the
+    // outline must be clipped away — no line through the nearer model — and
+    // this must hold from every direction, since the outline re-forms per
+    // view. Verified independently of the implementation: every returned
+    // sample must not sit behind any front-facing triangle of the scene.
+    let mut mesh = Mesh::cube(16); // desk stand-in: wide base
+    // Flatten to a slab: pull the top ring down to y = 2.
+    for v in &mut mesh.vertices {
+        if v[1] > 2.0 {
+            v[1] = 2.0;
+        }
+    }
+    let layer = Layer::new("Texture".to_string(), LAY_ATLAS.0, LAY_ATLAS.1);
+    let mesh = squarez::three_d::edit::add_object(&mesh, &layer, &Mesh::cube(6), LAY_ATLAS)
+        .expect("fits")
+        .mesh;
+
+    let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(480.0, 480.0));
+    let sel: Vec<u32> = (0..mesh.faces.len() as u32).collect();
+    let mut checked = 0usize;
+    for k in 0..8 {
+        let cam = Camera3D {
+            yaw: k as f32 * std::f32::consts::TAU / 8.0 + 0.2,
+            pitch: 0.45,
+            zoom: 12.0,
+            offset: Vec2::ZERO,
+        };
+        let scene = build_scene(&mesh, &cam, rect, LAY_ATLAS);
+        let segments =
+            squarez::three_d::render::silhouette_edges(&mesh, &scene, &cam, rect, &sel);
+        assert!(!segments.is_empty(), "yaw {k}: the group outline must exist");
+
+        for ((va, vb), pa, pb) in &segments {
+            // Reconstruct the segment's depth from its edge's world endpoints.
+            let (wa, da) = cam.project(mesh.vertices[*va as usize], rect);
+            let (wb, db) = cam.project(mesh.vertices[*vb as usize], rect);
+            let edge = wb - wa;
+            let len2 = edge.length_sq().max(1e-6);
+            for s in 0..=8 {
+                let p = *pa + (*pb - *pa) * (s as f32 / 8.0);
+                let t = ((p - wa).dot(edge) / len2).clamp(0.0, 1.0);
+                let depth = da + (db - da) * t;
+                checked += 1;
+                // Independent z-test against every front triangle.
+                for tri in scene.tris.iter().filter(|t| t.front) {
+                    let [t0, t1, t2] = tri.pts;
+                    let den = (t1.x - t0.x) * (t2.y - t0.y) - (t2.x - t0.x) * (t1.y - t0.y);
+                    if den.abs() < 1e-6 {
+                        continue;
+                    }
+                    let b1 = ((p.x - t0.x) * (t2.y - t0.y) - (t2.x - t0.x) * (p.y - t0.y)) / den;
+                    let b2 = ((t1.x - t0.x) * (p.y - t0.y) - (p.x - t0.x) * (t1.y - t0.y)) / den;
+                    let b0 = 1.0 - b1 - b2;
+                    // Strict interior only: the segment's own faces touch it
+                    // at their boundary, which is not occlusion.
+                    if b0 > 0.03 && b1 > 0.03 && b2 > 0.03 {
+                        let tri_depth =
+                            b0 * tri.depths[0] + b1 * tri.depths[1] + b2 * tri.depths[2];
+                        assert!(
+                            tri_depth <= depth + 0.15,
+                            "yaw {k}: outline segment of edge ({va},{vb}) passes behind \
+                             face {} — a line through nearer geometry",
+                            tri.face
+                        );
+                    }
+                }
+            }
+        }
+    }
+    assert!(checked > 100, "the sweep must actually sample outline segments ({checked})");
 }

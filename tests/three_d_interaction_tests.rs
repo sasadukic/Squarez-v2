@@ -258,3 +258,46 @@ fn shift_click_moves_several_models_as_one() {
     let empty = Pos2::new(model_point().x, 60.0);
     assert_eq!(click_at(&ctx, &mut app, empty, false), Vec::<u32>::new());
 }
+
+#[test]
+fn cmd_a_selects_every_model_in_3d_mode() {
+    let ctx = egui::Context::default();
+    let mut app = App::new_with(&ctx, None);
+    let mut p = three_d_project();
+    let layer = p.animations[0].frames[0].layers[0].clone();
+    let out = squarez::three_d::edit::add_object(
+        p.mesh3d.as_ref().unwrap(),
+        &layer,
+        &Mesh::cube(6),
+        (128, 128),
+    )
+    .unwrap();
+    p.mesh3d = Some(out.mesh);
+    app.open_project_for_test(p);
+    app.active_tool = ActiveTool::MoveObject;
+    for _ in 0..2 {
+        frame(&ctx, &mut app, vec![], Modifiers::default());
+    }
+
+    // The shortcut fires on key release, like the other edit shortcuts.
+    let m = Modifiers::COMMAND;
+    frame(&ctx, &mut app, vec![
+        egui::Event::Key { key: Key::A, physical_key: None, pressed: true, repeat: false, modifiers: m },
+        egui::Event::Key { key: Key::A, physical_key: None, pressed: false, repeat: false, modifiers: m },
+    ], m);
+
+    let mut sel = app.three_d.sel_faces.clone();
+    sel.sort_unstable();
+    assert_eq!(sel, (0..12).collect::<Vec<u32>>(), "⌘A must select every model's faces");
+    assert!(
+        app.select_state.mask.is_none() && !app.select_state.has_float(),
+        "⌘A in 3D mode must NOT run the 2D pixel select-all against the atlas"
+    );
+
+    // ⌘D clears it again.
+    frame(&ctx, &mut app, vec![
+        egui::Event::Key { key: Key::D, physical_key: None, pressed: true, repeat: false, modifiers: m },
+        egui::Event::Key { key: Key::D, physical_key: None, pressed: false, repeat: false, modifiers: m },
+    ], m);
+    assert!(app.three_d.sel_faces.is_empty(), "⌘D must deselect all models");
+}

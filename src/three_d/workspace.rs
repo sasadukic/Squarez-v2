@@ -1084,11 +1084,9 @@ pub fn draw(
             // part of the object's outline (see render::silhouette_edges).
             if let Some(scene) = scene.as_ref() {
                 let outline = Stroke::new(2.0, Color32::WHITE);
-                for (a, b) in
+                for (_, pa, pb) in
                     render::silhouette_edges(mesh, scene, &cam_copy, canvas_rect, &state.sel_faces)
                 {
-                    let (pa, _) = cam_copy.project(mesh.vertices[a as usize], canvas_rect);
-                    let (pb, _) = cam_copy.project(mesh.vertices[b as usize], canvas_rect);
                     painter.line_segment([pa, pb], outline);
                 }
             }
