@@ -643,35 +643,65 @@ pub fn silhouette_edges(
 
         // Walk the edge; a sample survives when at least one side of it is
         // background (locally on the outer boundary) and nothing nearer
-        // covers it (locally in front). Contiguous survivors form segments.
-        let mut run_start: Option<f32> = None;
-        let mut last_kept = 0.0f32;
+        // covers it (locally in front).
+        let mut kept = vec![false; steps + 1];
+        let mut occluded = vec![false; steps + 1];
         for i in 0..=steps {
             let t = i as f32 / steps as f32;
             let p = pa + dir * t;
             let depth = da + (db - da) * t;
-            let keep = !point_occluded(scene, p, depth)
+            occluded[i] = point_occluded(scene, p, depth);
+            kept[i] = !occluded[i]
                 && (!covered_by(scene, &visible, p + normal * PROBE)
                     || !covered_by(scene, &visible, p - normal * PROBE));
-            match (keep, run_start) {
-                (true, None) => {
-                    run_start = Some(t);
-                    last_kept = t;
-                }
-                (true, Some(_)) => last_kept = t,
-                (false, Some(s)) => {
-                    if last_kept > s {
-                        out.push(((a, b), pa + dir * s, pa + dir * last_kept));
-                    }
-                    run_start = None;
-                }
-                (false, None) => {}
-            }
         }
-        if let Some(s) = run_start {
-            if last_kept > s {
-                out.push(((a, b), pa + dir * s, pa + dir * last_kept));
+
+        // Contiguous survivors form segments, with every run boundary bisected
+        // to sub-pixel precision instead of stopping at the sampling pitch.
+        // That is what makes the outline CONNECT: at a same-object corner the
+        // endpoint sample itself is kept and the segment reaches the vertex
+        // exactly; at a union junction — one model's edge run ending against
+        // another model's silhouette — both sides converge on the crossing
+        // point instead of leaving a pitch-wide gap. (No snap-to-vertex
+        // heuristics: a run tip rejected at the vertex is rejected because the
+        // boundary genuinely lies before it, and extending past it dangles a
+        // stub into the union interior.)
+        let keep_at = |t: f32| -> bool {
+            let p = pa + dir * t;
+            let depth = da + (db - da) * t;
+            !point_occluded(scene, p, depth)
+                && (!covered_by(scene, &visible, p + normal * PROBE)
+                    || !covered_by(scene, &visible, p - normal * PROBE))
+        };
+        let refine = |t_in: f32, t_out: f32| -> f32 {
+            let (mut lo, mut hi) = (t_in, t_out);
+            for _ in 0..6 {
+                let mid = 0.5 * (lo + hi);
+                if keep_at(mid) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
             }
+            lo
+        };
+        let t_of = |i: usize| i as f32 / steps as f32;
+        let mut i = 0;
+        while i <= steps {
+            if !kept[i] {
+                i += 1;
+                continue;
+            }
+            let mut j = i;
+            while j < steps && kept[j + 1] {
+                j += 1;
+            }
+            let t_start = if i == 0 { 0.0 } else { refine(t_of(i), t_of(i - 1)) };
+            let t_end = if j == steps { 1.0 } else { refine(t_of(j), t_of(j + 1)) };
+            if t_end > t_start {
+                out.push(((a, b), pa + dir * t_start, pa + dir * t_end));
+            }
+            i = j + 1;
         }
     }
     out.sort_unstable_by_key(|x| x.0);

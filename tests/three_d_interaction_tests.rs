@@ -294,10 +294,75 @@ fn cmd_a_selects_every_model_in_3d_mode() {
         "⌘A in 3D mode must NOT run the 2D pixel select-all against the atlas"
     );
 
-    // ⌘D clears it again.
+    // Escape clears it again (⌘D duplicates now).
+    frame(&ctx, &mut app, vec![
+        egui::Event::Key { key: Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::default() },
+    ], Modifiers::default());
+    assert!(app.three_d.sel_faces.is_empty(), "Escape must deselect all models");
+}
+
+#[test]
+fn cmd_d_duplicates_the_selected_model() {
+    let ctx = egui::Context::default();
+    let mut app = App::new_with(&ctx, None);
+    let mut p = three_d_project();
+    // Paint a marker on the cube so the copy's texture can be verified.
+    let isl = p.mesh3d.as_ref().unwrap().faces[2].island;
+    p.animations[0].frames[0].layers[0].set_pixel(isl.x as u32 + 1, isl.y as u32 + 1, [210, 40, 40, 255]);
+    app.open_project_for_test(p);
+    app.active_tool = ActiveTool::MoveObject;
+    for _ in 0..3 {
+        frame(&ctx, &mut app, vec![], Modifiers::default());
+    }
+
+    // Select the cube, then ⌘D.
+    let pa = find_click_point(&ctx, &mut app, &(0..6).collect::<Vec<u32>>());
+    assert_eq!(click_at(&ctx, &mut app, pa, false), (0..6).collect::<Vec<u32>>());
+    let m = Modifiers::COMMAND;
     frame(&ctx, &mut app, vec![
         egui::Event::Key { key: Key::D, physical_key: None, pressed: true, repeat: false, modifiers: m },
         egui::Event::Key { key: Key::D, physical_key: None, pressed: false, repeat: false, modifiers: m },
     ], m);
-    assert!(app.three_d.sel_faces.is_empty(), "⌘D must deselect all models");
+    frame(&ctx, &mut app, vec![], Modifiers::default());
+
+    let mesh = app.project.mesh3d.as_ref().unwrap();
+    assert_eq!(mesh.faces.len(), 12, "duplicate must add a full copy of the model");
+    let mut sel = app.three_d.sel_faces.clone();
+    sel.sort_unstable();
+    assert_eq!(sel, (6..12).collect::<Vec<u32>>(), "the COPY must come back selected");
+
+    // The copy sits above the original, same footprint.
+    let orig_top = (0..8).map(|v| mesh.vertices[v][1]).fold(f32::MIN, f32::max);
+    let copy_bottom = (8..16).map(|v| mesh.vertices[v][1]).fold(f32::MAX, f32::min);
+    assert!(copy_bottom >= orig_top + 2.0, "copy must be lifted clear of the scene");
+
+    // The copy wears the original's paint.
+    let src = mesh.faces[2].island;
+    let dst = mesh.faces[8].island; // same face of the copy (order preserved)
+    let layer = &app.project.animations[0].frames[0].layers[0];
+    assert_eq!(
+        layer.get_pixel(dst.x as u32 + 1, dst.y as u32 + 1),
+        layer.get_pixel(src.x as u32 + 1, src.y as u32 + 1),
+        "duplicated faces must carry their texture"
+    );
+    assert_eq!(layer.get_pixel(dst.x as u32 + 1, dst.y as u32 + 1), [210, 40, 40, 255]);
+
+    // One undo step removes the copy again.
+    assert!(app.undo_stack.can_undo());
+    frame(&ctx, &mut app, vec![key_event_z(&ctx)], Modifiers::COMMAND);
+    assert_eq!(
+        app.project.mesh3d.as_ref().unwrap().faces.len(),
+        6,
+        "undo must remove the duplicate"
+    );
+}
+
+fn key_event_z(_ctx: &egui::Context) -> egui::Event {
+    egui::Event::Key {
+        key: Key::Z,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::COMMAND,
+    }
 }

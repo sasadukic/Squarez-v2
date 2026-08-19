@@ -405,6 +405,70 @@ pub fn add_primitive(
 
 /// Merge a prebuilt object mesh into the scene, stacked above existing
 /// geometry, with fresh checker islands for every new face.
+/// Duplicate the selected faces as a new object, lifted clear above the
+/// scene (the add_object convention), carrying their painted texture. A
+/// selection spanning several models copies them as one unit, relative
+/// positions preserved. The copies come back selected so a Move drag can
+/// place them immediately.
+pub fn duplicate_faces(
+    mesh: &Mesh,
+    layer: &Layer,
+    faces: &[u32],
+    atlas: (u32, u32),
+) -> Result<EditOutcome, AtlasFull> {
+    let mut sel: Vec<u32> = faces
+        .iter()
+        .copied()
+        .filter(|&f| (f as usize) < mesh.faces.len())
+        .collect();
+    sel.sort_unstable();
+    sel.dedup();
+    if sel.is_empty() {
+        return Ok(EditOutcome { mesh: mesh.clone(), ..Default::default() });
+    }
+
+    let mut out_mesh = mesh.clone();
+    let scene_top = out_mesh.vertices.iter().map(|v| v[1]).fold(f32::MIN, f32::max).ceil();
+    let sel_bottom = sel
+        .iter()
+        .flat_map(|&fi| mesh.faces[fi as usize].verts.iter())
+        .map(|&vi| mesh.vertices[vi as usize][1])
+        .fold(f32::MAX, f32::min);
+    let lift = scene_top + 2.0 - sel_bottom;
+
+    // One shifted copy per vertex the selection uses, shared across its faces.
+    let mut map: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+    let mut sources = keep_all(&out_mesh);
+    let mut new_faces = Vec::new();
+    for &fi in &sel {
+        let face = mesh.faces[fi as usize].clone();
+        let verts = face
+            .verts
+            .iter()
+            .map(|&vi| {
+                *map.entry(vi).or_insert_with(|| {
+                    let v = mesh.vertices[vi as usize];
+                    out_mesh.vertices.push([v[0], v[1] + lift, v[2]]);
+                    out_mesh.vertices.len() as u32 - 1
+                })
+            })
+            .collect();
+        new_faces.push(out_mesh.faces.len() as u32);
+        out_mesh.faces.push(Face { verts, island: Island::default() });
+        // The copy wears the original's paint.
+        sources.push(PaintSource::keep(face.island));
+    }
+
+    let mut rec = PixelRecorder::new(layer);
+    relayout(&mut out_mesh, &mut rec, &sources, atlas)?;
+    Ok(EditOutcome {
+        mesh: out_mesh,
+        pixel_edits: rec.edits,
+        select_faces: new_faces,
+        select_verts: Vec::new(),
+    })
+}
+
 pub fn add_object(
     mesh: &Mesh,
     layer: &Layer,

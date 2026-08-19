@@ -12090,7 +12090,7 @@ print("FAIL")
                                         ("Drag (Move/Scale tool)", "Move / resize a whole object on the grid"),
                                         ("Shift + Click (Move tool)", "Add models to the selection; drag moves them all"),
                                         ("⌘A / ^A", "Select all models"),
-                                        ("⌘D / ^D", "Deselect all"),
+                                        ("⌘D / ^D", "Duplicate selected models"),
                                         ("Delete / Backspace", "Delete selected faces or vertices"),
                                         ("Shift + Click", "Add/remove from selection"),
                                         ("Alt + Click", "Select the vertex/edge behind (stacked in line)"),
@@ -13388,9 +13388,10 @@ impl App {
             }
             if deselect_shortcut {
                 if self.project.mode.is_three_d() {
-                    self.three_d.sel_faces.clear();
-                    self.three_d.sel_verts.clear();
-                    self.three_d.sel_edges.clear();
+                    // ⌘D duplicates the selected models in 3D (handled by the
+                    // workspace on key press). Deselect lives on Escape there;
+                    // clearing here would wipe the fresh copy's selection on
+                    // the same chord's key release.
                 } else if self.select_state.has_float() {
                     self.commit_float_to_layer();
                 } else {

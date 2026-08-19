@@ -428,6 +428,26 @@ pub fn draw(
             }
         }
     }
+
+    // ⌘D / ^D: duplicate the selected models (texture included), lifted above
+    // the scene and left selected so a Move drag places them immediately.
+    if keys_free && !state.sel_faces.is_empty() {
+        let dup = ui.input(|i| {
+            (i.modifiers.command || i.modifiers.ctrl)
+                && !i.modifiers.shift
+                && i.key_pressed(egui::Key::D)
+        });
+        if dup {
+            if let Some(before) = project.mesh3d.clone() {
+                let sel = state.sel_faces.clone();
+                if let Some(outcome) = with_atlas_growth(project, li, |mesh, layer, atlas| {
+                    edit::duplicate_faces(mesh, layer, &sel, atlas)
+                }) {
+                    commit_edit(state, project, undo, li, before, outcome, &mut output);
+                }
+            }
+        }
+    }
     let mut over_buttons = false;
     {
         let mut x = canvas_rect.min.x + 8.0;
@@ -1096,6 +1116,10 @@ pub fn draw(
                     render::silhouette_edges(mesh, scene, &cam_copy, canvas_rect, &state.sel_faces)
                 {
                     painter.line_segment([pa, pb], outline);
+                    // Round the butt caps so segments meeting at a corner
+                    // join without a notch.
+                    painter.circle_filled(pa, outline.width * 0.5, Color32::WHITE);
+                    painter.circle_filled(pb, outline.width * 0.5, Color32::WHITE);
                 }
             }
         } else if is_select_tool && !state.sel_faces.is_empty() {

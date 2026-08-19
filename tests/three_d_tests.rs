@@ -1356,14 +1356,17 @@ fn outline_of(mesh: &Mesh, cam: &Camera3D) -> Vec<(u32, u32)> {
 }
 
 #[test]
-fn object_outline_ignores_interior_recess_contours() {
-    // The Move tool outlines the selected object. A recess's rim and floor sit
-    // *inside* the object's projected shape, so they are interior contours,
-    // not part of its outline — but they are exactly where a visible face
-    // meets a hidden one, which is what the naive rule keys on.
+fn outline_hugs_the_visible_boundary() {
+    // The outline's contract, stated independently of its implementation:
+    // every drawn segment lies on the boundary between the selection's
+    // on-screen coverage and the background. Interior contours (a recess's
+    // rim or floor seen frontally) sit pixels inside the coverage and must
+    // not appear; an interior edge that projects within a pixel of the
+    // boundary (near-edge-on views) legitimately may.
     let mesh = recessed_cube();
-    // Vertices 0..8 are the original cube corners; everything above belongs to
-    // the inset ring and the recess.
+    let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(480.0, 480.0));
+    let sel: Vec<u32> = (0..mesh.faces.len() as u32).collect();
+
     for (i, cam) in [
         Camera3D { yaw: 0.7, pitch: 0.5, zoom: 22.0, offset: Vec2::ZERO },
         Camera3D { yaw: 0.0, pitch: 0.0, zoom: 22.0, offset: Vec2::ZERO },
@@ -1373,14 +1376,39 @@ fn object_outline_ignores_interior_recess_contours() {
     .into_iter()
     .enumerate()
     {
-        let edges = outline_of(&mesh, &cam);
-        assert!(!edges.is_empty(), "angle {i}: outline vanished");
-        for &(a, b) in &edges {
-            assert!(
-                a < 8 && b < 8,
-                "angle {i}: outline includes recess edge {a}-{b}; only the outer \
-                 cube corners (0..8) are on the object's boundary"
-            );
+        let scene = build_scene(&mesh, &cam, rect, LAY_ATLAS);
+        let segments =
+            squarez::three_d::render::silhouette_edges(&mesh, &scene, &cam, rect, &sel);
+        assert!(!segments.is_empty(), "angle {i}: outline vanished");
+
+        // Ground truth: rasterize the selection's front-face coverage.
+        let covered = |p: Pos2| -> bool {
+            scene.tris.iter().filter(|t| t.front).any(|t| {
+                let [a, b, c] = t.pts;
+                let den = (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y);
+                if den.abs() < 1e-6 {
+                    return false;
+                }
+                let w1 = ((p.x - a.x) * (c.y - a.y) - (c.x - a.x) * (p.y - a.y)) / den;
+                let w2 = ((b.x - a.x) * (p.y - a.y) - (p.x - a.x) * (b.y - a.y)) / den;
+                let w0 = 1.0 - w1 - w2;
+                w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0
+            })
+        };
+        for &(id, pa, pb) in &segments {
+            for k in 0..=6 {
+                let p = pa + (pb - pa) * (k as f32 / 6.0);
+                // On the boundary = background reachable within ~2px.
+                let near_background = (0..12).any(|a| {
+                    let ang = a as f32 * std::f32::consts::TAU / 12.0;
+                    !covered(p + Vec2::new(ang.cos(), ang.sin()) * 2.0)
+                });
+                assert!(
+                    near_background,
+                    "angle {i}: segment of edge {id:?} at {p:?} sits inside the \
+                     coverage — an interior contour, not the outline"
+                );
+            }
         }
     }
 }
@@ -1612,4 +1640,101 @@ fn group_outline_never_crosses_nearer_geometry() {
         }
     }
     assert!(checked > 100, "the sweep must actually sample outline segments ({checked})");
+}
+
+#[test]
+fn outline_segments_reach_their_corners() {
+    // Fully exposed silhouettes (nothing occluding, every candidate a true
+    // outline edge) must span their edges end to end — segments from
+    // neighbouring edges then meet exactly at the shared vertex. Corner
+    // samples are ambiguous for the side probes (the adjacent face covers
+    // most directions around the vertex), which used to shave the tips off
+    // and leave unconnected corners.
+    let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(480.0, 480.0));
+    for (name, mesh) in [("cube", Mesh::cube(8)), ("recessed cube", recessed_cube())] {
+        let mut mesh = mesh;
+        mesh.allocate_all_islands(LAY_ATLAS).unwrap();
+        for k in 0..6 {
+            let cam = Camera3D {
+                yaw: k as f32 * std::f32::consts::TAU / 6.0 + 0.23,
+                pitch: 0.5,
+                zoom: 14.0,
+                offset: Vec2::ZERO,
+            };
+            let scene = build_scene(&mesh, &cam, rect, LAY_ATLAS);
+            let sel: Vec<u32> = (0..mesh.faces.len() as u32).collect();
+            let segments =
+                squarez::three_d::render::silhouette_edges(&mesh, &scene, &cam, rect, &sel);
+            assert!(!segments.is_empty(), "{name} yaw {k}: outline must exist");
+            for ((a, b), pa, pb) in segments {
+                let (wa, _) = cam.project(mesh.vertices[a as usize], rect);
+                let (wb, _) = cam.project(mesh.vertices[b as usize], rect);
+                // One full-span segment per edge: each drawn endpoint sits on
+                // one of the edge's projected vertices.
+                let hits_vertex =
+                    |p: Pos2| p.distance(wa) < 0.5 || p.distance(wb) < 0.5;
+                assert!(
+                    hits_vertex(pa) && hits_vertex(pb),
+                    "{name} yaw {k}: edge ({a},{b}) segment stops short of its corner \
+                     ({pa:?}-{pb:?} vs {wa:?}-{wb:?})"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn group_outline_has_no_dangling_ends() {
+    // A silhouette is the boundary of a filled screen region, so it must be
+    // CONNECTED: every segment endpoint either meets another endpoint (a
+    // corner) or lands on another segment (a union junction, where one
+    // model's edge run ends against another model's silhouette mid-edge).
+    // Sampling used to stop runs a pitch short of the junction, leaving
+    // visibly unconnected corners.
+    let dist_to_seg = |p: Pos2, a: Pos2, b: Pos2| -> f32 {
+        let ab = b - a;
+        let len2 = ab.length_sq().max(1e-6);
+        let t = ((p - a).dot(ab) / len2).clamp(0.0, 1.0);
+        p.distance(a + ab * t)
+    };
+
+    let mut mesh = Mesh::cube(16);
+    for v in &mut mesh.vertices {
+        if v[1] > 2.0 {
+            v[1] = 2.0;
+        }
+    }
+    let layer = Layer::new("Texture".to_string(), LAY_ATLAS.0, LAY_ATLAS.1);
+    let mesh = squarez::three_d::edit::add_object(&mesh, &layer, &Mesh::cube(6), LAY_ATLAS)
+        .expect("fits")
+        .mesh;
+
+    let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(480.0, 480.0));
+    let sel: Vec<u32> = (0..mesh.faces.len() as u32).collect();
+    for k in 0..8 {
+        let cam = Camera3D {
+            yaw: k as f32 * std::f32::consts::TAU / 8.0 + 0.2,
+            pitch: 0.45,
+            zoom: 12.0,
+            offset: Vec2::ZERO,
+        };
+        let scene = build_scene(&mesh, &cam, rect, LAY_ATLAS);
+        let segments =
+            squarez::three_d::render::silhouette_edges(&mesh, &scene, &cam, rect, &sel);
+        assert!(segments.len() > 4, "yaw {k}: outline must exist");
+        for (si, &(id, pa, pb)) in segments.iter().enumerate() {
+            for (label, p) in [("start", pa), ("end", pb)] {
+                let min_d = segments
+                    .iter()
+                    .enumerate()
+                    .filter(|(sj, _)| si != *sj)
+                    .map(|(_, &(_, qa, qb))| dist_to_seg(p, qa, qb))
+                    .fold(f32::MAX, f32::min);
+                assert!(
+                    min_d < 1.0,
+                    "yaw {k}: edge {id:?} {label} {p:?} dangles by {min_d:.2}px —                      outline corner not connected"
+                );
+            }
+        }
+    }
 }
