@@ -104,9 +104,39 @@ pub struct ThreeDState {
     pub last_paint: Option<(u32, (i64, i64))>,
     /// Wheel/trackpad disambiguation timestamp (same trick as CanvasState).
     pub last_mouse_wheel_time: f64,
-    /// Render faces in their raw texel colors instead of the lit viewport
-    /// look. Snapped views are always unlit; this forces it in orbit too.
-    pub unlit: bool,
+    /// How faces are lit in the viewport. Snapped views always render flat
+    /// so texel colors read true regardless of this setting.
+    pub shading: Shading,
+}
+
+/// Viewport lighting style, cycled by the workspace's shading button.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shading {
+    /// Smooth per-face warm/cool tint (Blender-solid-like).
+    Soft,
+    /// Flat texel colors with quantized shadows as screen-space dither
+    /// patterns — the picoCAD look.
+    Dither,
+    /// Raw texel colors, no lighting, no wireframe: a clean preview.
+    Off,
+}
+
+impl Shading {
+    pub fn label(self) -> &'static str {
+        match self {
+            Shading::Soft => "Shading: Soft",
+            Shading::Dither => "Shading: Dither",
+            Shading::Off => "Shading: Off",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Shading::Soft => Shading::Dither,
+            Shading::Dither => Shading::Off,
+            Shading::Off => Shading::Soft,
+        }
+    }
 }
 
 impl Default for ThreeDState {
@@ -124,7 +154,7 @@ impl Default for ThreeDState {
             stroke_painted: std::collections::HashSet::new(),
             last_paint: None,
             last_mouse_wheel_time: 0.0,
-            unlit: false,
+            shading: Shading::Dither,
         }
     }
 }

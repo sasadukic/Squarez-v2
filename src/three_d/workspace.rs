@@ -388,16 +388,24 @@ pub fn draw(
     let scene = project
         .mesh3d
         .as_ref()
-        .map(|mesh| render::build_scene_with_shading(mesh, &cam_copy, canvas_rect, atlas, !state.unlit));
+        .map(|mesh| render::build_scene_styled(mesh, &cam_copy, canvas_rect, atlas, state.shading));
 
     if let (Some(mesh), Some(scene)) = (project.mesh3d.as_ref(), scene.as_ref()) {
         render::paint_contact_shadow(&painter, mesh, &cam_copy, canvas_rect);
         if let Some(texture) = canvas.texture.as_ref() {
-            render::paint_scene(&painter, scene, texture.id());
+            if state.shading == super::Shading::Dither {
+                let patterns = render::dither_patterns(ui.ctx());
+                // Pattern cells scale with zoom: half a texel per cell, so the
+                // dither reads the same at any magnification.
+                let cell = (cam_copy.zoom * 0.5).clamp(2.0, 8.0);
+                render::paint_scene_dithered(&painter, scene, texture.id(), &patterns, cell);
+            } else {
+                render::paint_scene(&painter, scene, texture.id());
+            }
         }
-        // Flat mode is a clean preview: raw texel colors with no edge seams.
+        // Off is a clean preview: raw texel colors with no edge seams.
         // Selection/hover overlays still draw, so the tools stay usable.
-        if !state.unlit {
+        if state.shading != super::Shading::Off {
             render::paint_wireframe(&painter, mesh, scene, &cam_copy, canvas_rect, theme);
         }
     }
@@ -462,10 +470,10 @@ pub fn draw(
     }
 
     // ── Shading toggle (top-right corner) ───────────────────────────────────
-    // Flat mode shows every face in its raw texel colors — what actually sits
-    // in the atlas — instead of the lit viewport look.
+    // Cycles Soft (smooth tint) → Dither (picoCAD-style pattern shadows) →
+    // Off (raw texel colors, no wireframe).
     {
-        let label = if state.unlit { "Shading: Off" } else { "Shading: On" };
+        let label = state.shading.label();
         let w = 14.0 + label.len() as f32 * 6.5;
         let rect = Rect::from_min_size(
             Pos2::new(canvas_rect.max.x - w - 8.0, canvas_rect.min.y + 8.0),
@@ -479,13 +487,13 @@ pub fn draw(
             egui::Align2::CENTER_CENTER,
             label,
             FontId::proportional(11.0),
-            if state.unlit { theme.fg_desc } else { theme.fg },
+            if state.shading == super::Shading::Off { theme.fg_desc } else { theme.fg },
         );
         if resp.hovered() {
             over_buttons = true;
         }
         if resp.clicked() {
-            state.unlit = !state.unlit;
+            state.shading = state.shading.next();
         }
     }
 

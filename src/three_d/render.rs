@@ -31,6 +31,9 @@ pub struct SceneTri {
     pub shade: [f32; 3],
     /// Front-facing (outside) surface; false = dimmed interior.
     pub front: bool,
+    /// Quantized shadow strength for Shading::Dither, 0 (lit) ..= 3 (darkest).
+    /// Always 0 in the other shading modes.
+    pub dither: u8,
     /// Per-corner view-space z, for interpolated occlusion tests.
     pub depths: [f32; 3],
 }
@@ -46,20 +49,20 @@ pub struct Scene {
 /// Project every front-facing face into screen-space triangles, sorted
 /// far → near. `atlas` is the texture dimensions in texels.
 pub fn build_scene(mesh: &Mesh, cam: &Camera3D, rect: Rect, atlas: (u32, u32)) -> Scene {
-    build_scene_with_shading(mesh, cam, rect, atlas, true)
+    build_scene_styled(mesh, cam, rect, atlas, crate::three_d::Shading::Soft)
 }
 
-/// `build_scene` with the viewport lighting under caller control: `shaded:
-/// false` renders every face in its raw texel colors (the workspace's
-/// shading toggle). Interior surfaces stay dimmed either way — that dimming
-/// is depth legibility, not lighting.
-pub fn build_scene_with_shading(
+/// `build_scene` with the viewport lighting style under caller control (the
+/// workspace's shading button). Interior surfaces stay dimmed in every mode —
+/// that dimming is depth legibility, not lighting.
+pub fn build_scene_styled(
     mesh: &Mesh,
     cam: &Camera3D,
     rect: Rect,
     atlas: (u32, u32),
-    shaded: bool,
+    shading: crate::three_d::Shading,
 ) -> Scene {
+    use crate::three_d::Shading;
     let mut scene = Scene::default();
     let aw = atlas.0.max(1) as f32;
     let ah = atlas.1.max(1) as f32;
@@ -68,7 +71,7 @@ pub fn build_scene_with_shading(
     // Blender's solid viewport — with a pixel-art touch: lit faces shift
     // slightly warm, shadowed faces slightly cool, instead of a flat gray
     // multiply. Snapped views render unlit so texel colors read true.
-    let unlit = !shaded || cam.snapped().is_some();
+    let shading = if cam.snapped().is_some() { Shading::Off } else { shading };
     const LIGHT: [f32; 3] = [-0.324, 0.417, 0.849]; // normalized
     const WARM: [f32; 3] = [1.0, 0.985, 0.94];
     const COOL: [f32; 3] = [0.9, 0.94, 1.0];
@@ -79,17 +82,34 @@ pub fn build_scene_with_shading(
         if front {
             scene.visible_faces.push(fi as u32);
         }
-        let mut shade = if unlit {
-            [1.0, 1.0, 1.0]
+        let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(1e-6);
+        let lambert = ((n[0] * LIGHT[0] + n[1] * LIGHT[1] + n[2] * LIGHT[2]) / len).max(0.0);
+        let mut shade = match shading {
+            Shading::Soft => {
+                let level = 0.55 + 0.45 * lambert;
+                [
+                    level * (COOL[0] + (WARM[0] - COOL[0]) * lambert),
+                    level * (COOL[1] + (WARM[1] - COOL[1]) * lambert),
+                    level * (COOL[2] + (WARM[2] - COOL[2]) * lambert),
+                ]
+            }
+            // Dither leaves colors flat; the shadow is the pattern overlay.
+            Shading::Dither | Shading::Off => [1.0, 1.0, 1.0],
+        };
+        // Quantize the shadow into picoCAD-style pattern steps: fully lit
+        // faces get none, faces turned away get progressively denser dither.
+        let dither = if shading == Shading::Dither && front {
+            if lambert > 0.62 {
+                0
+            } else if lambert > 0.38 {
+                1
+            } else if lambert > 0.16 {
+                2
+            } else {
+                3
+            }
         } else {
-            let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(1e-6);
-            let lambert = ((n[0] * LIGHT[0] + n[1] * LIGHT[1] + n[2] * LIGHT[2]) / len).max(0.0);
-            let level = 0.55 + 0.45 * lambert;
-            [
-                level * (COOL[0] + (WARM[0] - COOL[0]) * lambert),
-                level * (COOL[1] + (WARM[1] - COOL[1]) * lambert),
-                level * (COOL[2] + (WARM[2] - COOL[2]) * lambert),
-            ]
+            0
         };
         if !front {
             // Interior surfaces (seen through holes) render dimmed so the
@@ -125,6 +145,7 @@ pub fn build_scene_with_shading(
                 face: fi as u32,
                 shade,
                 front,
+                dither,
                 depths: [a.2, b.2, c.2],
             });
         }
@@ -328,6 +349,105 @@ mod ordered {
             self.0.total_cmp(&other.0)
         }
     }
+}
+
+/// The three 4×4 Bayer fill patterns behind Shading::Dither, densest last.
+/// White-on-transparent so the mesh vertex color decides the shadow tone;
+/// uploaded once and cached in the egui context.
+pub fn dither_patterns(ctx: &egui::Context) -> [egui::TextureHandle; 3] {
+    let id = egui::Id::new("threed_dither_patterns");
+    if let Some(existing) = ctx.data(|d| d.get_temp::<[egui::TextureHandle; 3]>(id)) {
+        return existing;
+    }
+    const BAYER: [[u8; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
+    let make = |threshold: u8, name: &str| {
+        let mut px = vec![0u8; 4 * 4 * 4];
+        for (y, row) in BAYER.iter().enumerate() {
+            for (x, &v) in row.iter().enumerate() {
+                if v < threshold {
+                    let i = (y * 4 + x) * 4;
+                    px[i..i + 4].copy_from_slice(&[255, 255, 255, 255]);
+                }
+            }
+        }
+        ctx.load_texture(
+            name,
+            egui::ColorImage::from_rgba_unmultiplied([4, 4], &px),
+            egui::TextureOptions {
+                magnification: egui::TextureFilter::Nearest,
+                minification: egui::TextureFilter::Nearest,
+                wrap_mode: egui::TextureWrapMode::Repeat,
+                ..Default::default()
+            },
+        )
+    };
+    let patterns = [make(4, "dither25"), make(8, "dither50"), make(12, "dither75")];
+    ctx.data_mut(|d| d.insert_temp(id, patterns.clone()));
+    patterns
+}
+
+/// Draw the scene with dithered shadows: each triangle's fill pattern is
+/// emitted immediately after the triangle itself, so the overlay obeys the
+/// same painter order as the geometry — a shadowed desk top must not dither
+/// over the model standing on it.
+///
+/// `cell_px` is the screen size of one pattern cell; the caller ties it to
+/// the camera zoom so the dither reads consistently at any magnification.
+pub fn paint_scene_dithered(
+    painter: &egui::Painter,
+    scene: &Scene,
+    texture_id: egui::TextureId,
+    patterns: &[egui::TextureHandle; 3],
+    cell_px: f32,
+) {
+    /// The shadow tone the pattern pixels stamp over the texture.
+    const SHADOW: Color32 = Color32::from_rgba_premultiplied(0, 0, 0, 190);
+    let tile = (cell_px * 4.0).max(4.0);
+
+    let mut base = egui::Mesh::with_texture(texture_id);
+    let flush = |m: &mut egui::Mesh| {
+        if !m.is_empty() {
+            painter.add(egui::Shape::mesh(std::mem::replace(
+                m,
+                egui::Mesh::with_texture(texture_id),
+            )));
+        }
+    };
+    for tri in &scene.tris {
+        let start = base.vertices.len() as u32;
+        let tint = Color32::from_rgb(
+            (tri.shade[0].clamp(0.0, 1.0) * 255.0).round() as u8,
+            (tri.shade[1].clamp(0.0, 1.0) * 255.0).round() as u8,
+            (tri.shade[2].clamp(0.0, 1.0) * 255.0).round() as u8,
+        );
+        for i in 0..3 {
+            base.vertices.push(egui::epaint::Vertex {
+                pos: tri.pts[i],
+                uv: tri.uvs[i],
+                color: tint,
+            });
+        }
+        base.indices.extend([start, start + 1, start + 2]);
+
+        if tri.dither > 0 {
+            // Flush the textured run, then the pattern for this triangle, so
+            // nearer triangles drawn later still cover both.
+            flush(&mut base);
+            let tex = &patterns[(tri.dither - 1).min(2) as usize];
+            let mut overlay = egui::Mesh::with_texture(tex.id());
+            for i in 0..3 {
+                overlay.vertices.push(egui::epaint::Vertex {
+                    pos: tri.pts[i],
+                    // Screen-locked UVs: the pattern tiles the viewport.
+                    uv: Pos2::new(tri.pts[i].x / tile, tri.pts[i].y / tile),
+                    color: SHADOW,
+                });
+            }
+            overlay.indices.extend([0, 1, 2]);
+            painter.add(egui::Shape::mesh(overlay));
+        }
+    }
+    flush(&mut base);
 }
 
 /// Draw the textured triangles as one egui mesh sampling `texture_id`
