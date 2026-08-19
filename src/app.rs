@@ -77,6 +77,8 @@ pub struct App {
     close_tab_pending: Option<usize>, // tab index awaiting save-confirm dialog
     /// Crash-recovery snapshots found at launch, awaiting Restore/Discard.
     pending_recovery: Option<Vec<crate::recovery::RecoveryEntry>>,
+    /// Menu bar visibility — hidden until the logo is clicked; animated.
+    menu_bar_open: bool,
     drag_start: Option<(u32, u32)>,
     stroke_edits: Vec<crate::tools::PixelEdit>,
     last_pencil_pos: Option<(u32, u32)>,
@@ -998,6 +1000,7 @@ impl App {
             active_tab_idx: 0,
             active_modified: false,
             close_tab_pending: None,
+            menu_bar_open: false,
             pending_recovery: {
                 let found = crate::recovery::pending(&crate::recovery::default_dir());
                 if found.is_empty() { None } else { Some(found) }
@@ -2082,8 +2085,16 @@ impl App {
     }
 
     fn draw_top_bar(&mut self, ctx: &egui::Context) {
-        let menus_w: f32 = MENU_LEFT_GAP
+        // Menu bar slides in from under the logo when it is clicked; the tab
+        // strip rides along on the same animation.
+        let menu_t = ctx.animate_bool_with_time(
+            egui::Id::new("menu_bar_slide"),
+            self.menu_bar_open,
+            0.18,
+        );
+        let menus_full_w: f32 = MENU_LEFT_GAP
             + TopMenu::ALL.iter().map(|m| menu_zone_width(m.label())).sum::<f32>();
+        let menus_w = menus_full_w * menu_t;
         let tabs_x  = BRAND_WIDTH + menus_w;
         let screen_w = ctx.screen_rect().width();
 
@@ -2128,25 +2139,58 @@ impl App {
                     // Logo (non-interactive)
                     self.draw_logo(ui, &theme);
 
-                    // ── Menu bar ─────────────────────────────────────────────
-                    ui.add_space(MENU_LEFT_GAP);
-                    let open_now: Option<TopMenu> = self.top_menu_open.map(|(m, _)| m);
-                    for m in TopMenu::ALL {
-                        let selected = open_now == Some(m);
-                        let resp = top_menu_zone(ui, &theme, m.label(), selected);
-                        let pos = Pos2::new(resp.rect.left(), resp.rect.bottom() + DROPDOWN_TOP_GAP);
-                        // Click toggles; hovering another label while a menu is
-                        // open switches to it (standard menu-bar behavior).
-                        let hover_switch = open_now.is_some() && !selected && resp.hovered();
-                        if resp.clicked() && !self.any_modal_open() {
-                            if selected {
-                                let now = ctx.input(|i| i.time);
-                                self.close_top_menu_with_animation(now);
+                    // ── Menu bar (slides out from under the logo) ────────────
+                    let (strip_rect, _) = ui.allocate_exact_size(
+                        Vec2::new(menus_w, TOP_BAR_HEIGHT),
+                        egui::Sense::hover(),
+                    );
+                    if menu_t > 0.01 {
+                        // Content anchored so the labels emerge left-to-right
+                        // from behind the logo as the strip widens.
+                        let clip = ui.painter().with_clip_rect(strip_rect);
+                        let mut x = strip_rect.left() + menus_w - menus_full_w + MENU_LEFT_GAP;
+                        let open_now: Option<TopMenu> = self.top_menu_open.map(|(m, _)| m);
+                        for m in TopMenu::ALL {
+                            let zw = menu_zone_width(m.label());
+                            let rect = egui::Rect::from_min_size(
+                                Pos2::new(x, strip_rect.top()),
+                                Vec2::new(zw, TOP_BAR_HEIGHT),
+                            );
+                            x += zw;
+                            let selected = open_now == Some(m);
+                            let hit = rect.intersect(strip_rect);
+                            let resp = if hit.width() > 1.0 {
+                                Some(ui.interact(hit, ui.id().with(("menu_zone", m.label())), egui::Sense::click()))
                             } else {
+                                None
+                            };
+                            let hovered = resp.as_ref().is_some_and(|r| r.hovered());
+                            if selected && SELECTED_MENU_HAS_FILL {
+                                clip.rect_filled(rect, 0.0, theme.surface);
+                            }
+                            let col = if selected || hovered { theme.fg } else { theme.fg_desc };
+                            clip.text(
+                                rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                m.label(),
+                                FontId::new(MENU_FONT_SIZE, FontFamily::Proportional),
+                                col.gamma_multiply(menu_t),
+                            );
+                            let Some(resp) = resp else { continue };
+                            let pos = Pos2::new(rect.left(), rect.bottom() + DROPDOWN_TOP_GAP);
+                            // Click toggles; hovering another label while a menu
+                            // is open switches to it (standard menu-bar behavior).
+                            let hover_switch = open_now.is_some() && !selected && resp.hovered();
+                            if resp.clicked() && !self.any_modal_open() {
+                                if selected {
+                                    let now = ctx.input(|i| i.time);
+                                    self.close_top_menu_with_animation(now);
+                                } else {
+                                    self.open_top_menu(m, pos, ctx);
+                                }
+                            } else if hover_switch {
                                 self.open_top_menu(m, pos, ctx);
                             }
-                        } else if hover_switch {
-                            self.open_top_menu(m, pos, ctx);
                         }
                     }
 
@@ -11881,7 +11925,8 @@ print("FAIL")
         }
     }
 
-    /// Static logo in the top-left brand area. Clickable to toggle shortcuts reference.
+    /// Static logo in the top-left brand area. Clicking it slides the menu
+    /// bar in and out; the shortcuts reference lives on F1.
     fn draw_logo(&mut self, ui: &mut egui::Ui, theme: &Theme) {
         ui.allocate_ui_with_layout(
             Vec2::new(BRAND_WIDTH, TOP_BAR_HEIGHT),
@@ -11908,9 +11953,14 @@ print("FAIL")
                     Color32::WHITE,
                 );
 
-                let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+                let response = response
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text("Menu  ·  F1 for shortcuts");
                 if response.clicked() && !self.menu_was_open_at_frame_start && !self.any_modal_open() {
-                    self.show_shortcuts_window = !self.show_shortcuts_window;
+                    self.menu_bar_open = !self.menu_bar_open;
+                    if !self.menu_bar_open {
+                        self.top_menu_open = None;
+                    }
                 }
             },
         );
@@ -11976,6 +12026,8 @@ print("FAIL")
 
                                 let categories = [
                                     ("FILE OPERATIONS", vec![
+                                        ("F1", "Toggle this shortcuts reference"),
+                                        ("Logo click", "Show / hide the menu bar"),
                                         ("⌘N", "New project dialog"),
                                         ("⌘O", "Open project file (.sqr)"),
                                         ("⌘S", "Save project"),
@@ -13221,6 +13273,12 @@ impl App {
             self.do_redo();
         }
 
+        // F1: keyboard shortcuts reference (moved off the logo click, which
+        // now owns the menu bar).
+        if ctx.input(|i| i.key_pressed(egui::Key::F1)) && !self.any_modal_open() {
+            self.show_shortcuts_window = !self.show_shortcuts_window;
+        }
+
         // File shortcuts: ⌘N / ⌘O / ⌘S / ⇧⌘S / ⌘E, Edit: ⌘V
         let file_new  = command && !shift && ctx.input(|i| i.key_pressed(egui::Key::N));
         let file_open = command && !shift && ctx.input(|i| i.key_pressed(egui::Key::O));
@@ -13464,23 +13522,6 @@ fn rich(text: &str, color: Color32, size: f32) -> RichText {
     RichText::new(text)
         .font(FontId::new(size, FontFamily::Proportional))
         .color(color)
-}
-
-fn top_menu_zone(ui: &mut egui::Ui, theme: &Theme, label: &str, selected: bool) -> egui::Response {
-    let size = Vec2::new(menu_zone_width(label), TOP_BAR_HEIGHT);
-    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
-    if selected && SELECTED_MENU_HAS_FILL {
-        ui.painter().rect_filled(rect, 0.0, theme.surface);
-    }
-    let is_active = selected || response.hovered();
-    ui.painter().text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        label,
-        FontId::new(MENU_FONT_SIZE, FontFamily::Proportional),
-        if is_active { theme.fg } else { theme.fg_desc },
-    );
-    response
 }
 
 fn dropdown_row(ui: &mut egui::Ui, theme: &Theme, label: &str, right: Option<&str>, enabled: bool) -> egui::Response {

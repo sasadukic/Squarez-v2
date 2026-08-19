@@ -395,7 +395,11 @@ pub fn draw(
         if let Some(texture) = canvas.texture.as_ref() {
             render::paint_scene(&painter, scene, texture.id());
         }
-        render::paint_wireframe(&painter, mesh, scene, &cam_copy, canvas_rect, theme);
+        // Flat mode is a clean preview: raw texel colors with no edge seams.
+        // Selection/hover overlays still draw, so the tools stay usable.
+        if !state.unlit {
+            render::paint_wireframe(&painter, mesh, scene, &cam_copy, canvas_rect, theme);
+        }
     }
 
     // ── Button strip ────────────────────────────────────────────────────────
