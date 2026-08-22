@@ -134,7 +134,11 @@ impl CanvasState {
             let mut pixels = vec![0u8; (width * height * 4) as usize];
             for y in 0..height {
                 for x in 0..width {
-                    let color = if (x + y) % 2 == 0 { theme.checker_dark } else { theme.checker_light };
+                    // Light on even parity, matching three_d::edit::default_texel —
+                    // the default face material uses these same two tones, so the
+                    // background and unpainted islands must agree on phase or the
+                    // atlas view reads as a broken checker.
+                    let color = if (x + y) % 2 == 0 { theme.checker_light } else { theme.checker_dark };
                     let idx = ((y * width + x) * 4) as usize;
                     pixels[idx] = color.r();
                     pixels[idx + 1] = color.g();

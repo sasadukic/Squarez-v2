@@ -1958,3 +1958,19 @@ fn load_normalizes_phase_flipped_default_checker() {
         "second pass is a no-op"
     );
 }
+
+#[test]
+fn canvas_checker_and_default_material_agree() {
+    // The default face material deliberately reuses the canvas transparency
+    // checker's two tones. The atlas view only reads as one continuous
+    // checker if both also agree on phase: light on even (x + y) parity.
+    // If this fails, unpainted islands render phase-inverted against the
+    // canvas background in texture view.
+    let theme = squarez::theme::Theme::default();
+    let light = [theme.checker_light.r(), theme.checker_light.g(), theme.checker_light.b(), 255];
+    let dark = [theme.checker_dark.r(), theme.checker_dark.g(), theme.checker_dark.b(), 255];
+    assert_eq!(squarez::three_d::DEFAULT_FACE_A, light, "tone A must equal checker_light");
+    assert_eq!(squarez::three_d::DEFAULT_FACE_B, dark, "tone B must equal checker_dark");
+    assert_eq!(squarez::three_d::edit::default_texel(0, 0), light, "even parity is light");
+    assert_eq!(squarez::three_d::edit::default_texel(1, 0), dark, "odd parity is dark");
+}
