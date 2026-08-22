@@ -352,6 +352,44 @@ pub fn heal_checker_rims(layer: &mut Layer, mesh: &mesh::Mesh) -> bool {
     changed
 }
 
+/// Re-phase pure-default islands. The placeholder checker is a material keyed
+/// to atlas parity ((x + y) % 2), but older builds moved it around as pixels,
+/// so a file can hold islands whose checker is uniformly phase-flipped. Those
+/// look fine in isolation yet jump by a texel the moment an edit refills them
+/// at true parity — so fix them at load. Any island containing a non-default
+/// tone is real paint and is left untouched.
+/// Returns true if anything changed.
+pub fn normalize_default_checker(layer: &mut Layer, mesh: &mesh::Mesh) -> bool {
+    let is_default = |c: Rgba| c == DEFAULT_FACE_A || c == DEFAULT_FACE_B;
+    let mut changed = false;
+    for face in &mesh.faces {
+        let isl = face.island;
+        let mut all_default = true;
+        'scan: for j in 0..isl.h {
+            for i in 0..isl.w {
+                if !is_default(layer.get_pixel((isl.x + i) as u32, (isl.y + j) as u32)) {
+                    all_default = false;
+                    break 'scan;
+                }
+            }
+        }
+        if !all_default {
+            continue;
+        }
+        for j in 0..isl.h {
+            for i in 0..isl.w {
+                let (x, y) = ((isl.x + i) as u32, (isl.y + j) as u32);
+                let want = edit::default_texel(x, y);
+                if layer.get_pixel(x, y) != want {
+                    layer.set_pixel(x, y, want);
+                    changed = true;
+                }
+            }
+        }
+    }
+    changed
+}
+
 /// Load-time migration: move a model laid out by the old shelf packer onto
 /// the projected layout, carrying its paint. No-op for files already laid out
 /// that way; returns true if the project was modified.
@@ -368,18 +406,17 @@ pub fn migrate_layout(project: &mut crate::project::Project) -> bool {
         return false;
     }
     let Some(mesh) = project.mesh3d.clone() else { return false };
-    if mesh.manual_layout {
-        // Hand-packed by the user — never "migrate" that back to the
-        // automatic arrangement.
-        return false;
-    }
     let atlas = (project.canvas_width, project.canvas_height);
-    if !edit::islands_need_repack(&mesh, atlas) {
-        // Already laid out — still heal any checker rims baked into painted
-        // faces by older builds (conservative + idempotent).
+    if mesh.manual_layout || !edit::islands_need_repack(&mesh, atlas) {
+        // Already laid out (or hand-packed by the user — never "migrate" that
+        // back to the automatic arrangement). Still heal any checker rims
+        // baked into painted faces by older builds, and re-phase pure-default
+        // islands copied out of parity (both conservative + idempotent).
         let frame = &mut project.animations[0].frames[0];
         if let Some(layer) = frame.layers.first_mut() {
-            if heal_checker_rims(layer, &mesh) {
+            let healed = heal_checker_rims(layer, &mesh);
+            let rephased = normalize_default_checker(layer, &mesh);
+            if healed || rephased {
                 frame.dirty = true;
                 return true;
             }

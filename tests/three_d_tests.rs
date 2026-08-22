@@ -1902,3 +1902,59 @@ fn default_checker_reflows_instead_of_traveling() {
         "hand-moved default island must re-flow, not phase-shift"
     );
 }
+
+#[test]
+fn load_normalizes_phase_flipped_default_checker() {
+    // Files written by older builds can hold pure-default islands whose
+    // checker is uniformly off atlas parity (e.g. carried through a v-flip
+    // copy). They look fine until an edit refills them at true parity and the
+    // pattern visibly jumps — so loading must re-phase them up front.
+    let atlas = (64u32, 64u32);
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands(atlas).unwrap();
+    let mut layer = Layer::new("Texture".to_string(), atlas.0, atlas.1);
+    squarez::three_d::paint_islands_checker(&mut layer, &mesh);
+
+    // Phase-flip face 0's island and paint a marker on face 2.
+    let flipped = mesh.faces[0].island;
+    for j in 0..flipped.h {
+        for i in 0..flipped.w {
+            let (x, y) = ((flipped.x + i) as u32, (flipped.y + j) as u32);
+            let want = squarez::three_d::edit::default_texel(x + 1, y);
+            layer.set_pixel(x, y, want);
+        }
+    }
+    let painted = mesh.faces[2].island;
+    layer.set_pixel(painted.x as u32 + 1, painted.y as u32 + 1, [200, 30, 30, 255]);
+    let painted_before: Vec<[u8; 4]> = (0..painted.h)
+        .flat_map(|j| (0..painted.w).map(move |i| (i, j)))
+        .map(|(i, j)| layer.get_pixel((painted.x + i) as u32, (painted.y + j) as u32))
+        .collect();
+
+    assert!(squarez::three_d::normalize_default_checker(&mut layer, &mesh));
+    for f in &mesh.faces {
+        let isl = f.island;
+        if isl == painted {
+            continue;
+        }
+        for j in 0..isl.h {
+            for i in 0..isl.w {
+                let (x, y) = ((isl.x + i) as u32, (isl.y + j) as u32);
+                assert_eq!(
+                    layer.get_pixel(x, y),
+                    squarez::three_d::edit::default_texel(x, y),
+                    "default island must be re-phased to atlas parity"
+                );
+            }
+        }
+    }
+    let painted_after: Vec<[u8; 4]> = (0..painted.h)
+        .flat_map(|j| (0..painted.w).map(move |i| (i, j)))
+        .map(|(i, j)| layer.get_pixel((painted.x + i) as u32, (painted.y + j) as u32))
+        .collect();
+    assert_eq!(painted_before, painted_after, "painted islands are untouched");
+    assert!(
+        !squarez::three_d::normalize_default_checker(&mut layer, &mesh),
+        "second pass is a no-op"
+    );
+}
