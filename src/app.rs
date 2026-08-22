@@ -12181,6 +12181,7 @@ print("FAIL")
                                         ("⌘A / ^A", "Select all models"),
                                         ("⌘D / ^D", "Duplicate selected models"),
                                         ("Tab", "Swap 3D view ↔ texture painting"),
+                                        ("Arrow keys", "Nudge selection 1 unit (view-relative)"),
                                         ("Drag island (Select/Move)", "Hand-pack the atlas in texture view"),
                                         ("Delete / Backspace", "Delete selected faces or vertices"),
                                         ("Shift + Click", "Add/remove from selection"),

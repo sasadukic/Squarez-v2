@@ -449,3 +449,81 @@ fn selection_made_in_3d_view_arrives_in_texture_view() {
         "the 3D selection and the texture-view selection are the same state"
     );
 }
+
+#[test]
+fn arrow_keys_nudge_the_selection_view_relative() {
+    use squarez::three_d::camera::SnapView;
+    let ctx = egui::Context::default();
+    let mut app = App::new_with(&ctx, None);
+    app.open_project_for_test(three_d_project());
+    app.active_tool = ActiveTool::Select3D;
+    // The first 15 frames force a zoom-to-fit that resets the camera; the
+    // nudge directions depend on the camera we set, so settle past them.
+    for _ in 0..16 {
+        frame(&ctx, &mut app, vec![], Modifiers::default());
+    }
+
+    let top_face = {
+        let mesh = app.project.mesh3d.as_ref().unwrap();
+        mesh.faces
+            .iter()
+            .position(|f| mesh.face_normal(f)[1] > 0.5)
+            .expect("cube has a top face") as u32
+    };
+    app.three_d.sel_faces = vec![top_face];
+
+    let arrow = |ctx: &egui::Context, app: &mut App, key: Key| {
+        frame(ctx, app, vec![
+            egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::default() },
+        ], Modifiers::default());
+        frame(ctx, app, vec![], Modifiers::default());
+    };
+    let top_y = |app: &App| {
+        let mesh = app.project.mesh3d.as_ref().unwrap();
+        let f = &mesh.faces[top_face as usize];
+        mesh.vertices[f.verts[0] as usize]
+    };
+
+    // Front view: ↑ is world +Y, → is world +X.
+    app.three_d.camera.snap_to(SnapView::Front);
+    let before = top_y(&app);
+    arrow(&ctx, &mut app, Key::ArrowUp);
+    let after = top_y(&app);
+    assert_eq!(
+        [after[0] - before[0], after[1] - before[1], after[2] - before[2]],
+        [0.0, 1.0, 0.0],
+        "front view: ArrowUp must move the face +Y"
+    );
+    let before = after;
+    arrow(&ctx, &mut app, Key::ArrowRight);
+    let after = top_y(&app);
+    assert_eq!(
+        [after[0] - before[0], after[1] - before[1], after[2] - before[2]],
+        [1.0, 0.0, 0.0],
+        "front view: ArrowRight must move the face +X"
+    );
+
+    // Top view: ↑ walks away from the viewer (world -Z).
+    app.three_d.camera.snap_to(SnapView::Top);
+    let before = after;
+    arrow(&ctx, &mut app, Key::ArrowUp);
+    let after = top_y(&app);
+    assert_eq!(
+        [after[0] - before[0], after[1] - before[1], after[2] - before[2]],
+        [0.0, 0.0, -1.0],
+        "top view: ArrowUp must move the face -Z (moved {:?})",
+        [after[0] - before[0], after[1] - before[1], after[2] - before[2]]
+    );
+
+    // Selection survives so nudges chain, and every step is one undo.
+    assert_eq!(app.three_d.sel_faces, vec![top_face]);
+    assert!(app.undo_stack.can_undo());
+    let before = after;
+    frame(&ctx, &mut app, vec![key_event_z(&ctx)], Modifiers::COMMAND);
+    let after = top_y(&app);
+    assert_eq!(
+        [after[0] - before[0], after[1] - before[1], after[2] - before[2]],
+        [0.0, 0.0, 1.0],
+        "one Cmd+Z must revert exactly the last nudge"
+    );
+}

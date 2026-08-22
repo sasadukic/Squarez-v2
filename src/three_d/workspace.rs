@@ -376,6 +376,78 @@ pub fn draw(
             state.sel_edges.clear();
             state.sel_faces.clear();
         }
+
+        // ── Arrow-key nudge ─────────────────────────────────────────────────
+        // Move the selection (vertices, edges or faces) one grid unit in the
+        // direction the arrow points ON SCREEN: screen-right and screen-up
+        // resolve to whichever world axes the camera currently shows, so in
+        // the Front view ←/→ is ±X and ↑/↓ is ±Y, in the Top view ↑ walks
+        // away from the viewer, and an orbit view snaps to the nearest axes.
+        let arrow = ui.input(|i| {
+            if i.key_pressed(egui::Key::ArrowRight) {
+                Some((1.0f32, 0.0f32))
+            } else if i.key_pressed(egui::Key::ArrowLeft) {
+                Some((-1.0, 0.0))
+            } else if i.key_pressed(egui::Key::ArrowUp) {
+                Some((0.0, 1.0))
+            } else if i.key_pressed(egui::Key::ArrowDown) {
+                Some((0.0, -1.0))
+            } else {
+                None
+            }
+        });
+        if let Some((sx, sy)) = arrow {
+            let nudge_verts: Vec<u32> = if !state.sel_verts.is_empty() {
+                state.sel_verts.clone()
+            } else if !state.sel_edges.is_empty() {
+                edge_selection_verts(&state.sel_edges)
+            } else if let Some(mesh) = project.mesh3d.as_ref() {
+                face_selection_verts(&state.sel_faces, mesh)
+            } else {
+                Vec::new()
+            };
+            let idle = state.drag.is_none() && state.op_drag.is_none();
+            if !nudge_verts.is_empty() && idle {
+                // Dominant world axis (signed) for a view-space direction.
+                let snap_axis = |v: [f32; 3]| -> [i32; 3] {
+                    let (ax, ay, az) = (v[0].abs(), v[1].abs(), v[2].abs());
+                    if ax >= ay && ax >= az {
+                        [v[0].signum() as i32, 0, 0]
+                    } else if ay >= az {
+                        [0, v[1].signum() as i32, 0]
+                    } else {
+                        [0, 0, v[2].signum() as i32]
+                    }
+                };
+                let right = snap_axis(state.camera.unview([1.0, 0.0, 0.0]));
+                let up = snap_axis(state.camera.unview([0.0, 1.0, 0.0]));
+                let delta = [
+                    (sx as i32) * right[0] + (sy as i32) * up[0],
+                    (sx as i32) * right[1] + (sy as i32) * up[1],
+                    (sx as i32) * right[2] + (sy as i32) * up[2],
+                ];
+                if delta != [0, 0, 0] {
+                    if let Some(before) = project.mesh3d.clone() {
+                        let kept_verts = state.sel_verts.clone();
+                        let kept_edges = state.sel_edges.clone();
+                        let kept_faces = state.sel_faces.clone();
+                        let li = project.active_layer;
+                        if let Some(outcome) =
+                            with_atlas_growth(project, li, |mesh, layer, atlas| {
+                                edit::move_vertices(mesh, layer, &nudge_verts, delta, atlas)
+                            })
+                        {
+                            commit_edit(state, project, undo, li, before, outcome, &mut output);
+                            // Identities survive a move — keep the selection
+                            // so the next arrow press continues the walk.
+                            state.sel_verts = kept_verts;
+                            state.sel_edges = kept_edges;
+                            state.sel_faces = kept_faces;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // ── Render base ─────────────────────────────────────────────────────────
