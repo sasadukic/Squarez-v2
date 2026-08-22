@@ -68,6 +68,7 @@ where
 
 /// Apply an edit outcome: write island pixels, swap in the new mesh, push
 /// one MeshEdit command, and adopt the outcome's selection.
+#[allow(clippy::too_many_arguments)]
 fn commit_edit(
     state: &mut ThreeDState,
     project: &mut Project,
