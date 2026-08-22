@@ -1826,3 +1826,79 @@ fn migration_respects_hand_packed_meshes() {
     );
     assert_eq!(p.mesh3d.as_ref().unwrap(), &before);
 }
+
+#[test]
+fn default_checker_reflows_instead_of_traveling() {
+    // The placeholder checker is a MATERIAL, not paint: after any move or
+    // resize, an untouched island must hold a fresh atlas-parity checker —
+    // carrying its pixels would land phase-flipped after an odd move and
+    // duplicate rows after a grow. Painted islands still carry 1:1.
+    let atlas = (64u32, 64u32);
+    let is_checker_exact = |layer: &Layer, isl: Island| -> bool {
+        (0..isl.h).all(|j| {
+            (0..isl.w).all(|i| {
+                let (x, y) = ((isl.x + i) as u32, (isl.y + j) as u32);
+                layer.get_pixel(x, y) == squarez::three_d::edit::default_texel(x, y)
+            })
+        })
+    };
+
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands(atlas).unwrap();
+    let mut layer = Layer::new("Texture".to_string(), atlas.0, atlas.1);
+    squarez::three_d::paint_islands_checker(&mut layer, &mesh);
+    // Paint one face so the carry path is exercised alongside the reflow path.
+    let painted = mesh.faces[2].island;
+    layer.set_pixel(painted.x as u32 + 1, painted.y as u32 + 1, [200, 30, 30, 255]);
+
+    // Odd-delta move: the classic phase-flip.
+    let out = squarez::three_d::edit::move_vertices(&mesh, &layer, &[0], [-1, 0, 0], atlas)
+        .expect("fits");
+    for &(x, y, _, new) in &out.pixel_edits {
+        layer.set_pixel(x, y, new);
+    }
+    let mesh = out.mesh;
+    for (fi, f) in mesh.faces.iter().enumerate() {
+        if fi == 2 {
+            continue;
+        }
+        assert!(
+            is_checker_exact(&layer, f.island),
+            "face {fi}: checker must stay atlas-parity continuous after a move"
+        );
+    }
+    assert_eq!(
+        layer.get_pixel(mesh.faces[2].island.x as u32 + 1, mesh.faces[2].island.y as u32 + 1),
+        [200, 30, 30, 255],
+        "painted islands still carry their pixels"
+    );
+
+    // Grow via scale: no duplicated clamp-extend rows on default islands.
+    let verts: Vec<u32> = (0..mesh.vertices.len() as u32).collect();
+    let out = squarez::three_d::edit::scale_verts(&mesh, &layer, &verts, 2, atlas).expect("fits");
+    for &(x, y, _, new) in &out.pixel_edits {
+        layer.set_pixel(x, y, new);
+    }
+    let mesh = out.mesh;
+    for (fi, f) in mesh.faces.iter().enumerate() {
+        if fi == 2 {
+            continue;
+        }
+        assert!(
+            is_checker_exact(&layer, f.island),
+            "face {fi}: checker must be regular after a grow (no doubled rows)"
+        );
+    }
+
+    // Hand-packing follows the same rule.
+    let hand = squarez::three_d::edit::move_islands(&mesh, &layer, &[1], (7, 3), atlas)
+        .expect("fits");
+    let mut layer2 = layer.clone();
+    for &(x, y, _, new) in &hand.pixel_edits {
+        layer2.set_pixel(x, y, new);
+    }
+    assert!(
+        is_checker_exact(&layer2, hand.mesh.faces[1].island),
+        "hand-moved default island must re-flow, not phase-shift"
+    );
+}

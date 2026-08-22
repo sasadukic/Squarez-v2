@@ -207,13 +207,31 @@ pub fn move_islands(
     for &fi in &sel {
         let src = mesh.faces[fi as usize].island;
         let dst = out_mesh.faces[fi as usize].island;
+        // Placeholder-checker islands re-flow instead of copying, so the
+        // pattern stays phase-continuous wherever the island is dropped
+        // (same rule as relayout).
+        let all_default = {
+            let mut all = true;
+            'scan: for j in 0..src.h {
+                for i in 0..src.w {
+                    let c = rec.read((src.x + i) as u32, (src.y + j) as u32);
+                    if c != DEFAULT_FACE_A && c != DEFAULT_FACE_B {
+                        all = false;
+                        break 'scan;
+                    }
+                }
+            }
+            all
+        };
         for j in 0..src.h {
             for i in 0..src.w {
-                writes.push((
-                    (dst.x + i) as u32,
-                    (dst.y + j) as u32,
-                    rec.read((src.x + i) as u32, (src.y + j) as u32),
-                ));
+                let (ax, ay) = ((dst.x + i) as u32, (dst.y + j) as u32);
+                let c = if all_default {
+                    default_texel(ax, ay)
+                } else {
+                    rec.read((src.x + i) as u32, (src.y + j) as u32)
+                };
+                writes.push((ax, ay, c));
             }
         }
     }
@@ -283,20 +301,41 @@ fn relayout(
             {
                 (Island::default(), false, false)
             }
-            // Nothing moved and nothing to mirror: skip the copy entirely, so
-            // an unchanged layout costs no pixel edits and no undo bytes.
-            PaintSource::Keep { src, flip_v: false } if src == dst => continue,
             PaintSource::Keep { src, flip_v } => (src, flip_v, false),
             PaintSource::Crop { src } => (src, false, true),
             PaintSource::Checker => (Island::default(), false, false),
         };
-        if src.w == 0 || src.h == 0 {
+        // The default checker is a placeholder MATERIAL, not paint: carrying
+        // its pixels breaks the pattern (an odd move lands phase-flipped
+        // against the atlas-global parity; a grow duplicates the last row via
+        // clamp-extend). An island still purely in the two default tones is
+        // therefore refilled in place instead of copied — the pattern re-flows
+        // continuously wherever the island lands. Painted islands carry 1:1.
+        let src_is_default = src.w > 0 && {
+            let mut all = true;
+            'scan: for j in 0..src.h {
+                for i in 0..src.w {
+                    let c = rec.read((src.x + i) as u32, (src.y + j) as u32);
+                    if c != DEFAULT_FACE_A && c != DEFAULT_FACE_B {
+                        all = false;
+                        break 'scan;
+                    }
+                }
+            }
+            all
+        };
+        if src.w == 0 || src.h == 0 || src_is_default {
             for j in 0..dst.h {
                 for i in 0..dst.w {
                     let (ax, ay) = ((dst.x + i) as u32, (dst.y + j) as u32);
                     writes.push((ax, ay, default_texel(ax, ay)));
                 }
             }
+            continue;
+        }
+        // Nothing moved and nothing to mirror: skip the copy entirely, so an
+        // unchanged layout costs no pixel edits and no undo bytes.
+        if !resample && !flip_v && src == dst {
             continue;
         }
         for j in 0..dst.h {
