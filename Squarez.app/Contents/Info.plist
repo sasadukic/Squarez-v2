@@ -26,5 +26,56 @@
     <false/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Squarez Project</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>CFBundleTypeIconFile</key>
+            <string>AppIcon</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>com.sasadukic.squarez.sqr</string>
+            </array>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>3D Model</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.geometry-definition-format</string>
+            </array>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+        </dict>
+    </array>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.sasadukic.squarez.sqr</string>
+            <key>UTTypeDescription</key>
+            <string>Squarez Project</string>
+            <key>UTTypeIconFile</key>
+            <string>AppIcon</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>sqr</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
 </dict>
 </plist>
