@@ -50,6 +50,21 @@ impl SnapView {
     }
 }
 
+/// How view-space points reach the screen. Orthographic is the native mode
+/// (snap views promise exact pixels-per-texel); Perspective is a preview
+/// projection with a fixed eye distance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Projection {
+    #[default]
+    Orthographic,
+    Perspective,
+}
+
+/// Eye distance (world units, view space) for the perspective projection.
+/// At the plane through the orbit center the scale equals `zoom`, so
+/// toggling projections keeps the model's apparent size.
+pub const PERSP_DIST: f32 = 64.0;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Camera3D {
     pub yaw: f32,
@@ -58,11 +73,18 @@ pub struct Camera3D {
     pub zoom: f32,
     /// Pan in screen pixels.
     pub offset: Vec2,
+    pub projection: Projection,
 }
 
 impl Default for Camera3D {
     fn default() -> Self {
-        Self { yaw: HOME_YAW, pitch: HOME_PITCH, zoom: 12.0, offset: Vec2::ZERO }
+        Self {
+            yaw: HOME_YAW,
+            pitch: HOME_PITCH,
+            zoom: 12.0,
+            offset: Vec2::ZERO,
+            projection: Projection::Orthographic,
+        }
     }
 }
 
@@ -106,7 +128,23 @@ impl Camera3D {
     pub fn project(&self, p: [f32; 3], rect: Rect) -> (Pos2, f32) {
         let v = self.view(p);
         let center = rect.center() + self.offset;
-        (Pos2::new(center.x + v[0] * self.zoom, center.y - v[1] * self.zoom), v[2])
+        let s = match self.projection {
+            Projection::Orthographic => self.zoom,
+            // Eye sits at view-space z = PERSP_DIST looking at the origin;
+            // the denominator is clamped so geometry approaching (or behind)
+            // the eye degrades instead of exploding across the screen.
+            Projection::Perspective => self.zoom * PERSP_DIST / (PERSP_DIST - v[2]).max(4.0),
+        };
+        (Pos2::new(center.x + v[0] * s, center.y - v[1] * s), v[2])
+    }
+
+    /// Jump to the classic isometric angles (the home orbit), quantized like
+    /// a snap view: integer zoom, whole-pixel offset.
+    pub fn snap_isometric(&mut self) {
+        self.yaw = HOME_YAW;
+        self.pitch = HOME_PITCH;
+        self.zoom = self.zoom.round().clamp(MIN_ZOOM, MAX_ZOOM);
+        self.offset = Vec2::new(self.offset.x.round(), self.offset.y.round());
     }
 
     /// Jump to a snap view: exact angles, integer zoom, whole-pixel offset —

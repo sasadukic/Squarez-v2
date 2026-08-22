@@ -92,7 +92,7 @@ fn render(mesh: &Mesh, cam: &Camera3D, zbuffer: bool) -> Vec<u32> {
 
 fn assert_painter_matches_zbuffer(name: &str, mesh: &Mesh, angles: &[(f32, f32)]) {
     for &(yaw, pitch) in angles {
-        let cam = Camera3D { yaw, pitch, zoom: 12.0, offset: Vec2::ZERO };
+        let cam = Camera3D { yaw, pitch, zoom: 12.0, offset: Vec2::ZERO, ..Default::default() };
         let painter = render(mesh, &cam, false);
         let truth = render(mesh, &cam, true);
         let bad = painter.iter().zip(truth.iter()).filter(|(a, b)| a != b).count();
@@ -149,7 +149,7 @@ fn interiors_still_draw_before_all_fronts() {
     let mut mesh = Mesh::cube(8);
     mesh.allocate_all_islands(ATLAS).unwrap();
     let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(SIZE as f32, SIZE as f32));
-    let cam = Camera3D { yaw: 0.7, pitch: 0.5, zoom: 12.0, offset: Vec2::ZERO };
+    let cam = Camera3D { yaw: 0.7, pitch: 0.5, zoom: 12.0, offset: Vec2::ZERO, ..Default::default() };
     let scene = build_scene(&mesh, &cam, rect, ATLAS);
     let first_front = scene.tris.iter().position(|t| t.front).unwrap_or(scene.tris.len());
     assert!(

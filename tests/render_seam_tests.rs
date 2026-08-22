@@ -59,7 +59,7 @@ fn count_violations(mesh: &Mesh, pixels: &[u8], expected: impl Fn(u32) -> Rgba) 
         .collect();
     for (yaw, pitch) in angles {
         for zoom in [12.0f32, 5.0] {
-            let cam = Camera3D { yaw, pitch, zoom, offset: Vec2::ZERO };
+            let cam = Camera3D { yaw, pitch, zoom, offset: Vec2::ZERO, ..Default::default() };
             let scene = build_scene(mesh, &cam, rect, ATLAS);
             for tri in &scene.tris {
                 let want = expected(tri.face);
@@ -123,6 +123,7 @@ fn count_island_escapes(mesh: &Mesh, jitter: f32) -> usize {
             pitch: 0.6154,
             zoom: 12.0,
             offset: Vec2::ZERO,
+            ..Default::default()
         };
         let scene = build_scene(mesh, &cam, rect, ATLAS);
         for tri in &scene.tris {

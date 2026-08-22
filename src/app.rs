@@ -2960,6 +2960,34 @@ impl App {
                                 {
                                     self.three_d.shading = self.three_d.shading.toggled();
                                 }
+                                {
+                                    use crate::three_d::camera::Projection;
+                                    let persp =
+                                        self.three_d.camera.projection == Projection::Perspective;
+                                    if dropdown_row(
+                                        ui,
+                                        &theme,
+                                        "Perspective",
+                                        window_check(is_3d && persp),
+                                        is_3d,
+                                    )
+                                    .clicked()
+                                        && is_3d
+                                    {
+                                        self.three_d.camera.projection = if persp {
+                                            Projection::Orthographic
+                                        } else {
+                                            Projection::Perspective
+                                        };
+                                    }
+                                }
+                                if dropdown_row(ui, &theme, "Isometric view", None, is_3d)
+                                    .clicked()
+                                    && is_3d
+                                {
+                                    self.three_d.camera.snap_isometric();
+                                    close_menu = true;
+                                }
                             }
                         }
 

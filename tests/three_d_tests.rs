@@ -117,7 +117,7 @@ use squarez::three_d::camera::{Camera3D, SnapView};
 use squarez::three_d::render::build_scene;
 
 fn cam_at(view: SnapView, zoom: f32) -> Camera3D {
-    let mut cam = Camera3D { yaw: 0.0, pitch: 0.0, zoom, offset: Vec2::ZERO };
+    let mut cam = Camera3D { yaw: 0.0, pitch: 0.0, zoom, offset: Vec2::ZERO, ..Default::default() };
     cam.snap_to(view);
     cam
 }
@@ -160,7 +160,7 @@ fn top_view_looks_down() {
 
 #[test]
 fn snap_quantizes_zoom_and_offset() {
-    let mut cam = Camera3D { yaw: 0.3, pitch: 0.2, zoom: 11.7, offset: Vec2::new(3.4, -2.6) };
+    let mut cam = Camera3D { yaw: 0.3, pitch: 0.2, zoom: 11.7, offset: Vec2::new(3.4, -2.6), ..Default::default() };
     cam.snap_to(SnapView::Front);
     assert_eq!(cam.zoom, 12.0);
     assert_eq!(cam.offset, Vec2::new(3.0, -3.0));
@@ -1370,10 +1370,10 @@ fn outline_hugs_the_visible_boundary() {
     let sel: Vec<u32> = (0..mesh.faces.len() as u32).collect();
 
     for (i, cam) in [
-        Camera3D { yaw: 0.7, pitch: 0.5, zoom: 22.0, offset: Vec2::ZERO },
-        Camera3D { yaw: 0.0, pitch: 0.0, zoom: 22.0, offset: Vec2::ZERO },
-        Camera3D { yaw: 1.6, pitch: 0.2, zoom: 22.0, offset: Vec2::ZERO },
-        Camera3D { yaw: 2.9, pitch: 0.9, zoom: 22.0, offset: Vec2::ZERO },
+        Camera3D { yaw: 0.7, pitch: 0.5, zoom: 22.0, offset: Vec2::ZERO, ..Default::default() },
+        Camera3D { yaw: 0.0, pitch: 0.0, zoom: 22.0, offset: Vec2::ZERO, ..Default::default() },
+        Camera3D { yaw: 1.6, pitch: 0.2, zoom: 22.0, offset: Vec2::ZERO, ..Default::default() },
+        Camera3D { yaw: 2.9, pitch: 0.9, zoom: 22.0, offset: Vec2::ZERO, ..Default::default() },
     ]
     .into_iter()
     .enumerate()
@@ -1420,7 +1420,7 @@ fn object_outline_is_a_closed_loop() {
     // A silhouette is the boundary of a filled region, so it must close: every
     // vertex it touches is shared by an even number of outline edges. An
     // interior contour leaking in shows up here as a dangling end.
-    let cam = Camera3D { yaw: 0.7, pitch: 0.5, zoom: 22.0, offset: Vec2::ZERO };
+    let cam = Camera3D { yaw: 0.7, pitch: 0.5, zoom: 22.0, offset: Vec2::ZERO, ..Default::default() };
     for (name, mesh) in [
         ("cube", Mesh::cube(8)),
         ("recessed cube", recessed_cube()),
@@ -1445,7 +1445,7 @@ fn object_outline_is_a_closed_loop() {
 fn object_outline_still_traces_convex_shapes() {
     // The fix must not thin out outlines that were already correct: a convex
     // primitive has no interior contours, so nothing should be dropped.
-    let cam = Camera3D { yaw: 0.7, pitch: 0.5, zoom: 22.0, offset: Vec2::ZERO };
+    let cam = Camera3D { yaw: 0.7, pitch: 0.5, zoom: 22.0, offset: Vec2::ZERO, ..Default::default() };
     for (name, mesh, want) in [
         ("cube", Mesh::cube(8), 6),
         ("sphere", Mesh::sphere(8), 14),
@@ -1583,6 +1583,7 @@ fn group_outline_never_crosses_nearer_geometry() {
             pitch: 0.45,
             zoom: 12.0,
             offset: Vec2::ZERO,
+            ..Default::default()
         };
         let scene = build_scene(&mesh, &cam, rect, LAY_ATLAS);
         let segments =
@@ -1647,6 +1648,7 @@ fn outline_segments_reach_their_corners() {
                 pitch: 0.5,
                 zoom: 14.0,
                 offset: Vec2::ZERO,
+                ..Default::default()
             };
             let scene = build_scene(&mesh, &cam, rect, LAY_ATLAS);
             let sel: Vec<u32> = (0..mesh.faces.len() as u32).collect();
@@ -1704,6 +1706,7 @@ fn group_outline_has_no_dangling_ends() {
             pitch: 0.45,
             zoom: 12.0,
             offset: Vec2::ZERO,
+            ..Default::default()
         };
         let scene = build_scene(&mesh, &cam, rect, LAY_ATLAS);
         let segments =
@@ -1975,4 +1978,40 @@ fn canvas_checker_and_default_material_agree() {
     assert_eq!(squarez::three_d::DEFAULT_FACE_B, dark, "tone B must equal checker_dark");
     assert_eq!(squarez::three_d::edit::default_texel(0, 0), light, "even parity is light");
     assert_eq!(squarez::three_d::edit::default_texel(1, 0), dark, "odd parity is dark");
+}
+
+#[test]
+fn perspective_foreshortens_and_ortho_does_not() {
+    use squarez::three_d::camera::{Camera3D, Projection};
+    let rect = egui::Rect::from_min_size(Pos2::ZERO, egui::Vec2::new(400.0, 400.0));
+    let mut cam = Camera3D { yaw: 0.0, pitch: 0.0, zoom: 10.0, ..Default::default() };
+
+    // Two points at the same world x, one nearer the camera (front view: +z
+    // is toward the eye).
+    let near = [4.0, 0.0, 8.0];
+    let far = [4.0, 0.0, -8.0];
+
+    let (pn, dn) = cam.project(near, rect);
+    let (pf, df) = cam.project(far, rect);
+    assert!(dn > df, "depth must still order near in front of far");
+    assert_eq!(pn.x, pf.x, "orthographic: equal world x projects to equal screen x");
+
+    cam.projection = Projection::Perspective;
+    let (pn, dn2) = cam.project(near, rect);
+    let (pf, df2) = cam.project(far, rect);
+    assert!(dn2 > df2, "perspective keeps the same depth ordering");
+    let cx = rect.center().x;
+    assert!(
+        (pn.x - cx) > (pf.x - cx),
+        "perspective: the nearer point must sit farther from the view center ({} vs {})",
+        pn.x - cx,
+        pf.x - cx
+    );
+
+    // Isometric snap restores the classic angles with quantized zoom.
+    cam.zoom = 11.7;
+    cam.snap_isometric();
+    assert_eq!(cam.yaw, squarez::three_d::camera::HOME_YAW);
+    assert_eq!(cam.pitch, squarez::three_d::camera::HOME_PITCH);
+    assert_eq!(cam.zoom, 12.0);
 }
