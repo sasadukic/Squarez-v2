@@ -369,6 +369,11 @@ pub fn migrate_layout(project: &mut crate::project::Project) -> bool {
         return false;
     }
     let Some(mesh) = project.mesh3d.clone() else { return false };
+    if mesh.manual_layout {
+        // Hand-packed by the user — never "migrate" that back to the
+        // automatic arrangement.
+        return false;
+    }
     let atlas = (project.canvas_width, project.canvas_height);
     if !edit::islands_need_repack(&mesh, atlas) {
         // Already laid out — still heal any checker rims baked into painted

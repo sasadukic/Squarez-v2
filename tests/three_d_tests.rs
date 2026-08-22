@@ -1738,3 +1738,106 @@ fn group_outline_has_no_dangling_ends() {
         }
     }
 }
+
+// ── Hand-packed island layout ────────────────────────────────────────────────
+
+#[test]
+fn move_islands_carries_paint_and_marks_manual() {
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands(LAY_ATLAS).unwrap();
+    let mut layer = Layer::new("Texture".to_string(), LAY_ATLAS.0, LAY_ATLAS.1);
+    let src = mesh.faces[0].island;
+    layer.set_pixel(src.x as u32 + 2, src.y as u32 + 3, [200, 10, 10, 255]);
+
+    let out = squarez::three_d::edit::move_islands(&mesh, &layer, &[0], (40, 60), LAY_ATLAS)
+        .expect("fits");
+    assert!(out.mesh.manual_layout, "a hand move must flag the mesh as hand-packed");
+    let dst = out.mesh.faces[0].island;
+    assert_eq!((dst.x, dst.y), (src.x + 40, src.y + 60));
+    assert_eq!((dst.w, dst.h), (src.w, src.h), "size never changes on a move");
+
+    for &(x, y, _, new) in &out.pixel_edits {
+        layer.set_pixel(x, y, new);
+    }
+    assert_eq!(
+        layer.get_pixel(dst.x as u32 + 2, dst.y as u32 + 3),
+        [200, 10, 10, 255],
+        "the paint must travel with the island"
+    );
+    assert_eq!(
+        layer.get_pixel(src.x as u32 + 2, src.y as u32 + 3),
+        [0, 0, 0, 0],
+        "vacated ground must be cleared"
+    );
+
+    // A move that would leave the atlas is refused, not clamped into garbage.
+    let noop =
+        squarez::three_d::edit::move_islands(&out.mesh, &layer, &[0], (30000, 0), LAY_ATLAS)
+            .expect("returns unchanged");
+    assert_eq!(noop.mesh, out.mesh);
+}
+
+#[test]
+fn edits_leave_hand_packed_islands_alone() {
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands(LAY_ATLAS).unwrap();
+    let layer = Layer::new("Texture".to_string(), LAY_ATLAS.0, LAY_ATLAS.1);
+
+    // Hand-pack one island somewhere non-canonical.
+    let moved = squarez::three_d::edit::move_islands(&mesh, &layer, &[0], (100, 100), LAY_ATLAS)
+        .expect("fits")
+        .mesh;
+    let packed = moved.faces[0].island;
+
+    // An edit elsewhere (extrude the top) must not touch it, and the new
+    // side faces must land in free space, not on top of anything.
+    let out =
+        squarez::three_d::edit::extrude_faces_n(&moved, &layer, &[1], 2, LAY_ATLAS).expect("fits");
+    assert!(out.mesh.manual_layout, "manual mode survives edits");
+    assert_eq!(
+        out.mesh.faces[0].island, packed,
+        "the hand-packed island must stay exactly where the user put it"
+    );
+    for (fi, face) in out.mesh.faces.iter().enumerate() {
+        let i = face.island;
+        assert!(i.w >= 1 && i.h >= 1, "face {fi} degenerate island");
+        assert!(
+            (i.x + i.w) as u32 <= LAY_ATLAS.0 && (i.y + i.h) as u32 <= LAY_ATLAS.1,
+            "face {fi} island {i:?} out of atlas"
+        );
+    }
+    // New faces (indices >= 6) must not overlap any kept island.
+    for fi in 6..out.mesh.faces.len() {
+        let n = out.mesh.faces[fi].island;
+        for fj in 0..6 {
+            let o = out.mesh.faces[fj].island;
+            let overlap =
+                n.x < o.x + o.w && o.x < n.x + n.w && n.y < o.y + o.h && o.y < n.y + n.h;
+            assert!(!overlap, "auto-placed face {fi} {n:?} overlaps kept island {o:?}");
+        }
+    }
+}
+
+#[test]
+fn migration_respects_hand_packed_meshes() {
+    let mut p = squarez::project::Project::new_with_mode(
+        LAY_ATLAS.0,
+        LAY_ATLAS.1,
+        "manual".to_string(),
+        squarez::project::ProjectMode::ThreeD,
+    );
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands(LAY_ATLAS).unwrap();
+    let layer = Layer::new("Texture".to_string(), LAY_ATLAS.0, LAY_ATLAS.1);
+    let moved = squarez::three_d::edit::move_islands(&mesh, &layer, &[0], (77, 33), LAY_ATLAS)
+        .expect("fits")
+        .mesh;
+    let before = moved.clone();
+    p.mesh3d = Some(moved);
+
+    assert!(
+        !squarez::three_d::migrate_layout(&mut p),
+        "load migration must not touch a hand-packed mesh"
+    );
+    assert_eq!(p.mesh3d.as_ref().unwrap(), &before);
+}

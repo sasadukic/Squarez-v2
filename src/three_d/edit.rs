@@ -99,8 +99,163 @@ fn keep_all(mesh: &Mesh) -> Vec<PaintSource> {
     mesh.faces.iter().map(|f| PaintSource::keep(f.island)).collect()
 }
 
-/// Move every island to the position its face projects to, carrying the
-/// texels named by `sources` (index-aligned with `mesh.faces`) along with it.
+/// Layout for a hand-packed mesh: every correctly-sized island stays put;
+/// faces that are new or changed size get the first free rectangle found by
+/// scanning the atlas (GUTTER from the border and from every kept island —
+/// overlap between *hand-placed* islands is the user's own choice and is
+/// preserved, but automatic placement never creates one).
+fn manual_plan(mesh: &Mesh, atlas: (u32, u32)) -> Result<super::layout::Layout, AtlasFull> {
+    use super::mesh::GUTTER;
+    let mut islands: Vec<Island> = Vec::with_capacity(mesh.faces.len());
+    let mut pending: Vec<usize> = Vec::new();
+    for (fi, face) in mesh.faces.iter().enumerate() {
+        let (_, _, w, h) = mesh.face_uv_bounds(face);
+        if face.island.w == w && face.island.h == h && face.island.w > 0 {
+            islands.push(face.island);
+        } else {
+            islands.push(Island::default());
+            pending.push(fi);
+        }
+    }
+
+    let (aw, ah) = (atlas.0.min(u16::MAX as u32) as u16, atlas.1.min(u16::MAX as u32) as u16);
+    for fi in pending {
+        let (_, _, w, h) = mesh.face_uv_bounds(&mesh.faces[fi]);
+        let fits = |x: u16, y: u16| -> bool {
+            if x + w + GUTTER > aw || y + h + GUTTER > ah {
+                return false;
+            }
+            !islands.iter().any(|o| {
+                o.w > 0
+                    && x < o.x + o.w + GUTTER
+                    && o.x < x + w + GUTTER
+                    && y < o.y + o.h + GUTTER
+                    && o.y < y + h + GUTTER
+            })
+        };
+        let mut found = None;
+        'scan: for y in (GUTTER..ah.saturating_sub(h)).step_by(2) {
+            for x in (GUTTER..aw.saturating_sub(w)).step_by(2) {
+                if fits(x, y) {
+                    found = Some(Island { x, y, w, h });
+                    break 'scan;
+                }
+            }
+        }
+        match found {
+            Some(isl) => islands[fi] = isl,
+            None => {
+                return Err(AtlasFull {
+                    need_w: atlas.0,
+                    need_h: atlas.1 + (h + 2 * GUTTER) as u32,
+                })
+            }
+        }
+    }
+    Ok(super::layout::Layout {
+        islands,
+        cursor: mesh.atlas_cursor,
+        overflowed: Vec::new(),
+    })
+}
+
+/// Shift the selected faces' islands by whole texels — hand-packing. Texels
+/// travel with their island; vacated ground not covered by any island
+/// afterwards is cleared to transparent. Marks the mesh as hand-packed, which
+/// tells every later relayout and the load-time migration to keep its hands
+/// off the arrangement.
+pub fn move_islands(
+    mesh: &Mesh,
+    layer: &Layer,
+    faces: &[u32],
+    delta: (i32, i32),
+    atlas: (u32, u32),
+) -> Result<EditOutcome, AtlasFull> {
+    let mut sel: Vec<u32> = faces
+        .iter()
+        .copied()
+        .filter(|&f| (f as usize) < mesh.faces.len())
+        .collect();
+    sel.sort_unstable();
+    sel.dedup();
+    if sel.is_empty() || delta == (0, 0) {
+        return Ok(EditOutcome { mesh: mesh.clone(), ..Default::default() });
+    }
+
+    let mut out_mesh = mesh.clone();
+    out_mesh.manual_layout = true;
+    // Every selected island must stay inside the atlas after the shift.
+    for &fi in &sel {
+        let isl = mesh.faces[fi as usize].island;
+        let nx = isl.x as i32 + delta.0;
+        let ny = isl.y as i32 + delta.1;
+        if nx < 0
+            || ny < 0
+            || nx as u32 + isl.w as u32 > atlas.0
+            || ny as u32 + isl.h as u32 > atlas.1
+        {
+            return Ok(EditOutcome { mesh: mesh.clone(), ..Default::default() });
+        }
+        out_mesh.faces[fi as usize].island = Island { x: nx as u16, y: ny as u16, ..isl };
+    }
+
+    // Carry the texels: read all sources from the pristine layer first (the
+    // move is a permutation), then write, then clear vacated ground that no
+    // island covers any more.
+    let mut rec = PixelRecorder::new(layer);
+    let mut writes: Vec<(u32, u32, Rgba)> = Vec::new();
+    for &fi in &sel {
+        let src = mesh.faces[fi as usize].island;
+        let dst = out_mesh.faces[fi as usize].island;
+        for j in 0..src.h {
+            for i in 0..src.w {
+                writes.push((
+                    (dst.x + i) as u32,
+                    (dst.y + j) as u32,
+                    rec.read((src.x + i) as u32, (src.y + j) as u32),
+                ));
+            }
+        }
+    }
+    let covered = |x: u32, y: u32| -> bool {
+        out_mesh.faces.iter().any(|f| {
+            let o = f.island;
+            o.w > 0
+                && x >= o.x as u32
+                && y >= o.y as u32
+                && x < (o.x + o.w) as u32
+                && y < (o.y + o.h) as u32
+        })
+    };
+    for &fi in &sel {
+        let src = mesh.faces[fi as usize].island;
+        for j in 0..src.h {
+            for i in 0..src.w {
+                let (x, y) = ((src.x + i) as u32, (src.y + j) as u32);
+                if !covered(x, y) {
+                    writes.push((x, y, [0, 0, 0, 0]));
+                }
+            }
+        }
+    }
+    for (x, y, c) in writes {
+        rec.write(x, y, c);
+    }
+    Ok(EditOutcome {
+        mesh: out_mesh,
+        pixel_edits: rec.edits,
+        select_faces: sel,
+        select_verts: Vec::new(),
+    })
+}
+
+/// Decide where every island goes, then carry the texels named by `sources`
+/// (index-aligned with `mesh.faces`) along.
+///
+/// Automatic meshes get the projected layout. A hand-packed mesh
+/// (`manual_layout`) keeps every island exactly where the user put it; only
+/// faces whose island is missing or no longer fits their size get a fresh
+/// spot, found by scanning for free space rather than replanning everything.
 ///
 /// Every source texel is read *before* any is written: relayout is a
 /// permutation, so a texel about to be overwritten may still be another
@@ -112,7 +267,11 @@ fn relayout(
     sources: &[PaintSource],
     atlas: (u32, u32),
 ) -> Result<(), AtlasFull> {
-    let plan = super::layout::plan(mesh, atlas)?;
+    let plan = if mesh.manual_layout {
+        manual_plan(mesh, atlas)?
+    } else {
+        super::layout::plan(mesh, atlas)?
+    };
     let mut writes: Vec<(u32, u32, Rgba)> = Vec::new();
 
     for (fi, &dst) in plan.islands.iter().enumerate() {
@@ -980,7 +1139,7 @@ pub fn scale_verts(
 /// of islands sat at least GUTTER apart, which a projected layout violates by
 /// design: coplanar neighbours abut so their texture stays continuous.
 pub fn islands_need_repack(mesh: &Mesh, atlas: (u32, u32)) -> bool {
-    !super::layout::is_canonical(mesh, atlas)
+    !mesh.manual_layout && !super::layout::is_canonical(mesh, atlas)
 }
 
 /// Move every island to its projected position, carrying each face's paint.
