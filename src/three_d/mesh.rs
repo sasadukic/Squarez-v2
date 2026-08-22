@@ -195,6 +195,15 @@ pub struct Mesh {
     pub vertices: Vec<[f32; 3]>,
     pub faces: Vec<Face>,
     pub atlas_cursor: AtlasCursor,
+    /// The user has hand-packed islands: the automatic projected layout must
+    /// keep its hands off. Edits keep existing islands where they are (new or
+    /// resized faces get free space found by scanning), and load-time
+    /// migration leaves the arrangement alone.
+    ///
+    /// NOTE this field is why `.sqr` is at format version 3 — bincode is
+    /// positional, so any change to this struct needs a version bump plus a
+    /// decode mirror for the previous layout (see io/sqr.rs).
+    pub manual_layout: bool,
 }
 
 impl Mesh {
@@ -229,6 +238,7 @@ impl Mesh {
                 .map(|q| Face { verts: q.to_vec(), island: Island::default() })
                 .collect(),
             atlas_cursor: AtlasCursor::default(),
+            manual_layout: false,
         }
     }
 
@@ -240,6 +250,7 @@ impl Mesh {
             vertices: vec![[-h, 0.0, -h], [h, 0.0, -h], [h, 0.0, h], [-h, 0.0, h]],
             faces: vec![Face { verts: vec![0, 3, 2, 1], island: Island::default() }],
             atlas_cursor: AtlasCursor::default(),
+            manual_layout: false,
         }
     }
 
@@ -307,7 +318,7 @@ impl Mesh {
         Self::band(&mut faces, &bottom, &top);
         Self::cap(&mut faces, &bottom, false);
         Self::cap(&mut faces, &top, true);
-        Mesh { vertices, faces, atlas_cursor: AtlasCursor::default() }
+        Mesh { vertices, faces, atlas_cursor: AtlasCursor::default(), manual_layout: false }
     }
 
     /// 8-sided default cylinder.
@@ -333,7 +344,7 @@ impl Mesh {
         Self::band(&mut faces, &r2, &r3);
         Self::cap(&mut faces, &r0, false);
         Self::cap(&mut faces, &r3, true);
-        Mesh { vertices, faces, atlas_cursor: AtlasCursor::default() }
+        Mesh { vertices, faces, atlas_cursor: AtlasCursor::default(), manual_layout: false }
     }
 
     /// 8-sided default sphere.

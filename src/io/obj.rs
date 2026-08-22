@@ -206,7 +206,7 @@ pub fn load_obj(path: &Path) -> Result<Project, BoxError> {
         }
     }
 
-    let mut mesh = Mesh { vertices, faces, atlas_cursor: AtlasCursor::default() };
+    let mut mesh = Mesh { vertices, faces, atlas_cursor: AtlasCursor::default(), manual_layout: false };
     if islands_ok {
         // Future allocations go on a fresh row below every existing island.
         let max_bottom = mesh

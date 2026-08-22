@@ -386,3 +386,102 @@ fn loads_v1_files_with_mode_and_stack_limit() {
     assert_eq!(p.mode, squarez::project::ProjectMode::SpriteStack);
     assert_eq!(p.sprite_stack_max_layers, Some(32), "stack limit must survive");
 }
+
+// ── v2 payload: current Project but Mesh without manual_layout ───────────────
+
+use squarez::three_d::mesh::{AtlasCursor as MeshCursor, Face as MeshFace, Mesh as Mesh3};
+
+#[derive(Serialize)]
+struct V2Mesh {
+    vertices: Vec<[f32; 3]>,
+    faces: Vec<MeshFace>,
+    atlas_cursor: MeshCursor,
+}
+
+#[derive(Serialize)]
+struct V2Project {
+    name: String,
+    canvas_width: u32,
+    canvas_height: u32,
+    palette: Vec<[u8; 4]>,
+    animations: Vec<Animation>,
+    active_animation: usize,
+    active_frame: usize,
+    active_layer: usize,
+    layer_id_counter: u64,
+    tiles_w: u32,
+    tiles_h: u32,
+    tile_w: u32,
+    tile_h: u32,
+    mode: squarez::project::ProjectMode,
+    sprite_stack_max_layers: Option<u32>,
+    mesh3d: Option<V2Mesh>,
+}
+
+#[test]
+fn v2_files_load_with_manual_layout_defaulting_off() {
+    let mut mesh = Mesh3::cube(8);
+    mesh.allocate_all_islands((64, 64)).unwrap();
+    let base = Project::new_with_mode(
+        64,
+        64,
+        "v2file".to_string(),
+        squarez::project::ProjectMode::ThreeD,
+    );
+    let payload = bincode::serialize(&V2Project {
+        name: base.name.clone(),
+        canvas_width: 64,
+        canvas_height: 64,
+        palette: base.palette.clone(),
+        animations: base.animations.clone(),
+        active_animation: 0,
+        active_frame: 0,
+        active_layer: 0,
+        layer_id_counter: 1,
+        tiles_w: 1,
+        tiles_h: 1,
+        tile_w: 0,
+        tile_h: 0,
+        mode: squarez::project::ProjectMode::ThreeD,
+        sprite_stack_max_layers: None,
+        mesh3d: Some(V2Mesh {
+            vertices: mesh.vertices.clone(),
+            faces: mesh.faces.clone(),
+            atlas_cursor: mesh.atlas_cursor,
+        }),
+    })
+    .unwrap();
+    let compressed = lz4_flex::compress_prepend_size(&payload);
+    let path = std::env::temp_dir().join("squarez_v2_mesh.sqr");
+    let mut bytes = b"SQR\0\x02".to_vec();
+    bytes.extend(compressed);
+    std::fs::write(&path, bytes).unwrap();
+
+    let p = load_sqr(&path).expect("v2 file must load");
+    let m = p.mesh3d.expect("mesh must survive");
+    assert_eq!(m.vertices, mesh.vertices);
+    assert_eq!(m.faces, mesh.faces);
+    assert!(!m.manual_layout, "pre-flag files are automatic layouts");
+}
+
+#[test]
+fn v3_roundtrip_preserves_manual_layout() {
+    let mut p = Project::new_with_mode(
+        64,
+        64,
+        "v3manual".to_string(),
+        squarez::project::ProjectMode::ThreeD,
+    );
+    let mut mesh = Mesh3::cube(8);
+    mesh.allocate_all_islands((64, 64)).unwrap();
+    mesh.manual_layout = true;
+    p.mesh3d = Some(mesh);
+
+    let path = std::env::temp_dir().join("squarez_v3_manual.sqr");
+    save_sqr(&p, &path).unwrap();
+    let back = load_sqr(&path).expect("v3 round-trip");
+    assert!(
+        back.mesh3d.unwrap().manual_layout,
+        "hand-packed flag must survive save/load"
+    );
+}
