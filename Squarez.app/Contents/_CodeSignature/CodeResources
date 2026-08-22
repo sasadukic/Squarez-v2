@@ -8,6 +8,10 @@
 		<data>
 		STRqzalU3V6vK+tTN7HVNjGuPQc=
 		</data>
+		<key>Resources/DocIcon.icns</key>
+		<data>
+		e5G/6J6C7MgrW1oMhgvaPCm0Lco=
+		</data>
 	</dict>
 	<key>files2</key>
 	<dict>
@@ -16,6 +20,13 @@
 			<key>hash2</key>
 			<data>
 			HPMN12Em7iVGee2d4G2eZ/ETKI070pu1tAKVlfDAles=
+			</data>
+		</dict>
+		<key>Resources/DocIcon.icns</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			UsHOxjN3cl6q2oSzX/Z/LtqcK9ZczJTaGQBl0cbwBhc=
 			</data>
 		</dict>
 	</dict>

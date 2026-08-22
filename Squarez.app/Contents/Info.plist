@@ -9,9 +9,9 @@
     <key>CFBundleIdentifier</key>
     <string>com.sasadukic.squarez</string>
     <key>CFBundleVersion</key>
-    <string>0.1.0</string>
+    <string>0.1.1</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
+    <string>0.1.1</string>
     <key>CFBundleExecutable</key>
     <string>Squarez</string>
     <key>CFBundleIconFile</key>
@@ -34,7 +34,7 @@
             <key>CFBundleTypeRole</key>
             <string>Editor</string>
             <key>CFBundleTypeIconFile</key>
-            <string>AppIcon</string>
+            <string>DocIcon</string>
             <key>LSItemContentTypes</key>
             <array>
                 <string>com.sasadukic.squarez.sqr</string>
@@ -63,7 +63,7 @@
             <key>UTTypeDescription</key>
             <string>Squarez Project</string>
             <key>UTTypeIconFile</key>
-            <string>AppIcon</string>
+            <string>DocIcon</string>
             <key>UTTypeConformsTo</key>
             <array>
                 <string>public.data</string>
