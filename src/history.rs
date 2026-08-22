@@ -69,10 +69,20 @@ pub enum Command {
     /// One modeling gesture in ThreeD mode: full mesh snapshots before/after,
     /// plus any texture-island pixel moves that accompanied the topology change
     /// (so mesh and texture stay atomic through undo/redo).
+    ///
+    /// `canvas_before`/`canvas_after` capture the atlas dimensions around the
+    /// gesture: an edit can grow the atlas (and the explicit atlas-size dialog
+    /// is one of these commands too), and undo must shrink it back or the
+    /// canvas silently stays resized. `pixel_edits` coordinates live in the
+    /// AFTER space — redo resizes first then applies, undo reverts the edits
+    /// first then resizes back (row re-striding preserves (x, y) content, so
+    /// the two orders compose exactly).
     MeshEdit {
         before: crate::three_d::mesh::Mesh,
         after: crate::three_d::mesh::Mesh,
         layer_id: usize,
+        canvas_before: (u32, u32),
+        canvas_after: (u32, u32),
         pixel_edits: Vec<(u32, u32, Rgba, Rgba)>, // (x, y, old, new)
     },
 }
@@ -304,25 +314,42 @@ pub fn apply_command(project: &mut Project, color_state: Option<&mut ColorState>
                 }
             }
         }
-        Command::MeshEdit { before, after, layer_id, pixel_edits } => {
-            let mesh = match dir {
-                Direction::Forward => after,
-                Direction::Backward => before,
+        Command::MeshEdit { before, after, layer_id, canvas_before, canvas_after, pixel_edits } => {
+            let resize_to = |project: &mut Project, (w, h): (u32, u32)| {
+                if (project.canvas_width, project.canvas_height) == (w, h) {
+                    return;
+                }
+                for anim in &mut project.animations {
+                    for frame in &mut anim.frames {
+                        frame.resize_canvas(w, h);
+                    }
+                }
+                project.canvas_width = w;
+                project.canvas_height = h;
             };
-            project.mesh3d = Some(mesh.clone());
-            if !pixel_edits.is_empty() {
+            let apply_pixels = |project: &mut Project, forward: bool| {
                 let frame = &mut project.animations[0].frames[0];
                 if let Some(layer) = frame.layers.get_mut(*layer_id) {
                     for &(x, y, old, new) in pixel_edits {
-                        let c = match dir {
-                            Direction::Forward => new,
-                            Direction::Backward => old,
-                        };
-                        layer.set_pixel(x, y, c);
+                        layer.set_pixel(x, y, if forward { new } else { old });
                     }
                 }
-                frame.dirty = true;
-            } else if let Some(frame) = project.animations.get_mut(0).and_then(|a| a.frames.get_mut(0)) {
+            };
+            // pixel_edits live in the AFTER canvas space: grow before applying
+            // them, revert them before shrinking back.
+            match dir {
+                Direction::Forward => {
+                    resize_to(project, *canvas_after);
+                    apply_pixels(project, true);
+                    project.mesh3d = Some(after.clone());
+                }
+                Direction::Backward => {
+                    apply_pixels(project, false);
+                    resize_to(project, *canvas_before);
+                    project.mesh3d = Some(before.clone());
+                }
+            }
+            if let Some(frame) = project.animations.get_mut(0).and_then(|a| a.frames.get_mut(0)) {
                 frame.dirty = true;
             }
         }

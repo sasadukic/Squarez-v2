@@ -420,6 +420,8 @@ fn mesh_edit_command_replays_both_directions() {
         before: before.clone(),
         after: out.mesh.clone(),
         layer_id: 0,
+        canvas_before: (64, 64),
+        canvas_after: (64, 64),
         pixel_edits: out.pixel_edits.clone(),
     };
 

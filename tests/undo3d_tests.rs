@@ -57,6 +57,8 @@ fn extrude_undo_redo_in_3d() {
         before: before.clone(),
         after: out.mesh.clone(),
         layer_id: 0,
+        canvas_before: (p.canvas_width, p.canvas_height),
+        canvas_after: (p.canvas_width, p.canvas_height),
         pixel_edits: out.pixel_edits.clone(),
     });
     assert_eq!(p.mesh3d.as_ref().unwrap().faces.len(), 10);
@@ -100,6 +102,8 @@ fn undo_restores_a_layout_shifting_edit_texel_for_texel() {
         before: mesh_before.clone(),
         after: out.mesh.clone(),
         layer_id: 0,
+        canvas_before: (p.canvas_width, p.canvas_height),
+        canvas_after: (p.canvas_width, p.canvas_height),
         pixel_edits: out.pixel_edits.clone(),
     });
     p.mesh3d = Some(out.mesh);

@@ -119,6 +119,8 @@ fn dangling_drag_cannot_clobber_an_undo() {
         before: pristine.clone(),
         after: out.mesh.clone(),
         layer_id: 0,
+        canvas_before: (128, 128),
+        canvas_after: (128, 128),
         pixel_edits: out.pixel_edits.clone(),
     });
 

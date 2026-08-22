@@ -38,17 +38,25 @@ const VERTEX_HIT_RADIUS: f32 = 8.0;
 
 /// Run a mesh operation, growing the atlas (preserving content) toward
 /// whatever dimensions the packer reports it needed. Gives up once the atlas
-/// can no longer grow in the axis that fell short.
-fn with_atlas_growth<F>(project: &mut Project, layer_idx: usize, mut op: F) -> Option<EditOutcome>
+/// can no longer grow in the axis that fell short. The returned outcome
+/// carries the pre-growth canvas dimensions so commit_edit can record the
+/// resize in the undo command (previews never grow — growth happens here, on
+/// the commit path, only).
+fn with_atlas_growth<F>(
+    project: &mut Project,
+    layer_idx: usize,
+    mut op: F,
+) -> Option<(EditOutcome, (u32, u32))>
 where
     F: FnMut(&Mesh, &Layer, (u32, u32)) -> Result<EditOutcome, AtlasFull>,
 {
+    let canvas_before = (project.canvas_width, project.canvas_height);
     loop {
         let atlas = (project.canvas_width, project.canvas_height);
         let mesh = project.mesh3d.as_ref()?;
         let layer = project.animations[0].frames[0].layers.get(layer_idx)?;
         match op(mesh, layer, atlas) {
-            Ok(outcome) => return Some(outcome),
+            Ok(outcome) => return Some((outcome, canvas_before)),
             Err(need) => {
                 if !super::grow_atlas(project, need.need_w, need.need_h) {
                     return None;
@@ -66,6 +74,7 @@ fn commit_edit(
     undo: &mut UndoStack,
     layer_idx: usize,
     before: Mesh,
+    canvas_before: (u32, u32),
     outcome: EditOutcome,
     output: &mut Output,
 ) {
@@ -80,6 +89,8 @@ fn commit_edit(
         before,
         after: outcome.mesh.clone(),
         layer_id: layer_idx,
+        canvas_before,
+        canvas_after: (project.canvas_width, project.canvas_height),
         pixel_edits: outcome.pixel_edits,
     });
     project.mesh3d = Some(outcome.mesh);
@@ -432,12 +443,12 @@ pub fn draw(
                         let kept_edges = state.sel_edges.clone();
                         let kept_faces = state.sel_faces.clone();
                         let li = project.active_layer;
-                        if let Some(outcome) =
+                        if let Some((outcome, canvas_before)) =
                             with_atlas_growth(project, li, |mesh, layer, atlas| {
                                 edit::move_vertices(mesh, layer, &nudge_verts, delta, atlas)
                             })
                         {
-                            commit_edit(state, project, undo, li, before, outcome, &mut output);
+                            commit_edit(state, project, undo, li, before, canvas_before, outcome, &mut output);
                             // Identities survive a move — keep the selection
                             // so the next arrow press continues the walk.
                             state.sel_verts = kept_verts;
@@ -485,10 +496,10 @@ pub fn draw(
     if let Some(req) = pending_add {
         if let Some(before) = project.mesh3d.clone() {
             let obj = req.build();
-            if let Some(outcome) = with_atlas_growth(project, li, |mesh, layer, atlas| {
+            if let Some((outcome, canvas_before)) = with_atlas_growth(project, li, |mesh, layer, atlas| {
                 edit::add_object(mesh, layer, &obj, atlas)
             }) {
-                commit_edit(state, project, undo, li, before, outcome, &mut output);
+                commit_edit(state, project, undo, li, before, canvas_before, outcome, &mut output);
             }
         }
     }
@@ -504,10 +515,10 @@ pub fn draw(
         if dup {
             if let Some(before) = project.mesh3d.clone() {
                 let sel = state.sel_faces.clone();
-                if let Some(outcome) = with_atlas_growth(project, li, |mesh, layer, atlas| {
+                if let Some((outcome, canvas_before)) = with_atlas_growth(project, li, |mesh, layer, atlas| {
                     edit::duplicate_faces(mesh, layer, &sel, atlas)
                 }) {
-                    commit_edit(state, project, undo, li, before, outcome, &mut output);
+                    commit_edit(state, project, undo, li, before, canvas_before, outcome, &mut output);
                 }
             }
         }
@@ -650,12 +661,12 @@ pub fn draw(
                     let verts = od.verts.clone();
                     let before = od.start_mesh.clone();
                     let kept_faces = state.sel_faces.clone();
-                    if let Some(outcome) = with_atlas_growth(project, li, |m, layer, atlas| match kind {
+                    if let Some((outcome, canvas_before)) = with_atlas_growth(project, li, |m, layer, atlas| match kind {
                         OpKind::Extrude => edit::extrude_faces_n(m, layer, &[face], n, atlas),
                         OpKind::Inset => edit::inset_faces(m, layer, &[face], n as u32, atlas),
                         OpKind::Scale => edit::scale_verts(m, layer, &verts, n, atlas),
                     }) {
-                        commit_edit(state, project, undo, li, before, outcome, &mut output);
+                        commit_edit(state, project, undo, li, before, canvas_before, outcome, &mut output);
                         if kind == OpKind::Scale {
                             // Face indices survive a scale — keep the object highlighted.
                             state.sel_faces = kept_faces;
@@ -681,10 +692,10 @@ pub fn draw(
                     let kept_verts = state.sel_verts.clone();
                     let kept_edges = state.sel_edges.clone();
                     let kept_faces = state.sel_faces.clone();
-                    if let Some(outcome) = with_atlas_growth(project, li, |_, layer, atlas| {
+                    if let Some((outcome, canvas_before)) = with_atlas_growth(project, li, |_, layer, atlas| {
                         edit::move_vertices(&before, layer, &moved, applied, atlas)
                     }) {
-                        commit_edit(state, project, undo, li, drag.start_mesh, outcome, &mut output);
+                        commit_edit(state, project, undo, li, drag.start_mesh, canvas_before, outcome, &mut output);
                         // Vertex/edge/face identities all survive a move —
                         // restore the selection exactly as it was.
                         state.sel_verts = kept_verts;
@@ -840,10 +851,10 @@ pub fn draw(
                 }
             }
             if let Some((before, plan)) = pending {
-                if let Some(outcome) = with_atlas_growth(project, li, |m, layer, atlas| {
+                if let Some((outcome, canvas_before)) = with_atlas_growth(project, li, |m, layer, atlas| {
                     edit::loop_cut(m, layer, &plan, atlas)
                 }) {
-                    commit_edit(state, project, undo, li, before, outcome, &mut output);
+                    commit_edit(state, project, undo, li, before, canvas_before, outcome, &mut output);
                 }
             }
         }
@@ -1090,19 +1101,19 @@ pub fn draw(
         match (act, before) {
             (Action::Extrude, Some(before)) if !state.sel_faces.is_empty() => {
                 let sel = state.sel_faces.clone();
-                if let Some(outcome) = with_atlas_growth(project, li, |mesh, layer, atlas| {
+                if let Some((outcome, canvas_before)) = with_atlas_growth(project, li, |mesh, layer, atlas| {
                     edit::extrude_faces(mesh, layer, &sel, atlas)
                 }) {
-                    commit_edit(state, project, undo, li, before, outcome, &mut output);
+                    commit_edit(state, project, undo, li, before, canvas_before, outcome, &mut output);
                 }
             }
             (Action::CreateFace, Some(before)) if (3..=4).contains(&state.sel_verts.len()) => {
                 let verts = state.sel_verts.clone();
-                if let Some(outcome) = with_atlas_growth(project, li, |mesh, layer, atlas| {
+                if let Some((outcome, canvas_before)) = with_atlas_growth(project, li, |mesh, layer, atlas| {
                     edit::create_face(mesh, layer, &verts, atlas)
                 }) {
                     if outcome.mesh.faces.len() != before.faces.len() {
-                        commit_edit(state, project, undo, li, before, outcome, &mut output);
+                        commit_edit(state, project, undo, li, before, canvas_before, outcome, &mut output);
                     }
                 }
             }
@@ -1112,27 +1123,27 @@ pub fn draw(
             (Action::Delete, Some(before)) => {
                 if !state.sel_faces.is_empty() {
                     let doomed = state.sel_faces.clone();
-                    if let Some(outcome) = with_atlas_growth(project, li, |mesh, layer, atlas| {
+                    if let Some((outcome, canvas_before)) = with_atlas_growth(project, li, |mesh, layer, atlas| {
                         edit::delete_faces(mesh, layer, &doomed, atlas)
                     }) {
-                        commit_edit(state, project, undo, li, before, outcome, &mut output);
+                        commit_edit(state, project, undo, li, before, canvas_before, outcome, &mut output);
                     }
                 } else if !state.sel_edges.is_empty() {
                     let doomed = faces_with_edges(&before, &state.sel_edges);
                     if !doomed.is_empty() {
-                        if let Some(outcome) = with_atlas_growth(project, li, |mesh, layer, atlas| {
+                        if let Some((outcome, canvas_before)) = with_atlas_growth(project, li, |mesh, layer, atlas| {
                             edit::delete_faces(mesh, layer, &doomed, atlas)
                         }) {
-                            commit_edit(state, project, undo, li, before, outcome, &mut output);
+                            commit_edit(state, project, undo, li, before, canvas_before, outcome, &mut output);
                         }
                     }
                     state.sel_edges.clear();
                 } else if !state.sel_verts.is_empty() {
                     let doomed = state.sel_verts.clone();
-                    if let Some(outcome) = with_atlas_growth(project, li, |mesh, layer, atlas| {
+                    if let Some((outcome, canvas_before)) = with_atlas_growth(project, li, |mesh, layer, atlas| {
                         edit::delete_vertices(mesh, layer, &doomed, atlas)
                     }) {
-                        commit_edit(state, project, undo, li, before, outcome, &mut output);
+                        commit_edit(state, project, undo, li, before, canvas_before, outcome, &mut output);
                     }
                 }
             }

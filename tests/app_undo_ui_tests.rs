@@ -51,6 +51,8 @@ fn cmd_z_undoes_a_3d_mesh_edit() {
         before: before.clone(),
         after: after.clone(),
         layer_id: 0,
+        canvas_before: (app.project.canvas_width, app.project.canvas_height),
+        canvas_after: (app.project.canvas_width, app.project.canvas_height),
         pixel_edits: Vec::new(),
     });
 

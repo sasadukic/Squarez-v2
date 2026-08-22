@@ -12377,45 +12377,89 @@ print("FAIL")
         if released {
             if let Some((_, delta)) = self.three_d.island_drag.take() {
                 if delta != (0, 0) && !self.three_d.sel_faces.is_empty() {
-                    let before = mesh.clone();
                     let sel = self.three_d.sel_faces.clone();
-                    let li = self.project.active_layer;
-                    if let Some(layer) =
-                        self.project.animations[0].frames[0].layers.get(li).cloned()
-                    {
-                        if let Ok(outcome) = crate::three_d::edit::move_islands(
-                            &before, &layer, &sel, delta, (aw, ah),
-                        ) {
-                            if outcome.mesh != before {
-                                let frame = &mut self.project.animations[0].frames[0];
-                                if let Some(l) = frame.layers.get_mut(li) {
-                                    for &(x, y, _, new) in &outcome.pixel_edits {
-                                        l.set_pixel(x, y, new);
-                                    }
-                                }
-                                frame.dirty = true;
-                                self.undo_stack.push(Command::MeshEdit {
-                                    before,
-                                    after: outcome.mesh.clone(),
-                                    layer_id: li,
-                                    pixel_edits: outcome.pixel_edits,
-                                });
-                                self.project.mesh3d = Some(outcome.mesh);
-                                self.canvas_dirty = true;
-                                self.active_modified = true;
-                            }
-                        }
-                    }
+                    self.commit_island_move(&sel, delta);
                 }
             }
         }
+    }
+
+    /// Commit a hand-pack island move: shift the selected faces' islands by
+    /// `delta` texels, carrying their paint, as one undo step. Shared by the
+    /// texture-view drag-release and tests. Returns true if anything changed.
+    pub fn commit_island_move(&mut self, sel: &[u32], delta: (i32, i32)) -> bool {
+        let Some(before) = self.project.mesh3d.clone() else { return false };
+        let (aw, ah) = (self.project.canvas_width, self.project.canvas_height);
+        let li = self.project.active_layer;
+        let Some(layer) = self.project.animations[0].frames[0].layers.get(li).cloned() else {
+            return false;
+        };
+        let Ok(outcome) = crate::three_d::edit::move_islands(&before, &layer, sel, delta, (aw, ah))
+        else {
+            return false;
+        };
+        if outcome.mesh == before {
+            return false;
+        }
+        let frame = &mut self.project.animations[0].frames[0];
+        if let Some(l) = frame.layers.get_mut(li) {
+            for &(x, y, _, new) in &outcome.pixel_edits {
+                l.set_pixel(x, y, new);
+            }
+        }
+        frame.dirty = true;
+        self.undo_stack.push(Command::MeshEdit {
+            before,
+            after: outcome.mesh.clone(),
+            layer_id: li,
+            canvas_before: (aw, ah),
+            canvas_after: (aw, ah),
+            pixel_edits: outcome.pixel_edits,
+        });
+        self.project.mesh3d = Some(outcome.mesh);
+        self.canvas_dirty = true;
+        self.active_modified = true;
+        true
+    }
+
+    /// Apply pixel edits to the active layer and record them as one undoable
+    /// paint command — the same command shape every paint tool pushes when a
+    /// stroke is released.
+    pub fn push_paint_edits(&mut self, edits: &[(u32, u32, crate::project::Rgba)]) {
+        let ai = self.project.active_animation;
+        let fi = self.project.active_frame;
+        let li = self.project.active_layer;
+        let Some(layer) = self.project.animations[ai].frames[fi].layers.get_mut(li) else {
+            return;
+        };
+        let mut recorded = Vec::with_capacity(edits.len());
+        for &(x, y, new) in edits {
+            let old = layer.get_pixel(x, y);
+            if old == new {
+                continue;
+            }
+            layer.set_pixel(x, y, new);
+            recorded.push((x, y, old, new));
+        }
+        if recorded.is_empty() {
+            return;
+        }
+        self.project.animations[ai].frames[fi].dirty = true;
+        self.undo_stack.push(Command::PaintPixels {
+            animation_id: ai,
+            frame_id: fi,
+            layer_id: li,
+            edits: recorded,
+        });
+        self.canvas_dirty = true;
+        self.active_modified = true;
     }
 
     /// Resize the texture atlas to `w`×`h`, carrying every island's paint.
     /// The atlas is independent of the model's dimensions — this is the
     /// texture-view size choice. Returns false when the islands cannot fit
     /// the requested size (the dialog stays open so a larger one can be
-    /// picked). Clears history: undo entries reference old atlas positions.
+    /// picked). Recorded as one undoable step.
     pub fn apply_atlas_size(&mut self, w: u32, h: u32) -> bool {
         let (w, h) = (w.clamp(16, 4096), h.clamp(16, 4096));
         if (w, h) == (self.project.canvas_width, self.project.canvas_height) {
@@ -12438,6 +12482,7 @@ print("FAIL")
         else {
             return false;
         };
+        let canvas_before = (self.project.canvas_width, self.project.canvas_height);
         for anim in &mut self.project.animations {
             for frame in &mut anim.frames {
                 frame.resize_canvas(w, h);
@@ -12452,8 +12497,18 @@ print("FAIL")
             }
         }
         frame.dirty = true;
+        // One undoable step: the resize + relayout together. (This used to
+        // wipe the whole undo stack, which read as "undo stopped working"
+        // right after picking an atlas size.)
+        self.undo_stack.push(Command::MeshEdit {
+            before: mesh,
+            after: outcome.mesh.clone(),
+            layer_id: 0,
+            canvas_before,
+            canvas_after: (w, h),
+            pixel_edits: outcome.pixel_edits,
+        });
         self.project.mesh3d = Some(outcome.mesh);
-        self.undo_stack = UndoStack::new();
         self.active_modified = true;
         self.canvas_dirty = true;
         self.pending_zoom_fit = true;
