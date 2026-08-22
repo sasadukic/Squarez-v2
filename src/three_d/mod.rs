@@ -117,31 +117,19 @@ pub struct ThreeDState {
     pub island_drag: Option<((i32, i32), (i32, i32))>,
 }
 
-/// Viewport lighting style, cycled by the workspace's shading button.
+/// Viewport lighting, toggled from the Windows menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shading {
     /// Smooth per-face warm/cool tint (Blender-solid-like).
     Soft,
-    /// Flat texel colors with quantized shadows as screen-space dither
-    /// patterns — the picoCAD look.
-    Dither,
     /// Raw texel colors, no lighting, no wireframe: a clean preview.
     Off,
 }
 
 impl Shading {
-    pub fn label(self) -> &'static str {
+    pub fn toggled(self) -> Self {
         match self {
-            Shading::Soft => "Shading: Soft",
-            Shading::Dither => "Shading: Dither",
-            Shading::Off => "Shading: Off",
-        }
-    }
-
-    pub fn next(self) -> Self {
-        match self {
-            Shading::Soft => Shading::Dither,
-            Shading::Dither => Shading::Off,
+            Shading::Soft => Shading::Off,
             Shading::Off => Shading::Soft,
         }
     }
@@ -162,7 +150,7 @@ impl Default for ThreeDState {
             stroke_painted: std::collections::HashSet::new(),
             last_paint: None,
             last_mouse_wheel_time: 0.0,
-            shading: Shading::Dither,
+            shading: Shading::Soft,
             texture_view: false,
             atlas_prompted: false,
             island_drag: None,

@@ -25,8 +25,6 @@ pub struct Output {
     pub canvas_dirty: bool,
     /// Document changed — app should mark the tab modified.
     pub modified: bool,
-    /// The "Texture (Tab)" button was clicked — app should swap views.
-    pub toggle_texture_view: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -395,15 +393,7 @@ pub fn draw(
     if let (Some(mesh), Some(scene)) = (project.mesh3d.as_ref(), scene.as_ref()) {
         render::paint_contact_shadow(&painter, mesh, &cam_copy, canvas_rect);
         if let Some(texture) = canvas.texture.as_ref() {
-            if state.shading == super::Shading::Dither {
-                let patterns = render::dither_patterns(ui.ctx());
-                // Pattern cells scale with zoom: half a texel per cell, so the
-                // dither reads the same at any magnification.
-                let cell = (cam_copy.zoom * 0.5).clamp(2.0, 8.0);
-                render::paint_scene_dithered(&painter, scene, texture.id(), &patterns, cell);
-            } else {
-                render::paint_scene(&painter, scene, texture.id());
-            }
+            render::paint_scene(&painter, scene, texture.id());
         }
         // Off is a clean preview: raw texel colors with no edge seams.
         // Selection/hover overlays still draw, so the tools stay usable.
@@ -488,58 +478,6 @@ pub fn draw(
                 action = Some(act);
             }
             x += w + 6.0;
-        }
-    }
-
-    // ── Shading toggle (top-right corner) ───────────────────────────────────
-    // Cycles Soft (smooth tint) → Dither (picoCAD-style pattern shadows) →
-    // Off (raw texel colors, no wireframe).
-    {
-        let label = state.shading.label();
-        let w = 14.0 + label.len() as f32 * 6.5;
-        let rect = Rect::from_min_size(
-            Pos2::new(canvas_rect.max.x - w - 8.0, canvas_rect.min.y + 8.0),
-            Vec2::new(w, 24.0),
-        );
-        let resp = ui.interact(rect, ui.id().with("threed_shading_toggle"), Sense::click());
-        let bg = if resp.hovered() { theme.surface } else { theme.panel };
-        painter.rect_filled(rect, 3.0, bg);
-        painter.text(
-            rect.center(),
-            egui::Align2::CENTER_CENTER,
-            label,
-            FontId::proportional(11.0),
-            if state.shading == super::Shading::Off { theme.fg_desc } else { theme.fg },
-        );
-        if resp.hovered() {
-            over_buttons = true;
-        }
-        if resp.clicked() {
-            state.shading = state.shading.next();
-        }
-
-        // Texture view button, to the left of the shading toggle.
-        let tex_label = "Texture (Tab)";
-        let tw = 14.0 + tex_label.len() as f32 * 6.5;
-        let tex_rect = Rect::from_min_size(
-            Pos2::new(rect.min.x - tw - 6.0, rect.min.y),
-            Vec2::new(tw, 24.0),
-        );
-        let tex_resp = ui.interact(tex_rect, ui.id().with("threed_texture_btn"), Sense::click());
-        let tex_bg = if tex_resp.hovered() { theme.surface } else { theme.panel };
-        painter.rect_filled(tex_rect, 3.0, tex_bg);
-        painter.text(
-            tex_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            tex_label,
-            FontId::proportional(11.0),
-            theme.fg,
-        );
-        if tex_resp.hovered() {
-            over_buttons = true;
-        }
-        if tex_resp.clicked() {
-            output.toggle_texture_view = true;
         }
     }
 

@@ -1518,17 +1518,16 @@ fn fill_stays_inside_the_faces_own_outline() {
 }
 
 #[test]
-fn shading_modes_tint_and_dither_as_advertised() {
+fn shading_modes_tint_as_advertised() {
     use squarez::three_d::render::build_scene_styled;
     use squarez::three_d::Shading;
     let mut mesh = Mesh::cube(8);
     mesh.allocate_all_islands((64, 64)).unwrap();
     let orbit = Camera3D::default();
 
-    // Off: raw texel colors on front faces, interiors dimmed, no dither.
+    // Off: raw texel colors on front faces, interiors dimmed.
     let flat = build_scene_styled(&mesh, &orbit, rect100(), (64, 64), Shading::Off);
     for tri in &flat.tris {
-        assert_eq!(tri.dither, 0, "Off must not dither");
         if tri.front {
             assert_eq!(tri.shade, [1.0, 1.0, 1.0], "Off must not tint front faces");
         } else {
@@ -1536,34 +1535,20 @@ fn shading_modes_tint_and_dither_as_advertised() {
         }
     }
 
-    // Soft: smooth tint, no dither.
+    // Soft: smooth tint.
     let lit = build_scene_styled(&mesh, &orbit, rect100(), (64, 64), Shading::Soft);
     assert!(
         lit.tris.iter().any(|t| t.front && t.shade != [1.0, 1.0, 1.0]),
         "Soft must keep the lit viewport look"
     );
-    assert!(lit.tris.iter().all(|t| t.dither == 0), "Soft must not dither");
 
-    // Dither: flat colors, quantized shadow levels — an orbit view of a cube
-    // must produce both a lit face and at least one dithered face.
-    let dith = build_scene_styled(&mesh, &orbit, rect100(), (64, 64), Shading::Dither);
-    for tri in &dith.tris {
-        if tri.front {
-            assert_eq!(tri.shade, [1.0, 1.0, 1.0], "Dither keeps colors flat");
-        }
-        assert!(tri.dither <= 3, "dither level out of range");
-        if !tri.front {
-            assert_eq!(tri.dither, 0, "interiors are dimmed, not dithered");
-        }
-    }
-    let levels: std::collections::HashSet<u8> =
-        dith.tris.iter().filter(|t| t.front).map(|t| t.dither).collect();
-    assert!(levels.len() >= 2, "orbit view must mix lit and shadowed faces: {levels:?}");
-
-    // Snapped views stay pixel-perfect: no tint, no dither, whatever the mode.
+    // Snapped views stay pixel-perfect flat regardless of the mode.
     let snap = cam_at(SnapView::Front, 4.0);
-    let s = build_scene_styled(&mesh, &snap, rect100(), (64, 64), Shading::Dither);
-    assert!(s.tris.iter().all(|t| t.dither == 0 && (!t.front || t.shade == [1.0, 1.0, 1.0])));
+    let s = build_scene_styled(&mesh, &snap, rect100(), (64, 64), Shading::Soft);
+    assert!(s.tris.iter().all(|t| !t.front || t.shade == [1.0, 1.0, 1.0]));
+
+    assert_eq!(Shading::Soft.toggled(), Shading::Off);
+    assert_eq!(Shading::Off.toggled(), Shading::Soft);
 }
 
 #[test]

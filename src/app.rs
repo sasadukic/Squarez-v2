@@ -2913,6 +2913,51 @@ impl App {
                                     self.sidebar_order = vec![Panel::Palette, Panel::Color, Panel::Brushes, Panel::Layers, Panel::Animations, Panel::Preview, Panel::Tiles];
                                     close_menu = true;
                                 }
+
+                                // ── 3D view settings ────────────────────────
+                                {
+                                    let (line_rect, _) = ui.allocate_exact_size(
+                                        Vec2::new(DROPDOWN_WIDTH, 9.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    ui.painter().line_segment(
+                                        [
+                                            Pos2::new(line_rect.left() + 10.0, line_rect.center().y),
+                                            Pos2::new(line_rect.right() - 10.0, line_rect.center().y),
+                                        ],
+                                        egui::Stroke::new(1.0, theme.border),
+                                    );
+                                }
+                                let is_3d = self.project.mode.is_three_d();
+                                if dropdown_row(
+                                    ui,
+                                    &theme,
+                                    "Texture view",
+                                    window_check(is_3d && self.three_d.texture_view),
+                                    is_3d,
+                                )
+                                .clicked()
+                                    && is_3d
+                                {
+                                    self.toggle_texture_view();
+                                    close_menu = true;
+                                }
+                                if dropdown_row(
+                                    ui,
+                                    &theme,
+                                    "Shading",
+                                    window_check(
+                                        is_3d
+                                            && self.three_d.shading
+                                                == crate::three_d::Shading::Soft,
+                                    ),
+                                    is_3d,
+                                )
+                                .clicked()
+                                    && is_3d
+                                {
+                                    self.three_d.shading = self.three_d.shading.toggled();
+                                }
                             }
                         }
 
@@ -6499,9 +6544,6 @@ impl App {
                     if out.modified {
                         self.active_modified = true;
                     }
-                    if out.toggle_texture_view && !self.any_modal_open() {
-                        self.toggle_texture_view();
-                    }
                     return;
                 }
                 let painter = ui.painter_at(canvas_rect);
@@ -6519,30 +6561,6 @@ impl App {
                 }
                 if self.project.mode.is_three_d() && self.three_d.texture_view {
                     self.draw_island_overlay(ui, canvas_rect);
-                    // Way back, mirrored from the 3D view's button.
-                    let label = "3D view (Tab)";
-                    let w = 14.0 + label.len() as f32 * 6.5;
-                    let rect = egui::Rect::from_min_size(
-                        Pos2::new(canvas_rect.max.x - w - 8.0, canvas_rect.min.y + 8.0),
-                        Vec2::new(w, 24.0),
-                    );
-                    let resp = ui.interact(
-                        rect,
-                        ui.id().with("texture_view_back"),
-                        egui::Sense::click(),
-                    );
-                    let bg = if resp.hovered() { self.theme.surface } else { self.theme.panel };
-                    painter.rect_filled(rect, 3.0, bg);
-                    painter.text(
-                        rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        label,
-                        FontId::proportional(11.0),
-                        self.theme.fg,
-                    );
-                    if resp.clicked() && !self.any_modal_open() {
-                        self.toggle_texture_view();
-                    }
                 }
                 // Ctrl + scroll on Pencil/Eraser → adjust pen size (accumulated, finer control)
                 let is_brush = matches!(self.active_tool, ActiveTool::Pencil | ActiveTool::Eraser);
@@ -8154,19 +8172,7 @@ print("FAIL")
                     self.three_d.shading,
                 );
                 if let Some(texture) = self.canvas.texture.as_ref() {
-                    if self.three_d.shading == crate::three_d::Shading::Dither {
-                        let patterns = crate::three_d::render::dither_patterns(ui.ctx());
-                        let cell = (cam.zoom * 0.5).clamp(2.0, 8.0);
-                        crate::three_d::render::paint_scene_dithered(
-                            &painter,
-                            &scene,
-                            texture.id(),
-                            &patterns,
-                            cell,
-                        );
-                    } else {
-                        crate::three_d::render::paint_scene(&painter, &scene, texture.id());
-                    }
+                    crate::three_d::render::paint_scene(&painter, &scene, texture.id());
                 }
             }
             return;
