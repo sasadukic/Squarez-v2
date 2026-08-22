@@ -366,3 +366,86 @@ fn key_event_z(_ctx: &egui::Context) -> egui::Event {
         modifiers: Modifiers::COMMAND,
     }
 }
+
+#[test]
+fn tab_swaps_to_texture_view_and_offers_the_size_dialog_once() {
+    let ctx = egui::Context::default();
+    let mut app = App::new_with(&ctx, None);
+    app.open_project_for_test(three_d_project());
+    for _ in 0..2 {
+        frame(&ctx, &mut app, vec![], Modifiers::default());
+    }
+    assert!(!app.three_d.texture_view);
+
+    let tab = |ctx: &egui::Context, app: &mut App| {
+        frame(ctx, app, vec![
+            egui::Event::Key { key: Key::Tab, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::default() },
+        ], Modifiers::default());
+    };
+    tab(&ctx, &mut app);
+    assert!(app.three_d.texture_view, "Tab must enter the texture view");
+    assert!(app.atlas_dialog_open(), "first entry offers the atlas size dialog");
+
+    // Dismissing keeps the current size; Tab back and forth must not re-offer.
+    // (One settle frame: the dialog's text field held keyboard focus, and
+    // egui releases it a frame after the widget disappears.)
+    app.dismiss_atlas_dialog();
+    frame(&ctx, &mut app, vec![], Modifiers::default());
+    tab(&ctx, &mut app);
+    assert!(!app.three_d.texture_view, "Tab must return to the 3D view");
+    tab(&ctx, &mut app);
+    assert!(app.three_d.texture_view);
+    assert!(!app.atlas_dialog_open(), "the size prompt is offered once per tab");
+}
+
+#[test]
+fn atlas_resize_is_independent_of_the_model_and_carries_paint() {
+    let ctx = egui::Context::default();
+    let mut app = App::new_with(&ctx, None);
+    let mut p = three_d_project();
+    let isl = p.mesh3d.as_ref().unwrap().faces[1].island;
+    p.animations[0].frames[0].layers[0].set_pixel(isl.x as u32 + 1, isl.y as u32 + 2, [9, 8, 7, 255]);
+    app.open_project_for_test(p);
+
+    assert!(app.apply_atlas_size(512, 64), "a roomy atlas must be accepted");
+    assert_eq!((app.project.canvas_width, app.project.canvas_height), (512, 64));
+    let mesh = app.project.mesh3d.as_ref().unwrap();
+    for f in &mesh.faces {
+        assert_eq!((f.island.w, f.island.h), (8, 8), "island sizes come from the mesh, not the atlas");
+        assert!((f.island.x + f.island.w) as u32 <= 512 && (f.island.y + f.island.h) as u32 <= 64);
+    }
+    let isl = mesh.faces[1].island;
+    assert_eq!(
+        app.project.animations[0].frames[0].layers[0].get_pixel(isl.x as u32 + 1, isl.y as u32 + 2),
+        [9, 8, 7, 255],
+        "paint must survive the resize"
+    );
+
+    // Too small for the islands: refused, nothing changes.
+    assert!(!app.apply_atlas_size(16, 16));
+    assert_eq!((app.project.canvas_width, app.project.canvas_height), (512, 64));
+}
+
+#[test]
+fn selection_made_in_3d_view_arrives_in_texture_view() {
+    let ctx = egui::Context::default();
+    let mut app = App::new_with(&ctx, None);
+    app.open_project_for_test(three_d_project());
+    app.active_tool = ActiveTool::MoveObject;
+    for _ in 0..3 {
+        frame(&ctx, &mut app, vec![], Modifiers::default());
+    }
+    let pa = find_click_point(&ctx, &mut app, &(0..6).collect::<Vec<u32>>());
+    assert_eq!(click_at(&ctx, &mut app, pa, false), (0..6).collect::<Vec<u32>>());
+
+    app.three_d.atlas_prompted = true; // skip the dialog
+    app.toggle_texture_view();
+    frame(&ctx, &mut app, vec![], Modifiers::default());
+    let mut sel = app.three_d.sel_faces.clone();
+    sel.sort_unstable();
+    assert_eq!(
+        sel,
+        (0..6).collect::<Vec<u32>>(),
+        "the 3D selection and the texture-view selection are the same state"
+    );
+}

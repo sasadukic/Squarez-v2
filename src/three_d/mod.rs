@@ -107,6 +107,14 @@ pub struct ThreeDState {
     /// How faces are lit in the viewport. Snapped views always render flat
     /// so texel colors read true regardless of this setting.
     pub shading: Shading,
+    /// Main window shows the texture for direct 2D painting; the model moves
+    /// to the preview panel. Toggled with Tab.
+    pub texture_view: bool,
+    /// The one-time atlas size prompt was already offered for this tab.
+    pub atlas_prompted: bool,
+    /// In-flight island drag in the texture view: (start mouse texel,
+    /// current integer delta).
+    pub island_drag: Option<((i32, i32), (i32, i32))>,
 }
 
 /// Viewport lighting style, cycled by the workspace's shading button.
@@ -155,6 +163,9 @@ impl Default for ThreeDState {
             last_paint: None,
             last_mouse_wheel_time: 0.0,
             shading: Shading::Dither,
+            texture_view: false,
+            atlas_prompted: false,
+            island_drag: None,
         }
     }
 }

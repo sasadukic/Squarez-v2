@@ -25,6 +25,8 @@ pub struct Output {
     pub canvas_dirty: bool,
     /// Document changed — app should mark the tab modified.
     pub modified: bool,
+    /// The "Texture (Tab)" button was clicked — app should swap views.
+    pub toggle_texture_view: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -514,6 +516,30 @@ pub fn draw(
         }
         if resp.clicked() {
             state.shading = state.shading.next();
+        }
+
+        // Texture view button, to the left of the shading toggle.
+        let tex_label = "Texture (Tab)";
+        let tw = 14.0 + tex_label.len() as f32 * 6.5;
+        let tex_rect = Rect::from_min_size(
+            Pos2::new(rect.min.x - tw - 6.0, rect.min.y),
+            Vec2::new(tw, 24.0),
+        );
+        let tex_resp = ui.interact(tex_rect, ui.id().with("threed_texture_btn"), Sense::click());
+        let tex_bg = if tex_resp.hovered() { theme.surface } else { theme.panel };
+        painter.rect_filled(tex_rect, 3.0, tex_bg);
+        painter.text(
+            tex_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            tex_label,
+            FontId::proportional(11.0),
+            theme.fg,
+        );
+        if tex_resp.hovered() {
+            over_buttons = true;
+        }
+        if tex_resp.clicked() {
+            output.toggle_texture_view = true;
         }
     }
 

@@ -79,6 +79,8 @@ pub struct App {
     pending_recovery: Option<Vec<crate::recovery::RecoveryEntry>>,
     /// Menu bar visibility — hidden until the logo is clicked; animated.
     menu_bar_open: bool,
+    /// Atlas size prompt for the 3D texture view: (width, height) inputs.
+    atlas_dialog: Option<(String, String)>,
     drag_start: Option<(u32, u32)>,
     stroke_edits: Vec<crate::tools::PixelEdit>,
     last_pencil_pos: Option<(u32, u32)>,
@@ -779,6 +781,10 @@ impl App {
     /// Install a project as if it had just been opened (tests + headless
     /// drivers): marks it created, resets history, and applies mode layout.
     pub fn open_project_for_test(&mut self, project: Project) {
+        // Tests must not inherit the machine's real crash-recovery prompt
+        // (the running app autosaves there); drop the offer without touching
+        // the files on disk.
+        self.pending_recovery = None;
         self.project = project;
         self.current_path = None;
         self.undo_stack = UndoStack::new();
@@ -1001,6 +1007,7 @@ impl App {
             active_modified: false,
             close_tab_pending: None,
             menu_bar_open: false,
+            atlas_dialog: None,
             pending_recovery: {
                 let found = crate::recovery::pending(&crate::recovery::default_dir());
                 if found.is_empty() { None } else { Some(found) }
@@ -1393,6 +1400,7 @@ impl App {
     /// Used to enforce one-modal-at-a-time: no second dialog can open while one is already open.
     fn any_modal_open(&self) -> bool {
         self.pending_recovery.is_some()
+            || self.atlas_dialog.is_some()
             || self.show_new_dialog
             || self.show_resize_tilemap_dialog
             || self.close_tab_pending.is_some()
@@ -6452,7 +6460,7 @@ impl App {
                         let projected_w = w + h;
                         let projected_h = (w + h) * 0.5 + num_layers;
                         self.canvas.zoom_to_fit(fit_rect, projected_w.ceil() as u32, projected_h.ceil() as u32);
-                    } else if self.project.mode.is_three_d() {
+                    } else if self.project.mode.is_three_d() && !self.three_d.texture_view {
                         let radius = self
                             .project
                             .mesh3d
@@ -6470,7 +6478,7 @@ impl App {
                     }
                     self.pending_zoom_fit = false;
                 }
-                if self.project.mode.is_three_d() {
+                if self.project.mode.is_three_d() && !self.three_d.texture_view {
                     let active_tool = self.active_tool.clone();
                     let pending_add = self.pending_add_primitive.take();
                     let out = crate::three_d::workspace::draw(
@@ -6491,6 +6499,9 @@ impl App {
                     if out.modified {
                         self.active_modified = true;
                     }
+                    if out.toggle_texture_view && !self.any_modal_open() {
+                        self.toggle_texture_view();
+                    }
                     return;
                 }
                 let painter = ui.painter_at(canvas_rect);
@@ -6505,6 +6516,33 @@ impl App {
                         disp_h,
                         &self.theme,
                     );
+                }
+                if self.project.mode.is_three_d() && self.three_d.texture_view {
+                    self.draw_island_overlay(ui, canvas_rect);
+                    // Way back, mirrored from the 3D view's button.
+                    let label = "3D view (Tab)";
+                    let w = 14.0 + label.len() as f32 * 6.5;
+                    let rect = egui::Rect::from_min_size(
+                        Pos2::new(canvas_rect.max.x - w - 8.0, canvas_rect.min.y + 8.0),
+                        Vec2::new(w, 24.0),
+                    );
+                    let resp = ui.interact(
+                        rect,
+                        ui.id().with("texture_view_back"),
+                        egui::Sense::click(),
+                    );
+                    let bg = if resp.hovered() { self.theme.surface } else { self.theme.panel };
+                    painter.rect_filled(rect, 3.0, bg);
+                    painter.text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        label,
+                        FontId::proportional(11.0),
+                        self.theme.fg,
+                    );
+                    if resp.clicked() && !self.any_modal_open() {
+                        self.toggle_texture_view();
+                    }
                 }
                 // Ctrl + scroll on Pencil/Eraser → adjust pen size (accumulated, finer control)
                 let is_brush = matches!(self.active_tool, ActiveTool::Pencil | ActiveTool::Eraser);
@@ -8088,6 +8126,51 @@ print("FAIL")
     }
 
     fn draw_preview_content(&mut self, ui: &mut egui::Ui) {
+        // Texture view swaps the panes: the model renders here while the
+        // atlas occupies the main window. Drag to orbit — the camera is the
+        // same one the main 3D view uses, so the angle carries across Tab.
+        if self.project.mode.is_three_d() && self.three_d.texture_view {
+            if let Some(mesh) = self.project.mesh3d.as_ref() {
+                let avail = ui.available_width().max(40.0);
+                let (rect, resp) =
+                    ui.allocate_exact_size(Vec2::new(avail, avail), egui::Sense::drag());
+                if resp.dragged() {
+                    self.three_d.camera.orbit(resp.drag_delta());
+                }
+                let painter = ui.painter_at(rect);
+                painter.rect_filled(rect, 3.0, self.theme.bg);
+                let radius = mesh
+                    .vertices
+                    .iter()
+                    .fold(4.0f32, |acc, v| acc.max(v[0].abs()).max(v[1].abs()).max(v[2].abs()));
+                let mut cam = self.three_d.camera;
+                cam.zoom_to_fit(radius * 1.6, rect);
+                let atlas = (self.project.canvas_width, self.project.canvas_height);
+                let scene = crate::three_d::render::build_scene_styled(
+                    mesh,
+                    &cam,
+                    rect,
+                    atlas,
+                    self.three_d.shading,
+                );
+                if let Some(texture) = self.canvas.texture.as_ref() {
+                    if self.three_d.shading == crate::three_d::Shading::Dither {
+                        let patterns = crate::three_d::render::dither_patterns(ui.ctx());
+                        let cell = (cam.zoom * 0.5).clamp(2.0, 8.0);
+                        crate::three_d::render::paint_scene_dithered(
+                            &painter,
+                            &scene,
+                            texture.id(),
+                            &patterns,
+                            cell,
+                        );
+                    } else {
+                        crate::three_d::render::paint_scene(&painter, &scene, texture.id());
+                    }
+                }
+            }
+            return;
+        }
         if self.project.mode == crate::project::ProjectMode::SpriteStack {
             let frame = self.project.active_frame_ref();
             let w = self.project.canvas_width;
@@ -12091,6 +12174,8 @@ print("FAIL")
                                         ("Shift + Click (Move tool)", "Add models to the selection; drag moves them all"),
                                         ("⌘A / ^A", "Select all models"),
                                         ("⌘D / ^D", "Duplicate selected models"),
+                                        ("Tab", "Swap 3D view ↔ texture painting"),
+                                        ("Drag island (Select/Move)", "Hand-pack the atlas in texture view"),
                                         ("Delete / Backspace", "Delete selected faces or vertices"),
                                         ("Shift + Click", "Add/remove from selection"),
                                         ("Alt + Click", "Select the vertex/edge behind (stacked in line)"),
@@ -12148,6 +12233,320 @@ print("FAIL")
     // ─────────────────────────────────────────────────────────────────────────
     // Crash-recovery prompt (shown at launch when snapshots survived)
     // ─────────────────────────────────────────────────────────────────────────
+
+    /// Whether the atlas size prompt is currently showing (tests).
+    pub fn atlas_dialog_open(&self) -> bool {
+        self.atlas_dialog.is_some()
+    }
+
+    /// Dismiss the atlas size prompt, keeping the current size (tests).
+    pub fn dismiss_atlas_dialog(&mut self) {
+        self.atlas_dialog = None;
+    }
+
+    /// Swap between the 3D viewport and direct texture painting. The first
+    /// entry into the texture view offers the atlas size dialog — the
+    /// texture's size is its own choice, not the model's.
+    pub fn toggle_texture_view(&mut self) {
+        self.three_d.texture_view = !self.three_d.texture_view;
+        self.three_d.island_drag = None;
+        self.canvas_dirty = true;
+        self.pending_zoom_fit = true;
+        if self.three_d.texture_view && !self.three_d.atlas_prompted {
+            self.three_d.atlas_prompted = true;
+            self.atlas_dialog = Some((
+                self.project.canvas_width.to_string(),
+                self.project.canvas_height.to_string(),
+            ));
+        }
+    }
+
+    /// Island overlay for the texture view: every face's atlas rectangle
+    /// outlined over the canvas, the 3D selection highlighted, and — with the
+    /// Select or Move tool — click-to-select plus drag-to-move for
+    /// hand-packing. The 3D face selection and this one are the same state,
+    /// so a face picked in the 3D view arrives here already selected.
+    fn draw_island_overlay(&mut self, ui: &mut egui::Ui, canvas_rect: egui::Rect) {
+        let Some(mesh) = self.project.mesh3d.as_ref() else { return };
+        let (aw, ah) = (self.project.canvas_width, self.project.canvas_height);
+        let art = self.canvas.art_rect(canvas_rect, aw, ah);
+        let zoom = self.canvas.zoom;
+        let painter = ui.painter_at(canvas_rect);
+        let accent = self.theme.accent;
+
+        let island_rect = |isl: crate::three_d::mesh::Island| {
+            egui::Rect::from_min_size(
+                Pos2::new(art.min.x + isl.x as f32 * zoom, art.min.y + isl.y as f32 * zoom),
+                Vec2::new(isl.w as f32 * zoom, isl.h as f32 * zoom),
+            )
+        };
+        for face in &mesh.faces {
+            if face.island.w > 0 {
+                painter.rect_stroke(
+                    island_rect(face.island),
+                    0.0,
+                    egui::Stroke::new(1.0, Color32::from_white_alpha(40)),
+                    egui::StrokeKind::Inside,
+                );
+            }
+        }
+        let drag_delta = self.three_d.island_drag.map(|(_, d)| d).unwrap_or((0, 0));
+        for &fi in &self.three_d.sel_faces {
+            let Some(face) = mesh.faces.get(fi as usize) else { continue };
+            let mut r = island_rect(face.island);
+            r = r.translate(Vec2::new(
+                drag_delta.0 as f32 * zoom,
+                drag_delta.1 as f32 * zoom,
+            ));
+            painter.rect_filled(r, 0.0, accent.linear_multiply(0.15));
+            painter.rect_stroke(r, 0.0, egui::Stroke::new(2.0, accent), egui::StrokeKind::Inside);
+        }
+
+        // ── Input: select + hand-pack (Select/Move tools only; painting
+        // tools keep painting the atlas underneath) ──────────────────────
+        if !matches!(self.active_tool, ActiveTool::Select3D | ActiveTool::MoveObject) {
+            return;
+        }
+        let pointer = ui.input(|i| i.pointer.hover_pos());
+        let over_canvas = pointer.is_some_and(|p| canvas_rect.contains(p));
+        let texel_at = |p: Pos2| -> (i32, i32) {
+            (((p.x - art.min.x) / zoom).floor() as i32, ((p.y - art.min.y) / zoom).floor() as i32)
+        };
+        let pressed = ui.input(|i| i.pointer.primary_pressed()) && over_canvas;
+        let released = ui.input(|i| i.pointer.primary_released());
+        let down = ui.input(|i| i.pointer.primary_down());
+        let shift = ui.input(|i| i.modifiers.shift);
+
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.three_d.sel_faces.clear();
+            self.three_d.island_drag = None;
+        }
+
+        if pressed {
+            if let Some(p) = pointer {
+                let (tx, ty) = texel_at(p);
+                // Topmost island under the cursor (later faces draw later).
+                let hit = mesh.faces.iter().enumerate().rev().find(|(_, f)| {
+                    let o = f.island;
+                    o.w > 0
+                        && tx >= o.x as i32
+                        && ty >= o.y as i32
+                        && tx < (o.x + o.w) as i32
+                        && ty < (o.y + o.h) as i32
+                });
+                match hit {
+                    Some((fi, _)) => {
+                        let fi = fi as u32;
+                        if shift {
+                            if let Some(idx) =
+                                self.three_d.sel_faces.iter().position(|&f| f == fi)
+                            {
+                                self.three_d.sel_faces.remove(idx);
+                            } else {
+                                self.three_d.sel_faces.push(fi);
+                            }
+                        } else {
+                            if !self.three_d.sel_faces.contains(&fi) {
+                                self.three_d.sel_faces = vec![fi];
+                            }
+                            self.three_d.island_drag = Some(((tx, ty), (0, 0)));
+                        }
+                    }
+                    None if !shift => self.three_d.sel_faces.clear(),
+                    None => {}
+                }
+            }
+        }
+
+        if down {
+            if let (Some(((sx, sy), _)), Some(p)) = (self.three_d.island_drag, pointer) {
+                let (tx, ty) = texel_at(p);
+                self.three_d.island_drag = Some(((sx, sy), (tx - sx, ty - sy)));
+            }
+        }
+
+        if released {
+            if let Some((_, delta)) = self.three_d.island_drag.take() {
+                if delta != (0, 0) && !self.three_d.sel_faces.is_empty() {
+                    let before = mesh.clone();
+                    let sel = self.three_d.sel_faces.clone();
+                    let li = self.project.active_layer;
+                    if let Some(layer) =
+                        self.project.animations[0].frames[0].layers.get(li).cloned()
+                    {
+                        if let Ok(outcome) = crate::three_d::edit::move_islands(
+                            &before, &layer, &sel, delta, (aw, ah),
+                        ) {
+                            if outcome.mesh != before {
+                                let frame = &mut self.project.animations[0].frames[0];
+                                if let Some(l) = frame.layers.get_mut(li) {
+                                    for &(x, y, _, new) in &outcome.pixel_edits {
+                                        l.set_pixel(x, y, new);
+                                    }
+                                }
+                                frame.dirty = true;
+                                self.undo_stack.push(Command::MeshEdit {
+                                    before,
+                                    after: outcome.mesh.clone(),
+                                    layer_id: li,
+                                    pixel_edits: outcome.pixel_edits,
+                                });
+                                self.project.mesh3d = Some(outcome.mesh);
+                                self.canvas_dirty = true;
+                                self.active_modified = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Resize the texture atlas to `w`×`h`, carrying every island's paint.
+    /// The atlas is independent of the model's dimensions — this is the
+    /// texture-view size choice. Returns false when the islands cannot fit
+    /// the requested size (the dialog stays open so a larger one can be
+    /// picked). Clears history: undo entries reference old atlas positions.
+    pub fn apply_atlas_size(&mut self, w: u32, h: u32) -> bool {
+        let (w, h) = (w.clamp(16, 4096), h.clamp(16, 4096));
+        if (w, h) == (self.project.canvas_width, self.project.canvas_height) {
+            return true;
+        }
+        let Some(mesh) = self.project.mesh3d.clone() else { return false };
+        if mesh.manual_layout {
+            // Hand-packed islands are kept verbatim, so they simply must fit.
+            let ok = mesh.faces.iter().all(|f| {
+                (f.island.x + f.island.w) as u32 <= w && (f.island.y + f.island.h) as u32 <= h
+            });
+            if !ok {
+                return false;
+            }
+        }
+        let Some(layer) = self.project.animations[0].frames[0].layers.first().cloned() else {
+            return false;
+        };
+        let Ok(outcome) = crate::three_d::edit::relayout_existing(&mesh, &layer, (w, h), false)
+        else {
+            return false;
+        };
+        for anim in &mut self.project.animations {
+            for frame in &mut anim.frames {
+                frame.resize_canvas(w, h);
+            }
+        }
+        self.project.canvas_width = w;
+        self.project.canvas_height = h;
+        let frame = &mut self.project.animations[0].frames[0];
+        if let Some(l) = frame.layers.first_mut() {
+            for &(x, y, _, new) in &outcome.pixel_edits {
+                l.set_pixel(x, y, new);
+            }
+        }
+        frame.dirty = true;
+        self.project.mesh3d = Some(outcome.mesh);
+        self.undo_stack = UndoStack::new();
+        self.active_modified = true;
+        self.canvas_dirty = true;
+        self.pending_zoom_fit = true;
+        true
+    }
+
+    /// The texture-view atlas size prompt: Cmd+N-style width/height fields.
+    fn draw_atlas_size_dialog(&mut self, ctx: &egui::Context) {
+        let Some((mut w_str, mut h_str)) = self.atlas_dialog.clone() else { return };
+        let theme = self.theme.clone();
+        let mut action: Option<u8> = None; // 0 = apply, 1 = cancel
+
+        let screen = ctx.screen_rect();
+        egui::Area::new("atlas_size_dim".into())
+            .fixed_pos(Pos2::ZERO)
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                ui.painter().rect_filled(screen, 0.0, Color32::from_black_alpha(120));
+            });
+
+        egui::Area::new("atlas_size_popup".into())
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                Frame::new()
+                    .fill(theme.panel)
+                    .corner_radius(egui::CornerRadius::same(6))
+                    .shadow(egui::Shadow {
+                        offset: [0, 14],
+                        blur: 36,
+                        spread: 0,
+                        color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
+                    })
+                    .inner_margin(Margin { left: 12, right: 12, top: 0, bottom: 10 })
+                    .show(ui, |ui| {
+                        let row_w = 220.0;
+                        ui.set_width(row_w);
+                        ui.add_space(10.0);
+                        ui.vertical_centered(|ui| {
+                            ui.label(
+                                RichText::new("Texture size")
+                                    .color(theme.fg)
+                                    .font(FontId::new(FONT_SIZE_SM, FontFamily::Name("bold".into()))),
+                            );
+                            ui.add_space(2.0);
+                            ui.label(
+                                RichText::new("Independent of the model — pick the atlas you want to paint")
+                                    .color(theme.fg_desc)
+                                    .font(FontId::new(10.0, FontFamily::Proportional)),
+                            );
+                        });
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            ui.add_space(24.0);
+                            ui.label(RichText::new("W").color(theme.fg_desc));
+                            ui.add(
+                                egui::TextEdit::singleline(&mut w_str)
+                                    .desired_width(56.0)
+                                    .font(FontId::proportional(12.0)),
+                            );
+                            ui.add_space(12.0);
+                            ui.label(RichText::new("H").color(theme.fg_desc));
+                            ui.add(
+                                egui::TextEdit::singleline(&mut h_str)
+                                    .desired_width(56.0)
+                                    .font(FontId::proportional(12.0)),
+                            );
+                        });
+                        ui.add_space(10.0);
+                        ui.horizontal(|ui| {
+                            ui.add_space(44.0);
+                            if ui.button("Apply").clicked()
+                                || ui.input(|i| i.key_pressed(egui::Key::Enter))
+                            {
+                                action = Some(0);
+                            }
+                            ui.add_space(8.0);
+                            if ui.button("Keep current").clicked()
+                                || ui.input(|i| i.key_pressed(egui::Key::Escape))
+                            {
+                                action = Some(1);
+                            }
+                        });
+                    });
+            });
+
+        self.atlas_dialog = Some((w_str.clone(), h_str.clone()));
+        match action {
+            Some(0) => {
+                let (w, h) = (
+                    w_str.trim().parse::<u32>().unwrap_or(0),
+                    h_str.trim().parse::<u32>().unwrap_or(0),
+                );
+                if w > 0 && h > 0 && self.apply_atlas_size(w, h) {
+                    self.atlas_dialog = None;
+                }
+                // On failure the dialog stays: pick a size the islands fit.
+            }
+            Some(1) => self.atlas_dialog = None,
+            _ => {}
+        }
+    }
 
     fn draw_recovery_dialog(&mut self, ctx: &egui::Context) {
         let Some(entries) = self.pending_recovery.as_ref() else { return };
@@ -13131,7 +13530,26 @@ impl App {
             self.canvas_dirty = true;
         }
 
+        // Tab: swap the 3D view and the texture (the atlas becomes the main
+        // canvas for direct painting; the model moves to the preview panel).
+        // First entry offers the atlas size dialog. Deliberately NOT gated on
+        // wants_keyboard_input: egui's own Tab focus-traversal parks focus on
+        // whatever sidebar field it finds, which would permanently eat the
+        // shortcut — so the view toggle wins and strips that stray focus.
+        if self.project.mode.is_three_d()
+            && ctx.input(|i| i.key_pressed(egui::Key::Tab))
+            && !self.any_modal_open()
+        {
+            ctx.memory_mut(|m| {
+                if let Some(id) = m.focused() {
+                    m.surrender_focus(id);
+                }
+            });
+            self.toggle_texture_view();
+        }
+
         if !ctx.wants_keyboard_input() {
+
             if ctx.input(|i| i.key_pressed(egui::Key::Enter)) && (self.select_state.has_float() || self.select_state.has_selection()) {
                 if self.select_state.has_float() {
                     self.commit_float_to_layer();
@@ -13519,6 +13937,7 @@ impl App {
             &mut self.project,
         );
         self.draw_save_confirm_dialog(ctx);
+        self.draw_atlas_size_dialog(ctx);
         self.draw_recovery_dialog(ctx); // topmost: launch-time restore prompt
         self.draw_anim_tile_menu(ctx);
         self.draw_tab_resize_menu(ctx);
