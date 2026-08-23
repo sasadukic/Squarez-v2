@@ -12491,33 +12491,45 @@ print("FAIL")
     pub fn commit_island_move(&mut self, sel: &[u32], delta: (i32, i32)) -> bool {
         let Some(before) = self.project.mesh3d.clone() else { return false };
         let (aw, ah) = (self.project.canvas_width, self.project.canvas_height);
-        let li = self.project.active_layer;
-        let Some(layer) = self.project.animations[0].frames[0].layers.get(li).cloned() else {
-            return false;
-        };
-        let Ok(outcome) = crate::three_d::edit::move_islands(&before, &layer, sel, delta, (aw, ah))
-        else {
-            return false;
-        };
-        if outcome.mesh == before {
-            return false;
+        // The move is a pure island permutation: run it against every texture
+        // layer so all of them ride along.
+        let mut layer_edits: Vec<(usize, Vec<crate::tools::PixelEdit>)> = Vec::new();
+        let mut after: Option<crate::three_d::mesh::Mesh> = None;
+        for (idx, layer) in self.project.animations[0].frames[0].layers.iter().enumerate() {
+            if layer.is_group || layer.pixels.is_empty() {
+                continue;
+            }
+            let Ok(outcome) =
+                crate::three_d::edit::move_islands(&before, layer, sel, delta, (aw, ah))
+            else {
+                return false;
+            };
+            if outcome.mesh == before {
+                return false;
+            }
+            if !outcome.pixel_edits.is_empty() {
+                layer_edits.push((idx, outcome.pixel_edits));
+            }
+            after = Some(outcome.mesh);
         }
+        let Some(after) = after else { return false };
         let frame = &mut self.project.animations[0].frames[0];
-        if let Some(l) = frame.layers.get_mut(li) {
-            for &(x, y, _, new) in &outcome.pixel_edits {
-                l.set_pixel(x, y, new);
+        for (idx, edits) in &layer_edits {
+            if let Some(l) = frame.layers.get_mut(*idx) {
+                for &(x, y, _, new) in edits {
+                    l.set_pixel(x, y, new);
+                }
             }
         }
         frame.dirty = true;
         self.undo_stack.push(Command::MeshEdit {
             before,
-            after: outcome.mesh.clone(),
-            layer_id: li,
+            after: after.clone(),
             canvas_before: (aw, ah),
             canvas_after: (aw, ah),
-            pixel_edits: outcome.pixel_edits,
+            layer_edits,
         });
-        self.project.mesh3d = Some(outcome.mesh);
+        self.project.mesh3d = Some(after);
         self.canvas_dirty = true;
         self.active_modified = true;
         true
@@ -12666,13 +12678,23 @@ print("FAIL")
                 return false;
             }
         }
-        let Some(layer) = self.project.animations[0].frames[0].layers.first().cloned() else {
-            return false;
-        };
-        let Ok(outcome) = crate::three_d::edit::relayout_existing(&mesh, &layer, (w, h), false)
-        else {
-            return false;
-        };
+        // Relayout every texture layer for the new atlas.
+        let mut layer_edits: Vec<(usize, Vec<crate::tools::PixelEdit>)> = Vec::new();
+        let mut after: Option<crate::three_d::mesh::Mesh> = None;
+        for (idx, layer) in self.project.animations[0].frames[0].layers.iter().enumerate() {
+            if layer.is_group || layer.pixels.is_empty() {
+                continue;
+            }
+            let Ok(outcome) = crate::three_d::edit::relayout_existing(&mesh, layer, (w, h), false)
+            else {
+                return false;
+            };
+            if !outcome.pixel_edits.is_empty() {
+                layer_edits.push((idx, outcome.pixel_edits));
+            }
+            after = Some(outcome.mesh);
+        }
+        let Some(after) = after else { return false };
         let canvas_before = (self.project.canvas_width, self.project.canvas_height);
         for anim in &mut self.project.animations {
             for frame in &mut anim.frames {
@@ -12682,9 +12704,11 @@ print("FAIL")
         self.project.canvas_width = w;
         self.project.canvas_height = h;
         let frame = &mut self.project.animations[0].frames[0];
-        if let Some(l) = frame.layers.first_mut() {
-            for &(x, y, _, new) in &outcome.pixel_edits {
-                l.set_pixel(x, y, new);
+        for (idx, edits) in &layer_edits {
+            if let Some(l) = frame.layers.get_mut(*idx) {
+                for &(x, y, _, new) in edits {
+                    l.set_pixel(x, y, new);
+                }
             }
         }
         frame.dirty = true;
@@ -12693,13 +12717,12 @@ print("FAIL")
         // right after picking an atlas size.)
         self.undo_stack.push(Command::MeshEdit {
             before: mesh,
-            after: outcome.mesh.clone(),
-            layer_id: 0,
+            after: after.clone(),
             canvas_before,
             canvas_after: (w, h),
-            pixel_edits: outcome.pixel_edits,
+            layer_edits,
         });
-        self.project.mesh3d = Some(outcome.mesh);
+        self.project.mesh3d = Some(after);
         self.active_modified = true;
         self.canvas_dirty = true;
         self.pending_zoom_fit = true;

@@ -56,10 +56,9 @@ fn extrude_undo_redo_in_3d() {
     stack.push(Command::MeshEdit {
         before: before.clone(),
         after: out.mesh.clone(),
-        layer_id: 0,
         canvas_before: (p.canvas_width, p.canvas_height),
         canvas_after: (p.canvas_width, p.canvas_height),
-        pixel_edits: out.pixel_edits.clone(),
+        layer_edits: vec![(0, out.pixel_edits.clone())],
     });
     assert_eq!(p.mesh3d.as_ref().unwrap().faces.len(), 10);
 
@@ -101,10 +100,9 @@ fn undo_restores_a_layout_shifting_edit_texel_for_texel() {
     stack.push(Command::MeshEdit {
         before: mesh_before.clone(),
         after: out.mesh.clone(),
-        layer_id: 0,
         canvas_before: (p.canvas_width, p.canvas_height),
         canvas_after: (p.canvas_width, p.canvas_height),
-        pixel_edits: out.pixel_edits.clone(),
+        layer_edits: vec![(0, out.pixel_edits.clone())],
     });
     p.mesh3d = Some(out.mesh);
     assert_ne!(

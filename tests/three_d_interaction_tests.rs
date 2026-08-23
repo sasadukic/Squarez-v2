@@ -118,10 +118,9 @@ fn dangling_drag_cannot_clobber_an_undo() {
     app.undo_stack.push(squarez::history::Command::MeshEdit {
         before: pristine.clone(),
         after: out.mesh.clone(),
-        layer_id: 0,
         canvas_before: (128, 128),
         canvas_after: (128, 128),
-        pixel_edits: out.pixel_edits.clone(),
+        layer_edits: vec![(0, out.pixel_edits.clone())],
     });
 
     // Simulate a drag gesture whose release was never observed (e.g. the
@@ -769,4 +768,69 @@ fn rotate_tool_drag_spins_in_quarter_steps_and_undoes() {
     frame(&ctx, &mut app, vec![], Modifiers::default());
     assert_eq!(app.project.mesh3d.as_ref().unwrap(), &mesh_before, "sub-step drag is a no-op");
     assert_eq!(app.undo_stack.can_undo(), before, "no undo entry for a no-op drag");
+}
+
+#[test]
+fn overlay_layer_paint_rides_geometry_edits() {
+    let ctx = egui::Context::default();
+    let mut app = App::new_with(&ctx, None);
+    app.open_project_for_test(three_d_project());
+    app.active_tool = ActiveTool::MoveObject;
+    for _ in 0..3 {
+        frame(&ctx, &mut app, vec![], Modifiers::default());
+    }
+
+    // Add an overlay layer above the base texture and mark a texel of face 2
+    // on it (in the island's own frame so we can chase it later).
+    {
+        let (w, h) = (app.project.canvas_width, app.project.canvas_height);
+        let name = "Overlay".to_string();
+        let id = app.project.next_layer_id();
+        app.undo_stack.push(squarez::history::Command::AddLayer { index: 1, name: name.clone(), id });
+        for anim in &mut app.project.animations {
+            for f in &mut anim.frames {
+                f.layers.push(squarez::project::Layer::new_with_id(name.clone(), w, h, id));
+            }
+        }
+    }
+    let isl0 = app.project.mesh3d.as_ref().unwrap().faces[2].island;
+    let mark = [250, 40, 200, 255];
+    app.project.animations[0].frames[0].layers[1].set_pixel(isl0.x as u32 + 3, isl0.y as u32 + 2, mark);
+    let base_before = app.project.animations[0].frames[0].layers[0].pixels.clone();
+    let overlay_before = app.project.animations[0].frames[0].layers[1].pixels.clone();
+    let mesh_before = app.project.mesh3d.clone().unwrap();
+
+    // Drag the object one unit with the Move tool (active layer = base = 0).
+    app.project.active_layer = 0;
+    let p = model_point();
+    frame(&ctx, &mut app, vec![
+        egui::Event::PointerMoved(p),
+        egui::Event::PointerButton { pos: p, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::default() },
+    ], Modifiers::default());
+    for i in 1..=5 {
+        let q = Pos2::new(p.x + i as f32 * 12.0, p.y);
+        frame(&ctx, &mut app, vec![egui::Event::PointerMoved(q)], Modifiers::default());
+    }
+    let q = Pos2::new(p.x + 60.0, p.y);
+    frame(&ctx, &mut app, vec![
+        egui::Event::PointerButton { pos: q, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::default() },
+    ], Modifiers::default());
+    frame(&ctx, &mut app, vec![], Modifiers::default());
+    let mesh_after = app.project.mesh3d.clone().unwrap();
+    assert_ne!(mesh_after.vertices, mesh_before.vertices, "the drag must move the object");
+
+    // The overlay marker sits at the same island-relative spot of face 2's
+    // (possibly moved) island.
+    let isl1 = mesh_after.faces[2].island;
+    assert_eq!(
+        app.project.animations[0].frames[0].layers[1].get_pixel(isl1.x as u32 + 3, isl1.y as u32 + 2),
+        mark,
+        "overlay paint must ride the island"
+    );
+
+    // One undo restores BOTH layers byte-identically.
+    frame(&ctx, &mut app, vec![key_event_z(&ctx)], Modifiers::COMMAND);
+    assert_eq!(app.project.mesh3d.as_ref().unwrap().vertices, mesh_before.vertices);
+    assert_eq!(app.project.animations[0].frames[0].layers[0].pixels, base_before, "base restored");
+    assert_eq!(app.project.animations[0].frames[0].layers[1].pixels, overlay_before, "overlay restored");
 }

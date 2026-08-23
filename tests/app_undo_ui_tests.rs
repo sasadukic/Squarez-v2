@@ -50,10 +50,9 @@ fn cmd_z_undoes_a_3d_mesh_edit() {
     app.undo_stack.push(Command::MeshEdit {
         before: before.clone(),
         after: after.clone(),
-        layer_id: 0,
         canvas_before: (app.project.canvas_width, app.project.canvas_height),
         canvas_after: (app.project.canvas_width, app.project.canvas_height),
-        pixel_edits: Vec::new(),
+        layer_edits: vec![(0, Vec::new())],
     });
 
     frame_with(&ctx, &mut app, vec![]); // settle one frame

@@ -188,10 +188,9 @@ fn undo_walks_the_full_operation_chain_both_ways() {
         app.undo_stack.push(squarez::history::Command::MeshEdit {
             before: mesh,
             after: out.mesh.clone(),
-            layer_id: 0,
             canvas_before: canvas,
             canvas_after: canvas,
-            pixel_edits: out.pixel_edits,
+            layer_edits: vec![(0, out.pixel_edits)],
         });
         app.project.mesh3d = Some(out.mesh);
     }

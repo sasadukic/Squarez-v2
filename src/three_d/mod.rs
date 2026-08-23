@@ -458,12 +458,31 @@ pub fn migrate_layout(project: &mut crate::project::Project) -> bool {
         match edit::relayout_existing(&mesh, layer, atlas, true) {
             Ok(outcome) => {
                 let moved = outcome.mesh;
+                // Every texture layer rides the migration, not just the base.
+                let mut extra: Vec<(usize, Vec<(u32, u32, Rgba, Rgba)>)> = Vec::new();
+                for (idx, other) in
+                    project.animations[0].frames[0].layers.iter().enumerate().skip(1)
+                {
+                    if other.is_group || other.pixels.is_empty() {
+                        continue;
+                    }
+                    if let Ok(o) = edit::relayout_existing(&mesh, other, atlas, true) {
+                        extra.push((idx, o.pixel_edits));
+                    }
+                }
                 let frame = &mut project.animations[0].frames[0];
                 if let Some(layer) = frame.layers.first_mut() {
                     for &(x, y, _, new) in &outcome.pixel_edits {
                         layer.set_pixel(x, y, new);
                     }
                     heal_checker_rims(layer, &moved);
+                }
+                for (idx, edits) in extra {
+                    if let Some(layer) = frame.layers.get_mut(idx) {
+                        for &(x, y, _, new) in &edits {
+                            layer.set_pixel(x, y, new);
+                        }
+                    }
                 }
                 frame.dirty = true;
                 project.mesh3d = Some(moved);

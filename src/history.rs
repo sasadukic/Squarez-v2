@@ -80,10 +80,11 @@ pub enum Command {
     MeshEdit {
         before: crate::three_d::mesh::Mesh,
         after: crate::three_d::mesh::Mesh,
-        layer_id: usize,
         canvas_before: (u32, u32),
         canvas_after: (u32, u32),
-        pixel_edits: Vec<(u32, u32, Rgba, Rgba)>, // (x, y, old, new)
+        /// Pixel edits per layer index — a geometry edit moves islands, and
+        /// every texture layer's pixels ride along, not just the active one.
+        layer_edits: Vec<(usize, Vec<(u32, u32, Rgba, Rgba)>)>, // (x, y, old, new)
     },
 }
 
@@ -314,7 +315,7 @@ pub fn apply_command(project: &mut Project, color_state: Option<&mut ColorState>
                 }
             }
         }
-        Command::MeshEdit { before, after, layer_id, canvas_before, canvas_after, pixel_edits } => {
+        Command::MeshEdit { before, after, canvas_before, canvas_after, layer_edits } => {
             let resize_to = |project: &mut Project, (w, h): (u32, u32)| {
                 if (project.canvas_width, project.canvas_height) == (w, h) {
                     return;
@@ -329,9 +330,11 @@ pub fn apply_command(project: &mut Project, color_state: Option<&mut ColorState>
             };
             let apply_pixels = |project: &mut Project, forward: bool| {
                 let frame = &mut project.animations[0].frames[0];
-                if let Some(layer) = frame.layers.get_mut(*layer_id) {
-                    for &(x, y, old, new) in pixel_edits {
-                        layer.set_pixel(x, y, if forward { new } else { old });
+                for (layer_id, edits) in layer_edits {
+                    if let Some(layer) = frame.layers.get_mut(*layer_id) {
+                        for &(x, y, old, new) in edits {
+                            layer.set_pixel(x, y, if forward { new } else { old });
+                        }
                     }
                 }
             };
