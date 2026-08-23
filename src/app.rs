@@ -81,6 +81,9 @@ pub struct App {
     menu_bar_open: bool,
     /// Atlas size prompt for the 3D texture view: (width, height) inputs.
     atlas_dialog: Option<(String, String)>,
+    /// Cmd+N-style prompt for a primitive about to be added:
+    /// (shape, size string, sides string).
+    add_shape_dialog: Option<(crate::three_d::edit::Primitive, String, String)>,
     drag_start: Option<(u32, u32)>,
     stroke_edits: Vec<crate::tools::PixelEdit>,
     last_pencil_pos: Option<(u32, u32)>,
@@ -1012,6 +1015,7 @@ impl App {
             close_tab_pending: None,
             menu_bar_open: false,
             atlas_dialog: None,
+            add_shape_dialog: None,
             pending_recovery: {
                 let found = crate::recovery::pending(&crate::recovery::default_dir());
                 if found.is_empty() { None } else { Some(found) }
@@ -1408,6 +1412,7 @@ impl App {
     fn any_modal_open(&self) -> bool {
         self.pending_recovery.is_some()
             || self.atlas_dialog.is_some()
+            || self.add_shape_dialog.is_some()
             || self.show_new_dialog
             || self.show_resize_tilemap_dialog
             || self.close_tab_pending.is_some()
@@ -3322,12 +3327,6 @@ impl App {
             (Primitive::Plane, "Plane"),
         ];
         let mut picked: Option<Primitive> = None;
-        let mut sides = self.add3d_sides;
-        let mut size = self.add3d_size;
-        // The grid caps how many sides survive integer rounding; the sphere's
-        // pole rings are half the radius, so it is the tighter constraint.
-        let radius_for_cap = size as f32 / 4.0;
-        let max_sides = crate::three_d::mesh::Mesh::max_sides_for_radius(radius_for_cap);
         let resp = egui::Area::new(egui::Id::new("add3d_menu"))
             .order(egui::Order::Foreground)
             .fixed_pos(Pos2::new(slot_rect.right(), slot_rect.top()))
@@ -3342,7 +3341,6 @@ impl App {
                     })
                     .inner_margin(Margin::same(6))
                     .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing = Vec2::new(0.0, 4.0);
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing = Vec2::ZERO;
                             for (prim, name) in prims {
@@ -3353,30 +3351,12 @@ impl App {
                                 }
                             }
                         });
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("Size").color(theme.fg_desc).font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional)));
-                            ui.add(egui::DragValue::new(&mut size).range(2..=32).speed(0.1));
-                            ui.add_space(8.0);
-                            ui.label(RichText::new("Sides").color(theme.fg_desc).font(FontId::new(FONT_SIZE_SM, FontFamily::Proportional)));
-                            ui.add(egui::DragValue::new(&mut sides).range(3..=max_sides).speed(0.1));
-                        });
-                        ui.label(
-                            RichText::new(format!("max {} sides at this size", max_sides))
-                                .color(theme.fg_muted)
-                                .font(FontId::new(FONT_SIZE_SM - 1.0, FontFamily::Proportional)),
-                        );
                     });
             })
             .response;
-        self.add3d_sides = sides.clamp(3, max_sides);
-        self.add3d_size = size;
         if let Some(prim) = picked {
-            self.pending_add_primitive = Some(crate::three_d::edit::AddPrimitive {
-                kind: prim,
-                sides: self.add3d_sides,
-                size: self.add3d_size,
-            });
-            self.add3d_group_current = prim;
+            // The size options live in a Cmd+N-style dialog, not the flyout.
+            self.open_add_shape_dialog(prim);
             self.open_add3d_menu = false;
         } else {
             // Click outside both the flyout and its slot → close.
@@ -12798,6 +12778,176 @@ print("FAIL")
         }
     }
 
+    /// Open the Cmd+N-style prompt for the primitive about to be generated.
+    /// The flyout's shape click lands here; tests drive it directly.
+    pub fn open_add_shape_dialog(&mut self, kind: crate::three_d::edit::Primitive) {
+        self.add3d_group_current = kind;
+        self.add_shape_dialog =
+            Some((kind, self.add3d_size.to_string(), self.add3d_sides.to_string()));
+    }
+
+    pub fn add_shape_dialog_open(&self) -> bool {
+        self.add_shape_dialog.is_some()
+    }
+
+    /// Test hook: type into the dialog's fields.
+    pub fn set_add_shape_fields_for_test(&mut self, size: &str, sides: &str) {
+        if let Some((_, size_str, sides_str)) = self.add_shape_dialog.as_mut() {
+            *size_str = size.to_string();
+            *sides_str = sides.to_string();
+        }
+    }
+
+    /// Test hook: the primitive queued for the next workspace frame.
+    pub fn pending_add_primitive_for_test(&self) -> Option<crate::three_d::edit::AddPrimitive> {
+        self.pending_add_primitive
+    }
+
+    /// The dialog's Add action: parse + clamp the fields, queue the
+    /// primitive for the workspace, close. Returns false (dialog stays) on
+    /// an unparsable size, like the atlas prompt.
+    pub fn confirm_add_shape(&mut self) -> bool {
+        let Some((kind, size_str, sides_str)) = self.add_shape_dialog.clone() else {
+            return false;
+        };
+        let Ok(size) = size_str.trim().parse::<u32>() else { return false };
+        if size == 0 {
+            return false;
+        }
+        let size = size.clamp(2, 32);
+        // The grid caps how many sides survive integer rounding; the sphere's
+        // pole rings are half the radius, so it is the tighter constraint.
+        let max_sides =
+            crate::three_d::mesh::Mesh::max_sides_for_radius(size as f32 / 4.0);
+        let sides = sides_str.trim().parse::<u32>().unwrap_or(self.add3d_sides);
+        let sides = sides.clamp(3, max_sides);
+        self.add3d_size = size;
+        self.add3d_sides = sides;
+        self.pending_add_primitive =
+            Some(crate::three_d::edit::AddPrimitive { kind, sides, size });
+        self.add_shape_dialog = None;
+        true
+    }
+
+    /// Cmd+N-style prompt shown when a shape is picked from the Add flyout:
+    /// the size options live here, and confirming generates the primitive.
+    fn draw_add_shape_dialog(&mut self, ctx: &egui::Context) {
+        use crate::three_d::edit::Primitive;
+        let Some((kind, mut size_str, mut sides_str)) = self.add_shape_dialog.clone() else {
+            return;
+        };
+        let theme = self.theme.clone();
+        let mut action: Option<u8> = None; // 0 = add, 1 = cancel
+        let name = match kind {
+            Primitive::Cube => "Cube",
+            Primitive::Sphere => "Sphere",
+            Primitive::Cylinder => "Cylinder",
+            Primitive::Plane => "Plane",
+        };
+        let round = matches!(kind, Primitive::Sphere | Primitive::Cylinder);
+
+        let screen = ctx.screen_rect();
+        egui::Area::new("add_shape_dim".into())
+            .fixed_pos(Pos2::ZERO)
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                ui.painter().rect_filled(screen, 0.0, Color32::from_black_alpha(120));
+            });
+
+        egui::Area::new("add_shape_popup".into())
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                Frame::new()
+                    .fill(theme.panel)
+                    .corner_radius(egui::CornerRadius::same(6))
+                    .shadow(egui::Shadow {
+                        offset: [0, 14],
+                        blur: 36,
+                        spread: 0,
+                        color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
+                    })
+                    .inner_margin(Margin { left: 12, right: 12, top: 0, bottom: 10 })
+                    .show(ui, |ui| {
+                        let row_w = 220.0;
+                        ui.set_width(row_w);
+                        ui.add_space(10.0);
+                        ui.vertical_centered(|ui| {
+                            ui.label(
+                                RichText::new(format!("Add {name}"))
+                                    .color(theme.fg)
+                                    .font(FontId::new(FONT_SIZE_SM, FontFamily::Name("bold".into()))),
+                            );
+                            if round {
+                                let cap = size_str
+                                    .trim()
+                                    .parse::<u32>()
+                                    .ok()
+                                    .filter(|&s| s > 0)
+                                    .map(|s| {
+                                        crate::three_d::mesh::Mesh::max_sides_for_radius(
+                                            s.clamp(2, 32) as f32 / 4.0,
+                                        )
+                                    });
+                                ui.add_space(2.0);
+                                ui.label(
+                                    RichText::new(match cap {
+                                        Some(n) => format!("max {n} sides at this size"),
+                                        None => "size in world units (2-32)".to_string(),
+                                    })
+                                    .color(theme.fg_desc)
+                                    .font(FontId::new(10.0, FontFamily::Proportional)),
+                                );
+                            }
+                        });
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            ui.add_space(24.0);
+                            ui.label(RichText::new("Size").color(theme.fg_desc));
+                            ui.add(
+                                egui::TextEdit::singleline(&mut size_str)
+                                    .desired_width(56.0)
+                                    .font(FontId::proportional(12.0)),
+                            );
+                            if round {
+                                ui.add_space(12.0);
+                                ui.label(RichText::new("Sides").color(theme.fg_desc));
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut sides_str)
+                                        .desired_width(56.0)
+                                        .font(FontId::proportional(12.0)),
+                                );
+                            }
+                        });
+                        ui.add_space(10.0);
+                        ui.horizontal(|ui| {
+                            ui.add_space(44.0);
+                            if ui.button("Add").clicked()
+                                || ui.input(|i| i.key_pressed(egui::Key::Enter))
+                            {
+                                action = Some(0);
+                            }
+                            ui.add_space(8.0);
+                            if ui.button("Cancel").clicked()
+                                || ui.input(|i| i.key_pressed(egui::Key::Escape))
+                            {
+                                action = Some(1);
+                            }
+                        });
+                    });
+            });
+
+        self.add_shape_dialog = Some((kind, size_str, sides_str));
+        match action {
+            Some(0) => {
+                // On an unparsable size the dialog stays open.
+                self.confirm_add_shape();
+            }
+            Some(1) => self.add_shape_dialog = None,
+            _ => {}
+        }
+    }
+
     fn draw_recovery_dialog(&mut self, ctx: &egui::Context) {
         let Some(entries) = self.pending_recovery.as_ref() else { return };
         let names: Vec<String> = entries.iter().map(|e| e.name.clone()).collect();
@@ -14202,6 +14352,7 @@ impl App {
         );
         self.draw_save_confirm_dialog(ctx);
         self.draw_atlas_size_dialog(ctx);
+        self.draw_add_shape_dialog(ctx);
         self.draw_recovery_dialog(ctx); // topmost: launch-time restore prompt
         self.draw_anim_tile_menu(ctx);
         self.draw_tab_resize_menu(ctx);

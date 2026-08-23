@@ -667,3 +667,46 @@ fn k_selects_the_loop_cut_tool() {
     ], Modifiers::default());
     assert_eq!(app.active_tool, ActiveTool::LoopCut, "K is the knife");
 }
+
+#[test]
+fn add_shape_dialog_gates_input_and_generates_on_confirm() {
+    use squarez::three_d::edit::Primitive;
+    let ctx = egui::Context::default();
+    let mut app = App::new_with(&ctx, None);
+    app.open_project_for_test(three_d_project());
+    for _ in 0..2 {
+        frame(&ctx, &mut app, vec![], Modifiers::default());
+    }
+    let faces_before = app.project.mesh3d.as_ref().unwrap().faces.len();
+
+    // Picking a shape opens the Cmd+N-style prompt, which is modal: Tab must
+    // not switch views underneath it.
+    app.open_add_shape_dialog(Primitive::Cylinder);
+    assert!(app.add_shape_dialog_open());
+    frame(&ctx, &mut app, vec![
+        egui::Event::Key { key: Key::Tab, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::default() },
+    ], Modifiers::default());
+    assert!(!app.three_d.texture_view, "modal must swallow the Tab shortcut");
+
+    // Absurd sides get clamped by the grid rule; size 4 caps at
+    // max_sides_for_radius(1.0).
+    app.set_add_shape_fields_for_test("4", "99");
+    assert!(app.confirm_add_shape(), "valid size must confirm");
+    assert!(!app.add_shape_dialog_open());
+    let expect_sides = squarez::three_d::mesh::Mesh::max_sides_for_radius(1.0);
+    let queued = app.pending_add_primitive_for_test().expect("primitive queued");
+    assert_eq!((queued.kind, queued.size, queued.sides), (Primitive::Cylinder, 4, expect_sides));
+
+    // The next 3D frame consumes it and adds the object; one undo removes it.
+    frame(&ctx, &mut app, vec![], Modifiers::default());
+    let faces_after = app.project.mesh3d.as_ref().unwrap().faces.len();
+    assert!(faces_after > faces_before, "the cylinder must be generated");
+    frame(&ctx, &mut app, vec![key_event_z(&ctx)], Modifiers::COMMAND);
+    assert_eq!(app.project.mesh3d.as_ref().unwrap().faces.len(), faces_before);
+
+    // An unparsable size keeps the dialog open.
+    app.open_add_shape_dialog(Primitive::Cube);
+    app.set_add_shape_fields_for_test("abc", "8");
+    assert!(!app.confirm_add_shape());
+    assert!(app.add_shape_dialog_open(), "bad size: the prompt stays");
+}
