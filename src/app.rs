@@ -813,6 +813,10 @@ impl App {
         self.three_d.cancel_gesture();
         // Color-aware so ColorState snapshots (ramp edits) are restored.
         self.undo_stack.undo_with_color(&mut self.project, &mut self.color_state);
+        self.clamp_active_layer();
+        if self.project.mode.is_three_d() {
+            self.derive_texture_created();
+        }
         self.canvas_dirty = true;
         if self.project.is_tiled() {
             self.mark_all_thumbnails_dirty();
@@ -823,6 +827,10 @@ impl App {
     pub fn do_redo(&mut self) {
         self.three_d.cancel_gesture();
         self.undo_stack.redo_with_color(&mut self.project, &mut self.color_state);
+        self.clamp_active_layer();
+        if self.project.mode.is_three_d() {
+            self.derive_texture_created();
+        }
         self.canvas_dirty = true;
         if self.project.is_tiled() {
             self.mark_all_thumbnails_dirty();
@@ -1553,6 +1561,9 @@ impl App {
 
             self.pending_zoom_fit = true;
         } else if self.project.mode == crate::project::ProjectMode::SpriteStack {
+            // 3D-only tools have no meaning here — same guard as the 3D
+            // branch, in the other direction.
+            self.drop_three_d_only_tool();
             self.ui_state.collapse_palette = false;
             self.ui_state.collapse_color = false;
             self.ui_state.collapse_preview = false;
@@ -1573,6 +1584,7 @@ impl App {
 
             self.pending_zoom_fit = true;
         } else {
+            self.drop_three_d_only_tool();
             self.ui_state.collapse_palette = false;
             self.ui_state.collapse_color = false;
             self.ui_state.collapse_preview = false;
@@ -9385,7 +9397,9 @@ print("FAIL")
             self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 3) % 4;
             self.canvas_dirty = true;
         }
-        if ctx.input(|i| i.key_pressed(egui::Key::E)) {
+        // W, not E: E is the Eraser everywhere (same tool keys in every
+        // mode), so the stack rotation pair is Q/W.
+        if ctx.input(|i| i.key_pressed(egui::Key::W)) {
             self.sprite_stack_rotation_90 = (self.sprite_stack_rotation_90 + 1) % 4;
             self.canvas_dirty = true;
         }
@@ -12571,6 +12585,39 @@ print("FAIL")
         true
     }
 
+    /// History moves can remove layers under the active index (undoing an
+    /// AddLayer); several paint paths index the active layer directly, so a
+    /// stranded index is a crash.
+    fn clamp_active_layer(&mut self) {
+        let ai = self.project.active_animation.min(self.project.animations.len().saturating_sub(1));
+        self.project.active_animation = ai;
+        let frames = self.project.animations[ai].frames.len();
+        if frames > 0 && self.project.active_frame >= frames {
+            self.project.active_frame = frames - 1;
+        }
+        let len = self.project.animations[ai].frames.first().map_or(0, |f| f.layers.len());
+        if len > 0 && self.project.active_layer >= len {
+            self.project.active_layer = len - 1;
+        }
+    }
+
+    /// Leaving 3D mode with a 3D-only tool active would leave a dead tool
+    /// selected — fall back to the pencil, mirroring the 3D branch's guard.
+    fn drop_three_d_only_tool(&mut self) {
+        if matches!(
+            self.active_tool,
+            ActiveTool::Select3D
+                | ActiveTool::Extrude
+                | ActiveTool::Inset
+                | ActiveTool::LoopCut
+                | ActiveTool::MoveObject
+                | ActiveTool::ScaleObject
+                | ActiveTool::RotateObject
+        ) {
+            self.set_active_tool(ActiveTool::Pencil);
+        }
+    }
+
     /// A texture "exists" once anything beyond the placeholder material is
     /// there: more than one layer, or any base-layer pixel that is neither a
     /// default-checker tone nor transparent. Runs when a project is opened
@@ -12913,7 +12960,13 @@ print("FAIL")
                 }
                 // On failure the dialog stays: pick a size the islands fit.
             }
-            Some(1) => self.atlas_dialog = None,
+            Some(1) => {
+                self.atlas_dialog = None;
+                // "Keep current" answers the size question: the texture now
+                // exists at the current size.
+                self.three_d.texture_created = true;
+                self.three_d.atlas_prompted = true;
+            }
             _ => {}
         }
     }
@@ -12928,6 +12981,11 @@ print("FAIL")
 
     pub fn add_shape_dialog_open(&self) -> bool {
         self.add_shape_dialog.is_some()
+    }
+
+    /// Test hook: the gradient tool's current blend style.
+    pub fn gradient_style_for_test(&self) -> crate::tools::GradientStyle {
+        self.gradient_style
     }
 
     /// Test hook: type into the dialog's fields.
