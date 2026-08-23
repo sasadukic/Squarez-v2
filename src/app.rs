@@ -8270,6 +8270,15 @@ print("FAIL")
     }
 
     fn draw_preview_content(&mut self, ui: &mut egui::Ui) {
+        // No texture yet: there is nothing to preview — the panel stays
+        // empty until the first draw creates the texture.
+        if self.project.mode.is_three_d()
+            && !self.three_d.texture_view
+            && !self.three_d.texture_created
+        {
+            ui.add_space(2.0);
+            return;
+        }
         // Texture view swaps the panes: the model renders here while the
         // atlas occupies the main window. Drag to orbit — the camera is the
         // same one the main 3D view uses, so the angle carries across Tab.
