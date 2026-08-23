@@ -162,20 +162,70 @@ pub fn fill_face(
     face_idx: u32,
     replacement: Rgba,
 ) -> Vec<(u32, u32, Rgba, Rgba)> {
-    let Some(face) = mesh.faces.get(face_idx as usize) else {
+    let Some(clip) = FaceClip::new(mesh, face_idx) else {
         return Vec::new();
     };
-    let isl = face.island;
-    let basis = mesh.face_plane_basis(face);
-    let (min_u, min_v, _, _) = mesh.face_uv_bounds(face);
-    let poly: Vec<(f32, f32)> =
-        face.verts.iter().map(|&vi| basis.project(mesh.vertices[vi as usize])).collect();
-    let inside = |p: (f32, f32)| -> bool {
-        let n = poly.len();
+    let isl = clip.isl;
+    let mut edits = Vec::new();
+    for y in 0..isl.h as u32 {
+        for x in 0..isl.w as u32 {
+            let (gx, gy) = (isl.x as u32 + x, isl.y as u32 + y);
+            if !clip.contains(gx, gy) {
+                continue;
+            }
+            let old = layer.get_pixel(gx, gy);
+            if old != replacement {
+                edits.push((gx, gy, old, replacement));
+            }
+        }
+    }
+    edits
+}
+
+/// A face's texel-ownership test: which absolute atlas texels' CENTERS lie
+/// inside the face's projected outline. This is the same rule `fill_face`,
+/// the layout, and the rendered edge use, extracted so other face-scoped
+/// paint (gradients) clips identically.
+pub struct FaceClip {
+    pub isl: super::mesh::Island,
+    poly: Vec<(f32, f32)>,
+    origin: (f32, f32), // (min_u, min_v): plane coords of the island's corner
+}
+
+impl FaceClip {
+    pub fn new(mesh: &super::mesh::Mesh, face_idx: u32) -> Option<Self> {
+        let face = mesh.faces.get(face_idx as usize)?;
+        if face.island.w == 0 || face.island.h == 0 {
+            return None;
+        }
+        let basis = mesh.face_plane_basis(face);
+        let (min_u, min_v, _, _) = mesh.face_uv_bounds(face);
+        let poly = face
+            .verts
+            .iter()
+            .map(|&vi| basis.project(mesh.vertices[vi as usize]))
+            .collect();
+        Some(Self { isl: face.island, poly, origin: (min_u, min_v) })
+    }
+
+    pub fn contains(&self, gx: u32, gy: u32) -> bool {
+        let isl = self.isl;
+        if gx < isl.x as u32
+            || gy < isl.y as u32
+            || gx >= (isl.x + isl.w) as u32
+            || gy >= (isl.y + isl.h) as u32
+        {
+            return false;
+        }
+        let p = (
+            self.origin.0 + (gx - isl.x as u32) as f32 + 0.5,
+            self.origin.1 + (gy - isl.y as u32) as f32 + 0.5,
+        );
+        let n = self.poly.len();
         let mut inside = false;
         for i in 0..n {
-            let (x0, y0) = poly[i];
-            let (x1, y1) = poly[(i + 1) % n];
+            let (x0, y0) = self.poly[i];
+            let (x1, y1) = self.poly[(i + 1) % n];
             if (y0 > p.1) != (y1 > p.1) {
                 let t = (p.1 - y0) / (y1 - y0);
                 if p.0 < x0 + t * (x1 - x0) {
@@ -184,21 +234,7 @@ pub fn fill_face(
             }
         }
         inside
-    };
-    let mut edits = Vec::new();
-    for y in 0..isl.h as u32 {
-        for x in 0..isl.w as u32 {
-            if !inside((min_u + x as f32 + 0.5, min_v + y as f32 + 0.5)) {
-                continue;
-            }
-            let (gx, gy) = (isl.x as u32 + x, isl.y as u32 + y);
-            let old = layer.get_pixel(gx, gy);
-            if old != replacement {
-                edits.push((gx, gy, old, replacement));
-            }
-        }
     }
-    edits
 }
 
 /// Handle one frame of paint input. Call with the scene already built for

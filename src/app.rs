@@ -213,6 +213,10 @@ pub struct App {
     shading_mode: bool,
     shading_dir: i32,
     shading_ramp: Option<(usize, usize)>,
+    /// Gradient tool: blend style, and (texture view) the face the current
+    /// drag is clipped to.
+    gradient_style: crate::tools::GradientStyle,
+    gradient_face: Option<u32>,
     // Spring-animated selection highlight for layers panel
     layer_sel_y: f32,
     layer_sel_vel: f32,
@@ -1132,6 +1136,8 @@ impl App {
             shading_mode: false,
             shading_dir: 1,
             shading_ramp: None,
+            gradient_style: crate::tools::GradientStyle::Dithered,
+            gradient_face: None,
             layer_sel_y: 0.0,
             layer_sel_vel: 0.0,
             anim_sel_y: 0.0,
@@ -1381,6 +1387,7 @@ impl App {
         self.mirror_y_sequence.clear();
         self.mirror_xy_sequence.clear();
         self.shape_preview.clear();
+        self.gradient_face = None;
         self.select_state = crate::tools::SelectState::default();
         self.three_d.clear_transient();
         self.close_all_context_menus();
@@ -1786,7 +1793,7 @@ impl App {
             // 3D toolbar layout: pen, bucket, select group, modify group, loop cut, zoom.
             match self.active_tool {
                 ActiveTool::Pencil | ActiveTool::Eraser     => 0,
-                ActiveTool::Fill   | ActiveTool::Eyedropper => 1,
+                ActiveTool::Fill | ActiveTool::Eyedropper | ActiveTool::Gradient => 1,
                 ActiveTool::Select3D                        => 2,
                 ActiveTool::Extrude | ActiveTool::Inset     => 3,
                 ActiveTool::LoopCut                         => 4,
@@ -1797,7 +1804,7 @@ impl App {
         } else {
             match self.active_tool {
                 ActiveTool::Pencil | ActiveTool::Eraser           => 0, // pen group
-                ActiveTool::Fill   | ActiveTool::Eyedropper       => 1, // bucket group
+                ActiveTool::Fill | ActiveTool::Eyedropper | ActiveTool::Gradient => 1, // bucket group
                 ActiveTool::Rectangle { .. }
                 | ActiveTool::Ellipse { .. }
                 | ActiveTool::Line                                => 2, // shape group
@@ -1816,7 +1823,7 @@ impl App {
     fn is_group_selected(&self, slot: usize) -> bool {
         match slot {
             0 => matches!(self.active_tool, ActiveTool::Pencil | ActiveTool::Eraser),
-            1 => matches!(self.active_tool, ActiveTool::Fill | ActiveTool::Eyedropper),
+            1 => matches!(self.active_tool, ActiveTool::Fill | ActiveTool::Eyedropper | ActiveTool::Gradient),
             2 => matches!(self.active_tool, ActiveTool::Rectangle { .. } | ActiveTool::Ellipse { .. } | ActiveTool::Line),
             3 => matches!(self.active_tool, ActiveTool::RectSelect | ActiveTool::MagicWand | ActiveTool::Move),
             _ => false,
@@ -1829,7 +1836,8 @@ impl App {
             ActiveTool::Pencil => ActiveTool::Eraser,
             ActiveTool::Eraser => ActiveTool::Pencil,
             ActiveTool::Fill => ActiveTool::Eyedropper,
-            ActiveTool::Eyedropper => ActiveTool::Fill,
+            ActiveTool::Eyedropper => ActiveTool::Gradient,
+            ActiveTool::Gradient => ActiveTool::Fill,
             ActiveTool::Rectangle { .. } => ActiveTool::Ellipse { filled: false },
             ActiveTool::Ellipse { .. } => ActiveTool::Line,
             ActiveTool::Line => ActiveTool::Rectangle { filled: false },
@@ -1846,7 +1854,7 @@ impl App {
     fn set_active_tool(&mut self, t: ActiveTool) {
         match &t {
             ActiveTool::Pencil | ActiveTool::Eraser => self.pen_group_current = t.clone(),
-            ActiveTool::Fill | ActiveTool::Eyedropper => self.bucket_group_current = t.clone(),
+            ActiveTool::Fill | ActiveTool::Eyedropper | ActiveTool::Gradient => self.bucket_group_current = t.clone(),
             ActiveTool::Rectangle { .. } | ActiveTool::Ellipse { .. } | ActiveTool::Line => {
                 self.shape_group_current = t.clone();
             }
@@ -3415,10 +3423,9 @@ impl App {
             1 => {
                 let Some(r) = self.bucket_slot_rect else { return; };
                 let cur = self.bucket_group_current.clone();
-                let others = match cur {
-                    ActiveTool::Fill => vec![ActiveTool::Eyedropper],
-                    _                => vec![ActiveTool::Fill],
-                };
+                let all = vec![ActiveTool::Fill, ActiveTool::Eyedropper, ActiveTool::Gradient];
+                let others: Vec<ActiveTool> =
+                    all.into_iter().filter(|t| *t != cur).collect();
                 (r, cur, others)
             }
             2 => {
@@ -12165,6 +12172,7 @@ print("FAIL")
                                         ("D", "Pencil (Draw) tool"),
                                         ("E", "Eraser tool"),
                                         ("G", "Fill / Bucket tool"),
+                                        ("B", "Gradient tool (press again: cycle style)"),
                                         ("M", "Toggle Select / Eyedropper tool"),
                                         ("S", "Cycle Shapes (Rect / Ellipse / Line)"),
                                         ("Z", "Zoom tool"),
@@ -12202,6 +12210,7 @@ print("FAIL")
                                         ("1-6", "Snap view: Front/Back/Right/Left/Top/Bottom"),
                                         ("0", "Reset to home orbit view"),
                                         ("V", "Select tool (vertices, edges, faces)"),
+                                        ("B", "Gradient: drag across a face; B cycles Dither / Ramp / Smooth"),
                                         ("E", "Extrude selected faces (Select tool)"),
                                         ("F", "Create face from 3-4 selected vertices"),
                                         ("Drag (Extrude/Inset tool)", "Pull a face out / grow an inset border"),
@@ -12448,6 +12457,23 @@ print("FAIL")
         self.canvas_dirty = true;
         self.active_modified = true;
         true
+    }
+
+    /// Colors for the gradient tool's Palette-ramp style: the shift-click
+    /// shading-ramp slice of the palette (respecting its direction), or None
+    /// when no ramp is selected (the tool then falls back to a quantized
+    /// foreground/background blend).
+    fn gradient_ramp(&self) -> Option<Vec<crate::project::Rgba>> {
+        let (start, end) = self.shading_ramp?;
+        let colors = self.project.palette.get(start..=end)?.to_vec();
+        if colors.is_empty() {
+            return None;
+        }
+        Some(if self.shading_dir < 0 {
+            colors.into_iter().rev().collect()
+        } else {
+            colors
+        })
     }
 
     /// Apply pixel edits to the active layer and record them as one undoable
@@ -13703,6 +13729,15 @@ impl App {
                 if is_3d && ctx.input(|i| i.key_pressed(egui::Key::V)) {
                     self.set_active_tool(ActiveTool::Select3D);
                 }
+                // B: gradient tool; pressing it again cycles the blend style
+                // (same re-press idiom as Z / zoom-fit).
+                if ctx.input(|i| i.key_pressed(egui::Key::B)) {
+                    if matches!(self.active_tool, ActiveTool::Gradient) {
+                        self.gradient_style = self.gradient_style.next();
+                    } else {
+                        self.set_active_tool(ActiveTool::Gradient);
+                    }
+                }
                 if ctx.input(|i| i.key_pressed(egui::Key::Z)) {
                     if matches!(self.active_tool, ActiveTool::Zoom) {
                         self.pending_zoom_fit = true;
@@ -14393,6 +14428,7 @@ fn tool_icon(tool: &ActiveTool) -> ImageSource<'static> {
         ActiveTool::Eraser           => egui::include_image!("../assets/icons/eraser.svg"),
         ActiveTool::Fill             => egui::include_image!("../assets/icons/fill.svg"),
         ActiveTool::Eyedropper       => egui::include_image!("../assets/icons/eyedropper.svg"),
+        ActiveTool::Gradient         => egui::include_image!("../assets/icons/gradient.svg"),
         ActiveTool::Rectangle { .. } => egui::include_image!("../assets/icons/rectangle.svg"),
         ActiveTool::Ellipse { .. }   => egui::include_image!("../assets/icons/ellipse.svg"),
         ActiveTool::Line             => egui::include_image!("../assets/icons/line.svg"),
@@ -14415,6 +14451,7 @@ fn tool_tooltip_text(tool: &ActiveTool) -> &'static str {
         ActiveTool::Eraser           => "Eraser Tool (Clear pixels)",
         ActiveTool::Fill             => "Bucket Fill Tool (Fill connected region)",
         ActiveTool::Eyedropper       => "Eyedropper Tool (Sample colors)",
+        ActiveTool::Gradient         => "Gradient Tool (Drag a blend across a face; B cycles style)",
         ActiveTool::Rectangle { .. } => "Rectangle Tool (Draw rectangles)",
         ActiveTool::Ellipse { .. }   => "Ellipse Tool (Draw ellipses)",
         ActiveTool::Line             => "Line Tool (Draw straight lines)",
