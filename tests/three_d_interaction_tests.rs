@@ -534,6 +534,7 @@ fn gradient_drag_clips_to_one_face_and_undoes_as_one_step() {
     let ctx = egui::Context::default();
     let mut app = App::new_with(&ctx, None);
     app.open_project_for_test(three_d_project());
+    app.three_d.texture_created = true; // checker-only fixture: pretend the size was chosen
     app.active_tool = ActiveTool::Gradient;
     for _ in 0..3 {
         frame(&ctx, &mut app, vec![], Modifiers::default());
@@ -833,4 +834,61 @@ fn overlay_layer_paint_rides_geometry_edits() {
     assert_eq!(app.project.mesh3d.as_ref().unwrap().vertices, mesh_before.vertices);
     assert_eq!(app.project.animations[0].frames[0].layers[0].pixels, base_before, "base restored");
     assert_eq!(app.project.animations[0].frames[0].layers[1].pixels, overlay_before, "overlay restored");
+}
+
+#[test]
+fn first_draw_prompts_for_texture_size_and_delete_reprompts() {
+    let ctx = egui::Context::default();
+    let mut app = App::new_with(&ctx, None);
+    app.open_project_for_test(three_d_project());
+    app.active_tool = ActiveTool::Pencil;
+    for _ in 0..3 {
+        frame(&ctx, &mut app, vec![], Modifiers::default());
+    }
+    assert!(!app.three_d.texture_created, "a checker-only project has no texture yet");
+    let pixels_before = app.project.animations[0].frames[0].layers[0].pixels.clone();
+
+    // A pencil press on the model opens the size prompt and paints nothing.
+    let p = model_point();
+    frame(&ctx, &mut app, vec![
+        egui::Event::PointerMoved(p),
+        egui::Event::PointerButton { pos: p, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::default() },
+    ], Modifiers::default());
+    frame(&ctx, &mut app, vec![
+        egui::Event::PointerButton { pos: p, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::default() },
+    ], Modifiers::default());
+    assert!(app.atlas_dialog_open(), "first draw must ask for the texture size");
+    assert_eq!(
+        app.project.animations[0].frames[0].layers[0].pixels, pixels_before,
+        "nothing painted before the size is chosen"
+    );
+
+    // Confirming the size (even unchanged) creates the texture; painting works.
+    assert!(app.apply_atlas_size(app.project.canvas_width, app.project.canvas_height));
+    app.dismiss_atlas_dialog();
+    assert!(app.three_d.texture_created);
+    frame(&ctx, &mut app, vec![], Modifiers::default());
+    frame(&ctx, &mut app, vec![
+        egui::Event::PointerMoved(p),
+        egui::Event::PointerButton { pos: p, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::default() },
+    ], Modifiers::default());
+    frame(&ctx, &mut app, vec![
+        egui::Event::PointerButton { pos: p, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::default() },
+    ], Modifiers::default());
+    assert_ne!(
+        app.project.animations[0].frames[0].layers[0].pixels, pixels_before,
+        "painting must work once the texture exists"
+    );
+
+    // "Deleting the texture": wipe + re-prompt, and one undo restores it.
+    let painted = app.project.animations[0].frames[0].layers[0].pixels.clone();
+    app.reset_texture();
+    assert!(!app.three_d.texture_created);
+    assert!(app.atlas_dialog_open(), "delete must re-prompt for a size");
+    assert_ne!(app.project.animations[0].frames[0].layers[0].pixels, painted, "wiped");
+    frame(&ctx, &mut app, vec![key_event_z(&ctx)], Modifiers::COMMAND);
+    assert_eq!(
+        app.project.animations[0].frames[0].layers[0].pixels, painted,
+        "the wipe is one undoable step"
+    );
 }

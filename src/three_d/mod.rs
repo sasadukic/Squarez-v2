@@ -129,6 +129,12 @@ pub struct ThreeDState {
     /// Live gradient preview texels, baked into the canvas texture by the
     /// app's rebuild alongside shape_preview.
     pub gradient_preview: Vec<(u32, u32, Rgba)>,
+    /// The texture exists once its size was chosen (or a painted file was
+    /// opened). Until then paint tools prompt for a size instead of drawing.
+    pub texture_created: bool,
+    /// Set by a paint press while no texture exists; the app consumes it and
+    /// opens the size dialog.
+    pub texture_request: bool,
 }
 
 /// A gradient drag locked to `face`; start/end are absolute atlas texel
@@ -179,6 +185,8 @@ impl Default for ThreeDState {
             island_drag: None,
             gradient_drag: None,
             gradient_preview: Vec::new(),
+            texture_created: false,
+            texture_request: false,
         }
     }
 }

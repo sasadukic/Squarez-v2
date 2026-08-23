@@ -178,3 +178,33 @@ fn roundtrip_keeps_side_face_orientation_under_the_v_flip() {
         "top and bottom must not swap through the OBJ round-trip"
     );
 }
+
+#[test]
+fn export_merges_texture_layers_into_one_png() {
+    use squarez::project::{Layer, Project, ProjectMode};
+    use squarez::three_d::mesh::Mesh;
+    let mut p = Project::new_with_mode(64, 64, "merge".to_string(), ProjectMode::ThreeD);
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands((64, 64)).unwrap();
+    squarez::three_d::paint_islands_checker(&mut p.animations[0].frames[0].layers[0], &mesh);
+    p.mesh3d = Some(mesh.clone());
+    // Overlay layer with a mark over face 0.
+    let mut overlay = Layer::new("Overlay".to_string(), 64, 64);
+    let isl = mesh.faces[0].island;
+    overlay.set_pixel(isl.x as u32 + 1, isl.y as u32 + 1, [250, 10, 10, 255]);
+    p.animations[0].frames[0].layers.push(overlay);
+
+    let dir = std::env::temp_dir().join("squarez_obj_merge_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("m.obj");
+    squarez::io::obj::save_obj(&p, &path).unwrap();
+    let png = image::open(dir.join("m.png")).unwrap().to_rgba8();
+    let expect = squarez::layers::composite_frame(&p.animations[0].frames[0], 64, 64);
+    assert_eq!(png.as_raw(), &expect, "exported PNG must be the layer composite");
+    assert_eq!(
+        png.get_pixel(isl.x as u32 + 1, isl.y as u32 + 1).0,
+        [250, 10, 10, 255],
+        "overlay mark present in the export"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

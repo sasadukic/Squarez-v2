@@ -410,6 +410,19 @@ pub fn handle(
         state.last_paint = None;
     }
 
+    // No texture yet: the first draw attempt asks for the texture size
+    // instead of painting (the app consumes the request and opens the
+    // size dialog).
+    if !state.texture_created {
+        let pressed_any = press_started
+            || (ui.input(|i| i.pointer.primary_pressed())
+                && pointer.is_some_and(|p| response.rect.contains(p)));
+        if pressed_any {
+            state.texture_request = true;
+        }
+        return result;
+    }
+
     // Gradient: its own press/drag/commit cycle. The drag is locked to the
     // face under the press; the endpoint tracks the face PLANE (extrapolated
     // past the edge), and the preview lives in gradient_preview — never the

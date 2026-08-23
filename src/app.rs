@@ -798,6 +798,7 @@ impl App {
         self.thumbnails = Self::thumbnails_for(&self.project);
         self.active_modified = false;
         self.three_d = Default::default();
+        self.derive_texture_created();
         self.project_created = true;
         self.show_new_dialog = false;
         self.clear_transient_state();
@@ -1479,6 +1480,7 @@ impl App {
             self.thumbnails = Self::thumbnails_for(&self.project);
             self.active_modified = false;
             self.three_d = Default::default();
+            self.derive_texture_created();
             self.clear_transient_state();
             self.canvas_dirty = true;
             self.pending_zoom_fit = true;
@@ -1505,6 +1507,7 @@ impl App {
         self.canvas_dirty = true;
         self.pending_zoom_fit = true;
         self.project_created = true;
+        self.derive_texture_created();
         self.on_project_changed();
     }
 
@@ -4657,6 +4660,19 @@ impl App {
         let theme = self.theme.clone();
         let (show, add_clicked, group_clicked, _, _) = section_header(ui, &self.theme, &mut self.ui_state, Panel::Layers, egui::include_image!("../assets/icons/layer.svg"), Some(egui::include_image!("../assets/icons/group.svg")), false);
         if !show { return; }
+        // 3D without a texture yet: nothing to list, nothing to add.
+        if self.project.mode.is_three_d() && !self.three_d.texture_created {
+            ui.add_space(6.0);
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    RichText::new("No texture — draw on the model\nto choose its size")
+                        .color(theme.fg_muted)
+                        .font(FontId::new(FONT_SIZE_SM - 1.0, FontFamily::Proportional)),
+                );
+            });
+            ui.add_space(6.0);
+            return;
+        }
 
         let ai = self.project.active_animation;
         let fi = self.project.active_frame;
@@ -5946,7 +5962,16 @@ impl App {
             match a {
                 0 => self.duplicate_layer_at(idx),
                 1 => self.merge_layer_down_at(idx),
-                2 => self.delete_layer_at(idx),
+                2 => {
+                let last = self.project.animations[0].frames[0].layers.len() <= 1;
+                if self.project.mode.is_three_d() && last {
+                    // "Deleting the texture": wipe to the placeholder
+                    // material and ask for a fresh size.
+                    self.reset_texture();
+                } else {
+                    self.delete_layer_at(idx);
+                }
+            }
                 _ => {}
             }
         }
@@ -6621,6 +6646,17 @@ impl App {
                     }
                     if out.modified {
                         self.active_modified = true;
+                    }
+                    // First draw with no texture: the press asked for one —
+                    // open the size prompt instead of painting.
+                    if self.three_d.texture_request {
+                        self.three_d.texture_request = false;
+                        if self.atlas_dialog.is_none() {
+                            self.atlas_dialog = Some((
+                                self.project.canvas_width.to_string(),
+                                self.project.canvas_height.to_string(),
+                            ));
+                        }
                     }
                     return;
                 }
@@ -12535,6 +12571,58 @@ print("FAIL")
         true
     }
 
+    /// A texture "exists" once anything beyond the placeholder material is
+    /// there: more than one layer, or any base-layer pixel that is neither a
+    /// default-checker tone nor transparent. Runs when a project is opened
+    /// or created (per-tab state; tab switches keep the parked value).
+    fn derive_texture_created(&mut self) {
+        if !self.project.mode.is_three_d() {
+            return;
+        }
+        let frame = &self.project.animations[0].frames[0];
+        let created = frame.layers.len() > 1
+            || frame.layers.first().is_some_and(|l| {
+                l.pixels.chunks_exact(4).any(|p| {
+                    p[3] != 0
+                        && [p[0], p[1], p[2], p[3]] != crate::three_d::DEFAULT_FACE_A
+                        && [p[0], p[1], p[2], p[3]] != crate::three_d::DEFAULT_FACE_B
+                })
+            });
+        self.three_d.texture_created = created;
+        if created {
+            self.three_d.atlas_prompted = true;
+        }
+    }
+
+    /// Wipe the texture back to the placeholder material (one undoable step)
+    /// and prompt for a fresh size — the 3D "delete the texture" action.
+    pub fn reset_texture(&mut self) {
+        if !self.project.mode.is_three_d() {
+            return;
+        }
+        let (w, h) = (self.project.canvas_width, self.project.canvas_height);
+        let Some(mesh) = self.project.mesh3d.clone() else { return };
+        let mut fresh = crate::project::Layer::new("Texture".to_string(), w, h);
+        crate::three_d::paint_islands_checker(&mut fresh, &mesh);
+        let mut edits: Vec<(u32, u32, crate::project::Rgba)> = Vec::new();
+        {
+            let base = &self.project.animations[0].frames[0].layers[0];
+            for y in 0..h {
+                for x in 0..w {
+                    let new = fresh.get_pixel(x, y);
+                    if base.get_pixel(x, y) != new {
+                        edits.push((x, y, new));
+                    }
+                }
+            }
+        }
+        self.project.active_layer = 0;
+        self.push_paint_edits(&edits);
+        self.three_d.texture_created = false;
+        self.three_d.atlas_prompted = false;
+        self.atlas_dialog = Some((w.to_string(), h.to_string()));
+    }
+
     /// The gradient tool's colors: the shift-click shading-ramp slice of the
     /// palette (respecting its direction). None until at least two colors
     /// are selected — a gradient with fewer refuses to paint.
@@ -12666,6 +12754,8 @@ print("FAIL")
     pub fn apply_atlas_size(&mut self, w: u32, h: u32) -> bool {
         let (w, h) = (w.clamp(16, 4096), h.clamp(16, 4096));
         if (w, h) == (self.project.canvas_width, self.project.canvas_height) {
+            self.three_d.texture_created = true;
+            self.three_d.atlas_prompted = true;
             return true;
         }
         let Some(mesh) = self.project.mesh3d.clone() else { return false };
@@ -12723,6 +12813,8 @@ print("FAIL")
             layer_edits,
         });
         self.project.mesh3d = Some(after);
+        self.three_d.texture_created = true;
+        self.three_d.atlas_prompted = true;
         self.active_modified = true;
         self.canvas_dirty = true;
         self.pending_zoom_fit = true;
