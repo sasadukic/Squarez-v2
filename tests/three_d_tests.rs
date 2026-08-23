@@ -1460,9 +1460,10 @@ fn object_outline_still_traces_convex_shapes() {
 #[test]
 fn fill_stays_inside_the_faces_own_outline() {
     // Islands are bounding rects, and a cap triangle's rect overlaps its
-    // coplanar neighbours' texels. Fill must paint the texels the face OWNS
-    // (centers inside its outline) — all of them and nothing else — or
-    // filling one cap wedge recolors chunks of the neighbouring wedges.
+    // coplanar neighbours' texels. Fill paints every texel its outline
+    // touches (slanted edges must not leave rendered-but-unpaintable
+    // slivers) but NEVER a texel a neighbour center-claims — or filling one
+    // cap wedge recolors chunks of the neighbouring wedges.
     let mut mesh = Mesh::cylinder(8);
     mesh.allocate_all_islands(LAY_ATLAS).unwrap();
     let mut layer = Layer::new("Texture".to_string(), LAY_ATLAS.0, LAY_ATLAS.1);
@@ -1506,7 +1507,20 @@ fn fill_stays_inside_the_faces_own_outline() {
     let painted: std::collections::HashSet<(u32, u32)> =
         edits.iter().map(|&(x, y, _, _)| (x, y)).collect();
 
-    assert_eq!(painted, mine, "fill must paint exactly the texels the face owns");
+    assert!(
+        painted.is_superset(&mine),
+        "fill must cover at least every center-owned texel"
+    );
+    let isl = mesh.faces[target as usize].island;
+    for &(x, y) in &painted {
+        assert!(
+            x >= isl.x as u32
+                && y >= isl.y as u32
+                && x < (isl.x + isl.w) as u32
+                && y < (isl.y + isl.h) as u32,
+            "fill must stay inside the island rect"
+        );
+    }
     for other in 0..mesh.faces.len() as u32 {
         if other == target {
             continue;
@@ -2042,4 +2056,52 @@ fn face_clip_matches_fill_face_ownership() {
         }
         assert_eq!(owned, filled, "face {fi}: clip set must equal fill_face set");
     }
+}
+
+#[test]
+fn slanted_faces_are_fully_paintable() {
+    // The user-visible rule: any spot the renderer shows for a face can be
+    // painted on that face. Sample the trapezoid's interior densely — every
+    // texel a sample lands in must be owned by the clip, slanted edges
+    // included (the old center-only rule left unpaintable slivers there).
+    let mut mesh = Mesh { vertices: Vec::new(), faces: Vec::new(), ..Default::default() };
+    mesh.vertices = vec![
+        [0.0, 0.0, 0.0],
+        [6.0, 0.0, 0.0],
+        [6.0, 6.0, 0.0],
+        [0.0, 4.0, 0.0], // slanted top edge: corners are not 90 degrees
+    ];
+    mesh.faces.push(squarez::three_d::mesh::Face {
+        verts: vec![0, 1, 2, 3],
+        island: Island::default(),
+    });
+    mesh.allocate_all_islands((64, 64)).unwrap();
+
+    let face = &mesh.faces[0];
+    let basis = mesh.face_plane_basis(face);
+    let (min_u, min_v, _, _) = mesh.face_uv_bounds(face);
+    let poly: Vec<(f32, f32)> =
+        face.verts.iter().map(|&vi| basis.project(mesh.vertices[vi as usize])).collect();
+    let isl = face.island;
+    let clip = squarez::three_d::paint::FaceClip::new(&mesh, 0).unwrap();
+
+    let mut missed = Vec::new();
+    for sy in 0..60 {
+        for sx in 0..60 {
+            let p = (min_u + sx as f32 / 10.0 + 0.05, min_v + sy as f32 / 10.0 + 0.05);
+            if !point_in_poly(p, &poly) {
+                continue;
+            }
+            let tx = isl.x as u32 + (p.0 - min_u).floor() as u32;
+            let ty = isl.y as u32 + (p.1 - min_v).floor() as u32;
+            if !clip.contains(tx, ty) {
+                missed.push((tx, ty));
+            }
+        }
+    }
+    missed.dedup();
+    assert!(
+        missed.is_empty(),
+        "renderable texels a lone slanted face cannot paint: {missed:?}"
+    );
 }

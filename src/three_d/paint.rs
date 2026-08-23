@@ -232,24 +232,121 @@ pub struct FaceClip {
     pub isl: super::mesh::Island,
     poly: Vec<(f32, f32)>,
     origin: (f32, f32), // (min_u, min_v): plane coords of the island's corner
+    /// Island-local (row-major) mask of texels center-claimed by ANOTHER
+    /// face whose island overlaps this one (coplanar contests). Those stay
+    /// the neighbour's to paint.
+    foreign: Vec<bool>,
+}
+
+fn point_in_poly(poly: &[(f32, f32)], p: (f32, f32)) -> bool {
+    let n = poly.len();
+    let mut inside = false;
+    for i in 0..n {
+        let (x0, y0) = poly[i];
+        let (x1, y1) = poly[(i + 1) % n];
+        if (y0 > p.1) != (y1 > p.1) {
+            let t = (p.1 - y0) / (y1 - y0);
+            if p.0 < x0 + t * (x1 - x0) {
+                inside = !inside;
+            }
+        }
+    }
+    inside
+}
+
+fn segments_intersect(a: (f32, f32), b: (f32, f32), c: (f32, f32), d: (f32, f32)) -> bool {
+    let cross = |o: (f32, f32), p: (f32, f32), q: (f32, f32)| {
+        (p.0 - o.0) * (q.1 - o.1) - (p.1 - o.1) * (q.0 - o.0)
+    };
+    let d1 = cross(a, b, c);
+    let d2 = cross(a, b, d);
+    let d3 = cross(c, d, a);
+    let d4 = cross(c, d, b);
+    ((d1 > 0.0) != (d2 > 0.0)) && ((d3 > 0.0) != (d4 > 0.0))
+}
+
+/// Does the polygon touch any part of the unit square with min corner `s`?
+fn poly_touches_square(poly: &[(f32, f32)], s: (f32, f32)) -> bool {
+    let corners = [s, (s.0 + 1.0, s.1), (s.0 + 1.0, s.1 + 1.0), (s.0, s.1 + 1.0)];
+    if corners.iter().any(|&c| point_in_poly(poly, c)) {
+        return true;
+    }
+    if poly
+        .iter()
+        .any(|&(px, py)| px >= s.0 && px <= s.0 + 1.0 && py >= s.1 && py <= s.1 + 1.0)
+    {
+        return true;
+    }
+    let n = poly.len();
+    for i in 0..n {
+        let (a, b) = (poly[i], poly[(i + 1) % n]);
+        for j in 0..4 {
+            if segments_intersect(a, b, corners[j], corners[(j + 1) % 4]) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 impl FaceClip {
     pub fn new(mesh: &super::mesh::Mesh, face_idx: u32) -> Option<Self> {
         let face = mesh.faces.get(face_idx as usize)?;
-        if face.island.w == 0 || face.island.h == 0 {
+        let isl = face.island;
+        if isl.w == 0 || isl.h == 0 {
             return None;
         }
         let basis = mesh.face_plane_basis(face);
         let (min_u, min_v, _, _) = mesh.face_uv_bounds(face);
-        let poly = face
+        let poly: Vec<(f32, f32)> = face
             .verts
             .iter()
             .map(|&vi| basis.project(mesh.vertices[vi as usize]))
             .collect();
-        Some(Self { isl: face.island, poly, origin: (min_u, min_v) })
+
+        // Mark texels a coplanar neighbour center-claims: its island overlaps
+        // ours (a layout contest) and the texel center falls inside ITS
+        // outline in ITS plane coords. Painting those would recolor ground
+        // the neighbour is standing on.
+        let mut foreign = vec![false; isl.w as usize * isl.h as usize];
+        for (oi, other) in mesh.faces.iter().enumerate() {
+            if oi == face_idx as usize || other.island.w == 0 {
+                continue;
+            }
+            let o = other.island;
+            let x0 = isl.x.max(o.x);
+            let y0 = isl.y.max(o.y);
+            let x1 = (isl.x + isl.w).min(o.x + o.w);
+            let y1 = (isl.y + isl.h).min(o.y + o.h);
+            if x0 >= x1 || y0 >= y1 {
+                continue;
+            }
+            let obasis = mesh.face_plane_basis(other);
+            let (o_min_u, o_min_v, _, _) = mesh.face_uv_bounds(other);
+            let opoly: Vec<(f32, f32)> = other
+                .verts
+                .iter()
+                .map(|&vi| obasis.project(mesh.vertices[vi as usize]))
+                .collect();
+            for gy in y0..y1 {
+                for gx in x0..x1 {
+                    let p = (
+                        o_min_u + (gx - o.x) as f32 + 0.5,
+                        o_min_v + (gy - o.y) as f32 + 0.5,
+                    );
+                    if point_in_poly(&opoly, p) {
+                        let li = (gy - isl.y) as usize * isl.w as usize + (gx - isl.x) as usize;
+                        foreign[li] = true;
+                    }
+                }
+            }
+        }
+        Some(Self { isl, poly, origin: (min_u, min_v), foreign })
     }
 
+    /// A face owns every island texel its outline touches — not only the
+    /// center-inside ones, or slanted edges leave rendered-but-unpaintable
+    /// slivers — minus texels a coplanar neighbour center-claims.
     pub fn contains(&self, gx: u32, gy: u32) -> bool {
         let isl = self.isl;
         if gx < isl.x as u32
@@ -259,23 +356,15 @@ impl FaceClip {
         {
             return false;
         }
-        let p = (
-            self.origin.0 + (gx - isl.x as u32) as f32 + 0.5,
-            self.origin.1 + (gy - isl.y as u32) as f32 + 0.5,
-        );
-        let n = self.poly.len();
-        let mut inside = false;
-        for i in 0..n {
-            let (x0, y0) = self.poly[i];
-            let (x1, y1) = self.poly[(i + 1) % n];
-            if (y0 > p.1) != (y1 > p.1) {
-                let t = (p.1 - y0) / (y1 - y0);
-                if p.0 < x0 + t * (x1 - x0) {
-                    inside = !inside;
-                }
-            }
+        let (lx, ly) = (gx - isl.x as u32, gy - isl.y as u32);
+        if self.foreign[ly as usize * isl.w as usize + lx as usize] {
+            return false;
         }
-        inside
+        let s = (self.origin.0 + lx as f32, self.origin.1 + ly as f32);
+        if point_in_poly(&self.poly, (s.0 + 0.5, s.1 + 0.5)) {
+            return true;
+        }
+        poly_touches_square(&self.poly, s)
     }
 }
 
