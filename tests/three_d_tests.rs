@@ -2015,3 +2015,31 @@ fn perspective_foreshortens_and_ortho_does_not() {
     assert_eq!(cam.pitch, squarez::three_d::camera::HOME_PITCH);
     assert_eq!(cam.zoom, 12.0);
 }
+
+#[test]
+fn face_clip_matches_fill_face_ownership() {
+    // FaceClip is the extracted fill_face predicate; both must own the exact
+    // same texel set or gradients and fills would disagree at face edges.
+    let atlas = (64u32, 64u32);
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands(atlas).unwrap();
+    let mut layer = Layer::new("t".to_string(), atlas.0, atlas.1);
+    for fi in 0..mesh.faces.len() as u32 {
+        let filled: std::collections::HashSet<(u32, u32)> =
+            squarez::three_d::paint::fill_face(&mut layer, &mesh, fi, [1, 2, 3, 255])
+                .into_iter()
+                .map(|(x, y, _, _)| (x, y))
+                .collect();
+        let clip = squarez::three_d::paint::FaceClip::new(&mesh, fi).expect("clip");
+        let isl = clip.isl;
+        let mut owned = std::collections::HashSet::new();
+        for y in isl.y as u32..(isl.y + isl.h) as u32 {
+            for x in isl.x as u32..(isl.x + isl.w) as u32 {
+                if clip.contains(x, y) {
+                    owned.insert((x, y));
+                }
+            }
+        }
+        assert_eq!(owned, filled, "face {fi}: clip set must equal fill_face set");
+    }
+}

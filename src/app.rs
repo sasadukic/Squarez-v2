@@ -1530,6 +1530,7 @@ impl App {
                     | ActiveTool::Eraser
                     | ActiveTool::Fill
                     | ActiveTool::Eyedropper
+                    | ActiveTool::Gradient
                     | ActiveTool::Zoom
                     | ActiveTool::Select3D
                     | ActiveTool::Extrude
@@ -12546,6 +12547,12 @@ print("FAIL")
     /// Which face a texture-view gradient drag starting on this texel clips
     /// to: a 3D-selected face whose island contains it wins (the selection
     /// carries over from the 3D view), else the topmost containing island.
+    /// Test hook: run the press-time face lock exactly as the canvas press
+    /// does.
+    pub fn set_gradient_face_for_test(&mut self, tx: i32, ty: i32) {
+        self.gradient_face = self.gradient_face_at(tx, ty);
+    }
+
     fn gradient_face_at(&self, tx: i32, ty: i32) -> Option<u32> {
         let mesh = self.project.mesh3d.as_ref()?;
         let contains = |fi: u32| {

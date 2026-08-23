@@ -326,7 +326,12 @@ pub fn handle(
     // past the edge), and the preview lives in gradient_preview — never the
     // layer — so the generic stroke machinery below stays untouched.
     if matches!(tool, ActiveTool::Gradient) {
-        if press_started {
+        // Same press idiom as the workspace gestures (pressed + rect
+        // containment) — Response::hovered() is not reliable on the press
+        // frame.
+        let grad_press = ui.input(|i| i.pointer.primary_pressed())
+            && pointer.is_some_and(|p| response.rect.contains(p));
+        if grad_press {
             if let Some(pos) = pointer {
                 let mesh = project.mesh3d.as_ref().unwrap();
                 if let Some(hit) = pick(scene, pos, mesh, atlas) {

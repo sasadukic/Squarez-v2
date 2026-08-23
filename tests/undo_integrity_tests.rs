@@ -150,6 +150,25 @@ fn undo_walks_the_full_operation_chain_both_ways() {
     }
     record("hand-move island", &app);
 
+    // 6. A gradient across a face (one PaintPixels).
+    {
+        let isl = app.project.mesh3d.as_ref().unwrap().faces[1].island;
+        let layer = app.project.animations[0].frames[0].layers[0].clone();
+        app.set_gradient_face_for_test(isl.x as i32, isl.y as i32);
+        let edits = app.gradient_edits(
+            &layer,
+            isl.x as i32,
+            isl.y as i32,
+            (isl.x + isl.w) as i32 - 1,
+            (isl.y + isl.h) as i32 - 1,
+        );
+        assert!(!edits.is_empty(), "gradient must paint");
+        let apply: Vec<(u32, u32, [u8; 4])> =
+            edits.iter().map(|&(x, y, _, new)| (x, y, new)).collect();
+        app.push_paint_edits(&apply);
+    }
+    record("gradient on face 1", &app);
+
     // Walk all the way down…
     for i in (1..checkpoints.len()).rev() {
         key(&ctx, &mut app, Key::Z, Modifiers::COMMAND);

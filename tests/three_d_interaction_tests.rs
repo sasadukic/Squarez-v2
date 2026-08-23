@@ -529,3 +529,104 @@ fn arrow_keys_nudge_the_selection_view_relative() {
         "one Cmd+Z must revert exactly the last nudge"
     );
 }
+
+#[test]
+fn gradient_drag_clips_to_one_face_and_undoes_as_one_step() {
+    let ctx = egui::Context::default();
+    let mut app = App::new_with(&ctx, None);
+    app.open_project_for_test(three_d_project());
+    app.active_tool = ActiveTool::Gradient;
+    for _ in 0..3 {
+        frame(&ctx, &mut app, vec![], Modifiers::default());
+    }
+    let pixels_before = app.project.animations[0].frames[0].layers[0].pixels.clone();
+
+    let p = model_point();
+    frame(&ctx, &mut app, vec![egui::Event::PointerMoved(p)], Modifiers::default());
+    assert!(app.three_d.hover_face.is_some(), "pointer over the model must hover a face");
+    frame(&ctx, &mut app, vec![
+        egui::Event::PointerButton { pos: p, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::default() },
+    ], Modifiers::default());
+    let face = app.three_d.gradient_drag.expect("press on the model starts a drag").face;
+    // Drag down-right across the face.
+    for i in 1..=5 {
+        let q = Pos2::new(p.x + i as f32 * 6.0, p.y + i as f32 * 6.0);
+        frame(&ctx, &mut app, vec![egui::Event::PointerMoved(q)], Modifiers::default());
+    }
+    assert!(!app.three_d.gradient_preview.is_empty(), "live preview during the drag");
+    let q = Pos2::new(p.x + 30.0, p.y + 30.0);
+    frame(&ctx, &mut app, vec![
+        egui::Event::PointerButton { pos: q, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::default() },
+    ], Modifiers::default());
+    frame(&ctx, &mut app, vec![], Modifiers::default());
+
+    assert!(app.three_d.gradient_drag.is_none(), "release ends the drag");
+    assert!(app.three_d.gradient_preview.is_empty(), "preview cleared on commit");
+
+    // Changed texels lie exactly inside the locked face's clip set.
+    let mesh = app.project.mesh3d.clone().unwrap();
+    let clip = squarez::three_d::paint::FaceClip::new(&mesh, face).unwrap();
+    let layer = &app.project.animations[0].frames[0].layers[0];
+    let mut changed = Vec::new();
+    for y in 0..app.project.canvas_height {
+        for x in 0..app.project.canvas_width {
+            let i = ((y * app.project.canvas_width + x) * 4) as usize;
+            if layer.pixels[i..i + 4] != pixels_before[i..i + 4] {
+                changed.push((x, y));
+            }
+        }
+    }
+    assert!(!changed.is_empty(), "the gradient must have painted something");
+    for &(x, y) in &changed {
+        assert!(clip.contains(x, y), "texel ({x},{y}) changed outside the locked face");
+    }
+
+    // One Cmd+Z restores the pristine atlas.
+    frame(&ctx, &mut app, vec![key_event_z(&ctx)], Modifiers::COMMAND);
+    assert_eq!(
+        app.project.animations[0].frames[0].layers[0].pixels, pixels_before,
+        "a single undo must revert the whole gradient"
+    );
+}
+
+#[test]
+fn texture_view_gradient_clips_to_the_locked_face() {
+    let ctx = egui::Context::default();
+    let mut app = App::new_with(&ctx, None);
+    app.open_project_for_test(three_d_project());
+    app.active_tool = ActiveTool::Gradient;
+    app.three_d.atlas_prompted = true;
+    app.toggle_texture_view();
+    for _ in 0..2 {
+        frame(&ctx, &mut app, vec![], Modifiers::default());
+    }
+
+    let mesh = app.project.mesh3d.clone().unwrap();
+    let isl = mesh.faces[2].island;
+    let layer = app.project.animations[0].frames[0].layers[0].clone();
+    let pixels_before = layer.pixels.clone();
+
+    // Drag corner-to-corner across face 2's island, via the same press-time
+    // face lock + edits path the canvas input uses.
+    app.three_d.sel_faces = vec![2];
+    let (x0, y0) = (isl.x as i32, isl.y as i32);
+    let (x1, y1) = ((isl.x + isl.w) as i32 - 1, (isl.y + isl.h) as i32 - 1);
+    app.set_gradient_face_for_test(x0, y0);
+    let edits = app.gradient_edits(&layer, x0, y0, x1, y1);
+    assert!(!edits.is_empty(), "the drag must produce edits");
+    let clip = squarez::three_d::paint::FaceClip::new(&mesh, 2).unwrap();
+    for &(x, y, _, _) in &edits {
+        assert!(clip.contains(x, y), "texel ({x},{y}) outside the locked face");
+    }
+    let apply: Vec<(u32, u32, [u8; 4])> = edits.iter().map(|&(x, y, _, new)| (x, y, new)).collect();
+    app.push_paint_edits(&apply);
+    assert_ne!(app.project.animations[0].frames[0].layers[0].pixels, pixels_before);
+
+    // Single undo restores everything.
+    frame(&ctx, &mut app, vec![key_event_z(&ctx)], Modifiers::COMMAND);
+    assert_eq!(app.project.animations[0].frames[0].layers[0].pixels, pixels_before);
+
+    // A press outside every island locks no face and produces no edits.
+    app.set_gradient_face_for_test(-5, -5);
+    assert!(app.gradient_edits(&layer, -5, -5, 3, 3).is_empty());
+}
