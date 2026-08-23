@@ -9572,7 +9572,8 @@ print("FAIL")
         }
 
         let is_shape_tool = matches!(self.active_tool,
-            ActiveTool::Rectangle { .. } | ActiveTool::Ellipse { .. } | ActiveTool::Line);
+            ActiveTool::Rectangle { .. } | ActiveTool::Ellipse { .. } | ActiveTool::Line
+            | ActiveTool::Gradient);
         let is_select_tool = matches!(self.active_tool, ActiveTool::RectSelect | ActiveTool::MagicWand);
 
         // Floating selection: if active, the RectSelect tool routes input to the
@@ -9662,11 +9663,20 @@ print("FAIL")
                         ActiveTool::Line => {
                             apply_line(&ref_layer, x0 as i32, y0 as i32, eff_epx, eff_epy, color)
                         }
+                        ActiveTool::Gradient => {
+                            self.gradient_edits(&ref_layer, x0 as i32, y0 as i32, eff_epx, eff_epy)
+                        }
                         _ => vec![],
                     };
-                    // Expand shape edits with mirror symmetry
+                    // Expand shape edits with mirror symmetry (a gradient is
+                    // face-scoped, so atlas mirroring is meaningless for it).
                     let mut all_edits = shape_edits.clone();
-                    for &(x, y, _, new) in &shape_edits {
+                    let mirror_src: &[_] = if matches!(active_tool, ActiveTool::Gradient) {
+                        &[]
+                    } else {
+                        &shape_edits
+                    };
+                    for &(x, y, _, new) in mirror_src {
                         for &(mx, my) in &self.mirror_positions(x, y, w, h) {
                             if mx != x || my != y {
                                 let old = ref_layer.get_pixel(mx, my);
@@ -10096,6 +10106,9 @@ print("FAIL")
                 (px, py)
             };
             self.drag_start = Some(start);
+            if matches!(self.active_tool, ActiveTool::Gradient) {
+                self.gradient_face = self.gradient_face_at(start.0 as i32, start.1 as i32);
+            }
 
             // If we have a selection mask and the user dragged inside it (with no modifiers), lift it to float!
             if is_select_tool && !self.select_state.has_float() && response.drag_started_by(egui::PointerButton::Primary) {
@@ -10514,10 +10527,18 @@ print("FAIL")
                         ActiveTool::Line => {
                             apply_line(&ref_layer, x0 as i32, y0 as i32, eff_px, eff_py, color)
                         }
+                        ActiveTool::Gradient => {
+                            self.gradient_edits(&ref_layer, x0 as i32, y0 as i32, eff_px, eff_py)
+                        }
                         _ => vec![],
                     };
+                    let skip_mirror = matches!(active_tool, ActiveTool::Gradient);
                     let mut mirrored = Vec::new();
                     for (x, y, _old, new) in preview_edits {
+                        if skip_mirror {
+                            mirrored.push((x, y, new));
+                            continue;
+                        }
                         for (mx, my) in self.mirror_positions(x, y, w, h) {
                             mirrored.push((mx, my, new));
                         }
@@ -12474,6 +12495,76 @@ print("FAIL")
         } else {
             colors
         })
+    }
+
+    /// Which face a texture-view gradient drag starting on this texel clips
+    /// to: a 3D-selected face whose island contains it wins (the selection
+    /// carries over from the 3D view), else the topmost containing island.
+    fn gradient_face_at(&self, tx: i32, ty: i32) -> Option<u32> {
+        let mesh = self.project.mesh3d.as_ref()?;
+        let contains = |fi: u32| {
+            mesh.faces.get(fi as usize).is_some_and(|f| {
+                let o = f.island;
+                o.w > 0
+                    && tx >= o.x as i32
+                    && ty >= o.y as i32
+                    && tx < (o.x + o.w) as i32
+                    && ty < (o.y + o.h) as i32
+            })
+        };
+        if let Some(&fi) = self.three_d.sel_faces.iter().find(|&&fi| contains(fi)) {
+            return Some(fi);
+        }
+        (0..mesh.faces.len() as u32).rev().find(|&fi| contains(fi))
+    }
+
+    /// Gradient edits for a canvas drag from (x0,y0) to (ex,ey), in texel
+    /// coords. 3D projects clip to the face locked at press time; plain 2D
+    /// covers the canvas (selection filtering happens downstream).
+    pub fn gradient_edits(
+        &self,
+        layer: &crate::project::Layer,
+        x0: i32,
+        y0: i32,
+        ex: i32,
+        ey: i32,
+    ) -> Vec<crate::tools::PixelEdit> {
+        let start = (x0 as f32 + 0.5, y0 as f32 + 0.5);
+        let end = (ex as f32 + 0.5, ey as f32 + 0.5);
+        let fg = self.color_state.foreground;
+        let bg = self.color_state.background;
+        let ramp = self.gradient_ramp();
+        if self.project.mode.is_three_d() {
+            let Some(mesh) = self.project.mesh3d.as_ref() else { return Vec::new() };
+            let Some(face) = self.gradient_face else { return Vec::new() };
+            let Some(clip) = crate::three_d::paint::FaceClip::new(mesh, face) else {
+                return Vec::new();
+            };
+            let isl = clip.isl;
+            crate::tools::apply_gradient(
+                layer,
+                (isl.x as u32, isl.y as u32, isl.w as u32, isl.h as u32),
+                |x, y| clip.contains(x, y),
+                start,
+                end,
+                self.gradient_style,
+                fg,
+                bg,
+                ramp.as_deref(),
+            )
+        } else {
+            crate::tools::apply_gradient(
+                layer,
+                (0, 0, layer.width, layer.height),
+                |_, _| true,
+                start,
+                end,
+                self.gradient_style,
+                fg,
+                bg,
+                ramp.as_deref(),
+            )
+        }
     }
 
     /// Apply pixel edits to the active layer and record them as one undoable
@@ -14567,7 +14658,7 @@ fn shape_shift_constrain(tool: &ActiveTool, x0: i32, y0: i32, ex: i32, ey: i32) 
             let side = dx.abs().min(dy.abs());
             (x0 + side * dx.signum(), y0 + side * dy.signum())
         }
-        ActiveTool::Line => {
+        ActiveTool::Line | ActiveTool::Gradient => {
             let dx = ex - x0;
             let dy = ey - y0;
             if dx == 0 && dy == 0 {
