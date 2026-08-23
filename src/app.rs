@@ -210,9 +210,9 @@ pub struct App {
     active_palette_idx: Option<usize>,
     copied_color: Option<Rgba>,
     palette_hovered: bool,
-    shading_mode: bool,
-    shading_dir: i32,
-    shading_ramp: Option<(usize, usize)>,
+    pub shading_mode: bool,
+    pub shading_dir: i32,
+    pub shading_ramp: Option<(usize, usize)>,
     /// Gradient tool: blend style, and (texture view) the face the current
     /// drag is clipped to.
     gradient_style: crate::tools::GradientStyle,
@@ -12240,7 +12240,7 @@ print("FAIL")
                                         ("D", "Pencil (Draw) tool"),
                                         ("E", "Eraser tool"),
                                         ("G", "Fill / Bucket tool"),
-                                        ("B", "Gradient tool (press again: cycle style)"),
+                                        ("B", "Gradient tool: blends the selected palette colors (press again: cycle style)"),
                                         ("M", "Toggle Select / Eyedropper tool"),
                                         ("S", "Cycle Shapes (Rect / Ellipse / Line)"),
                                         ("Z", "Zoom tool"),
@@ -12527,14 +12527,16 @@ print("FAIL")
         true
     }
 
-    /// Colors for the gradient tool's Palette-ramp style: the shift-click
-    /// shading-ramp slice of the palette (respecting its direction), or None
-    /// when no ramp is selected (the tool then falls back to a quantized
-    /// foreground/background blend).
+    /// The gradient tool's colors: the shift-click shading-ramp slice of the
+    /// palette (respecting its direction). None until at least two colors
+    /// are selected — a gradient with fewer refuses to paint.
     fn gradient_ramp(&self) -> Option<Vec<crate::project::Rgba>> {
         let (start, end) = self.shading_ramp?;
+        if start == end {
+            return None;
+        }
         let colors = self.project.palette.get(start..=end)?.to_vec();
-        if colors.is_empty() {
+        if colors.len() < 2 {
             return None;
         }
         Some(if self.shading_dir < 0 {
@@ -12582,11 +12584,10 @@ print("FAIL")
         ex: i32,
         ey: i32,
     ) -> Vec<crate::tools::PixelEdit> {
+        let Some(colors) = self.gradient_ramp() else { return Vec::new() };
         let start = (x0 as f32 + 0.5, y0 as f32 + 0.5);
-        let end = (ex as f32 + 0.5, ey as f32 + 0.5);
-        let fg = self.color_state.foreground;
-        let bg = self.color_state.background;
-        let ramp = self.gradient_ramp();
+        let end =
+            crate::tools::snap_axis_8(start, (ex as f32 + 0.5, ey as f32 + 0.5));
         if self.project.mode.is_three_d() {
             let Some(mesh) = self.project.mesh3d.as_ref() else { return Vec::new() };
             let Some(face) = self.gradient_face else { return Vec::new() };
@@ -12601,9 +12602,7 @@ print("FAIL")
                 start,
                 end,
                 self.gradient_style,
-                fg,
-                bg,
-                ramp.as_deref(),
+                &colors,
             )
         } else {
             crate::tools::apply_gradient(
@@ -12613,9 +12612,7 @@ print("FAIL")
                 start,
                 end,
                 self.gradient_style,
-                fg,
-                bg,
-                ramp.as_deref(),
+                &colors,
             )
         }
     }
@@ -14595,7 +14592,7 @@ fn tool_tooltip_text(tool: &ActiveTool) -> &'static str {
         ActiveTool::Eraser           => "Eraser Tool (Clear pixels)",
         ActiveTool::Fill             => "Bucket Fill Tool (Fill connected region)",
         ActiveTool::Eyedropper       => "Eyedropper Tool (Sample colors)",
-        ActiveTool::Gradient         => "Gradient Tool (Drag a blend across a face; B cycles style)",
+        ActiveTool::Gradient         => "Gradient Tool (Shift-click 2+ palette colors, then drag; B cycles style)",
         ActiveTool::Rectangle { .. } => "Rectangle Tool (Draw rectangles)",
         ActiveTool::Ellipse { .. }   => "Ellipse Tool (Draw ellipses)",
         ActiveTool::Line             => "Line Tool (Draw straight lines)",
@@ -14711,7 +14708,7 @@ fn shape_shift_constrain(tool: &ActiveTool, x0: i32, y0: i32, ex: i32, ey: i32) 
             let side = dx.abs().min(dy.abs());
             (x0 + side * dx.signum(), y0 + side * dy.signum())
         }
-        ActiveTool::Line | ActiveTool::Gradient => {
+        ActiveTool::Line => {
             let dx = ex - x0;
             let dy = ey - y0;
             if dx == 0 && dy == 0 {

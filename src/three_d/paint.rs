@@ -326,6 +326,16 @@ pub fn handle(
     // past the edge), and the preview lives in gradient_preview — never the
     // layer — so the generic stroke machinery below stays untouched.
     if matches!(tool, ActiveTool::Gradient) {
+        // A gradient draws the user's palette selection; without at least
+        // two selected colors there is nothing to blend, so no drag starts.
+        let Some(colors) = gradient_ramp else {
+            state.gradient_drag = None;
+            if !state.gradient_preview.is_empty() {
+                state.gradient_preview.clear();
+                result.canvas_dirty = true;
+            }
+            return result;
+        };
         // Same press idiom as the workspace gestures (pressed + rect
         // containment) — Response::hovered() is not reliable on the press
         // frame.
@@ -346,7 +356,8 @@ pub fn handle(
                 let mesh = project.mesh3d.as_ref().unwrap();
                 if let Some(pos) = pointer {
                     if let Some(end) = pick_on_face_plane(scene, drag.face, pos, atlas) {
-                        drag.end = end;
+                        // Axis locked to the 8 pixel-art directions.
+                        drag.end = crate::tools::snap_axis_8(drag.start, end);
                     }
                 }
                 let clip = FaceClip::new(mesh, drag.face);
@@ -363,9 +374,7 @@ pub fn handle(
                                 drag.start,
                                 drag.end,
                                 gradient_style,
-                                color_state.foreground,
-                                color_state.background,
-                                gradient_ramp,
+                                colors,
                             )
                             .into_iter()
                             .map(|(x, y, _, new)| (x, y, new))
@@ -392,9 +401,7 @@ pub fn handle(
                         drag.start,
                         drag.end,
                         gradient_style,
-                        color_state.foreground,
-                        color_state.background,
-                        gradient_ramp,
+                        colors,
                     );
                     if !edits.is_empty() {
                         for &(x, y, _, new) in &edits {

@@ -1294,10 +1294,14 @@ pub fn draw(
         Some(v) => v.label().to_string(),
         None => "Orbit".to_string(),
     };
-    let gradient_hint = format!(
-        "Gradient ({}): drag across a face · B cycles style · RMB orbit",
-        gradient_style.label()
-    );
+    let gradient_hint = if gradient_ramp.is_none() {
+        "Gradient: shift-click a second palette color first — it blends the selected colors".to_string()
+    } else {
+        format!(
+            "Gradient ({}): drag across a face · B cycles style · RMB orbit",
+            gradient_style.label()
+        )
+    };
     let hint = match active_tool {
         ActiveTool::Gradient => gradient_hint.as_str(),
         ActiveTool::Select3D => "Select: click vertex/edge/face · alt = the one behind · drag move · shift multi · E extrude · F fill 3-4 verts · Del delete",

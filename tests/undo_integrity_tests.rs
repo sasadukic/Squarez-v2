@@ -152,6 +152,8 @@ fn undo_walks_the_full_operation_chain_both_ways() {
 
     // 6. A gradient across a face (one PaintPixels).
     {
+        app.shading_ramp = Some((0, 1));
+        app.shading_dir = 1;
         let isl = app.project.mesh3d.as_ref().unwrap().faces[1].island;
         let layer = app.project.animations[0].frames[0].layers[0].clone();
         app.set_gradient_face_for_test(isl.x as i32, isl.y as i32);

@@ -544,6 +544,19 @@ fn gradient_drag_clips_to_one_face_and_undoes_as_one_step() {
     let p = model_point();
     frame(&ctx, &mut app, vec![egui::Event::PointerMoved(p)], Modifiers::default());
     assert!(app.three_d.hover_face.is_some(), "pointer over the model must hover a face");
+
+    // Without two selected palette colors the tool must refuse to start.
+    frame(&ctx, &mut app, vec![
+        egui::Event::PointerButton { pos: p, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::default() },
+    ], Modifiers::default());
+    assert!(app.three_d.gradient_drag.is_none(), "no color selection: no drag");
+    frame(&ctx, &mut app, vec![
+        egui::Event::PointerButton { pos: p, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::default() },
+    ], Modifiers::default());
+
+    // Select two palette colors (the shift-click ramp selection).
+    app.shading_ramp = Some((0, 1));
+    app.shading_dir = 1;
     frame(&ctx, &mut app, vec![
         egui::Event::PointerButton { pos: p, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::default() },
     ], Modifiers::default());
@@ -605,6 +618,16 @@ fn texture_view_gradient_clips_to_the_locked_face() {
     let isl = mesh.faces[2].island;
     let layer = app.project.animations[0].frames[0].layers[0].clone();
     let pixels_before = layer.pixels.clone();
+
+    // No color selection: the tool refuses to paint.
+    app.three_d.sel_faces = vec![2];
+    app.set_gradient_face_for_test(isl.x as i32, isl.y as i32);
+    assert!(
+        app.gradient_edits(&layer, isl.x as i32, isl.y as i32, isl.x as i32 + 4, isl.y as i32).is_empty(),
+        "gradient without a two-color selection must be a no-op"
+    );
+    app.shading_ramp = Some((0, 1));
+    app.shading_dir = 1;
 
     // Drag corner-to-corner across face 2's island, via the same press-time
     // face lock + edits path the canvas input uses.
