@@ -226,3 +226,15 @@ fn layer_merge_down_spans_all_frames_and_undoes() {
         assert_eq!(frame.layers[0].get_pixel(0, 0), [fi as u8 + 1, 2, 0, 255]);
     }
 }
+
+#[test]
+fn three_d_sidebar_hides_animations_and_leads_with_preview() {
+    use squarez::ui_state::Panel;
+    let ctx = egui::Context::default();
+    let mut app = App::new_with(&ctx, None);
+    let (project, _, _) = three_d_project();
+    app.open_project_for_test(project);
+    let panels = app.visible_sidebar_panels_for_test();
+    assert_eq!(panels.first(), Some(&Panel::Preview), "Preview leads in 3D: {panels:?}");
+    assert!(!panels.contains(&Panel::Animations), "no Animations section in 3D: {panels:?}");
+}

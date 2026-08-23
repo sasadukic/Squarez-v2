@@ -1519,10 +1519,10 @@ impl App {
             self.ui_state.collapse_tiles = true;
 
             self.sidebar_order = vec![
+                Panel::Preview,
                 Panel::Palette,
                 Panel::Color,
                 Panel::Layers,
-                Panel::Preview,
                 Panel::Brushes,
                 Panel::Animations,
                 Panel::Tiles,
@@ -2119,9 +2119,21 @@ impl App {
             false
         } else if p == Panel::Preview && self.preview_popped_out {
             false
+        } else if p == Panel::Animations && self.project.mode.is_three_d() {
+            // A 3D project is one animation/frame by construction.
+            false
         } else {
             self.ui_state.is_visible(p)
         }
+    }
+
+    /// Test hook: the sidebar's effective panel list, top to bottom.
+    pub fn visible_sidebar_panels_for_test(&self) -> Vec<Panel> {
+        self.sidebar_order
+            .iter()
+            .copied()
+            .filter(|&p| self.panel_visible_in_sidebar(p))
+            .collect()
     }
 
     fn draw_top_bar(&mut self, ctx: &egui::Context) {
@@ -2943,6 +2955,9 @@ impl App {
                                 if dropdown_row(ui, &theme, "Reset layout", None, true).clicked() {
                                     self.ui_state = UiState::default();
                                     self.sidebar_order = vec![Panel::Palette, Panel::Color, Panel::Brushes, Panel::Layers, Panel::Animations, Panel::Preview, Panel::Tiles];
+                                    // Re-apply the mode's own layout (3D puts
+                                    // Preview on top, collapses differently).
+                                    self.on_project_changed();
                                     close_menu = true;
                                 }
 
