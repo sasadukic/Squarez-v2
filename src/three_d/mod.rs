@@ -164,7 +164,7 @@ impl Default for ThreeDState {
             stroke_painted: std::collections::HashSet::new(),
             last_paint: None,
             last_mouse_wheel_time: 0.0,
-            shading: Shading::Soft,
+            shading: Shading::Off,
             texture_view: false,
             atlas_prompted: false,
             island_drag: None,
