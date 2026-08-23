@@ -653,3 +653,17 @@ fn texture_view_gradient_clips_to_the_locked_face() {
     app.set_gradient_face_for_test(-5, -5);
     assert!(app.gradient_edits(&layer, -5, -5, 3, 3).is_empty());
 }
+
+#[test]
+fn k_selects_the_loop_cut_tool() {
+    let ctx = egui::Context::default();
+    let mut app = App::new_with(&ctx, None);
+    app.open_project_for_test(three_d_project());
+    for _ in 0..2 {
+        frame(&ctx, &mut app, vec![], Modifiers::default());
+    }
+    frame(&ctx, &mut app, vec![
+        egui::Event::Key { key: Key::K, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::default() },
+    ], Modifiers::default());
+    assert_eq!(app.active_tool, ActiveTool::LoopCut, "K is the knife");
+}

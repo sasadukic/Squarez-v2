@@ -1796,10 +1796,9 @@ impl App {
                 ActiveTool::Pencil | ActiveTool::Eraser     => 0,
                 ActiveTool::Fill | ActiveTool::Eyedropper | ActiveTool::Gradient => 1,
                 ActiveTool::Select3D                        => 2,
-                ActiveTool::Extrude | ActiveTool::Inset     => 3,
-                ActiveTool::LoopCut                         => 4,
-                ActiveTool::MoveObject | ActiveTool::ScaleObject => 5,
-                ActiveTool::Zoom                            => 7,
+                ActiveTool::Extrude | ActiveTool::Inset | ActiveTool::LoopCut => 3,
+                ActiveTool::MoveObject | ActiveTool::ScaleObject => 4,
+                ActiveTool::Zoom                            => 6,
                 _                                           => 0,
             }
         } else {
@@ -1860,7 +1859,9 @@ impl App {
                 self.shape_group_current = t.clone();
             }
             ActiveTool::RectSelect | ActiveTool::MagicWand | ActiveTool::Move => self.select_group_current = t.clone(),
-            ActiveTool::Extrude | ActiveTool::Inset => self.modify3d_group_current = t.clone(),
+            ActiveTool::Extrude | ActiveTool::Inset | ActiveTool::LoopCut => {
+                self.modify3d_group_current = t.clone()
+            }
             ActiveTool::MoveObject | ActiveTool::ScaleObject => self.object3d_group_current = t.clone(),
             _ => {}
         }
@@ -3092,7 +3093,7 @@ impl App {
 
                 // Vertically center the button stack in the full screen
                 let is_3d = self.project.mode.is_three_d();
-                let tool_count = if is_3d { 8.0 } else { 5.0 };
+                let tool_count = if is_3d { 7.0 } else { 5.0 };
                 let tools_h = tool_count * 38.0;
                 let top_pad = ((ctx.screen_rect().height() - tools_h) / 2.0 - TOP_BAR_HEIGHT).max(0.0);
                 ui.add_space(top_pad);
@@ -3172,7 +3173,10 @@ impl App {
                     }
 
                     // Slot 3: Modify group (Extrude/Inset flyout)
-                    let mod_active = matches!(self.active_tool, ActiveTool::Extrude | ActiveTool::Inset);
+                    let mod_active = matches!(
+                        self.active_tool,
+                        ActiveTool::Extrude | ActiveTool::Inset | ActiveTool::LoopCut
+                    );
                     let mod_resp = tool_btn_raw(
                         ui,
                         &self.theme,
@@ -3194,20 +3198,7 @@ impl App {
                         }
                     }
 
-                    // Slot 4: Loop Cut (ungrouped)
-                    let loop_resp = tool_btn_raw(
-                        ui,
-                        &self.theme,
-                        self.active_tool == ActiveTool::LoopCut,
-                        tool_icon(&ActiveTool::LoopCut),
-                    )
-                    .on_hover_text(tool_tooltip_text(&ActiveTool::LoopCut));
-                    if loop_resp.clicked() && !self.any_modal_open() {
-                        self.set_active_tool(ActiveTool::LoopCut);
-                        self.open_tool_submenu = None;
-                    }
-
-                    // Slot 5: Object group (Move/Scale flyout)
+                    // Slot 4: Object group (Move/Scale flyout)
                     let obj_active =
                         matches!(self.active_tool, ActiveTool::MoveObject | ActiveTool::ScaleObject);
                     let obj_resp = tool_btn_raw(
@@ -3220,10 +3211,10 @@ impl App {
                     object3d_rect = Some(obj_resp.rect);
                     if obj_resp.clicked() && !self.any_modal_open() {
                         if obj_active {
-                            if self.open_tool_submenu == Some(5) {
+                            if self.open_tool_submenu == Some(4) {
                                 self.open_tool_submenu = None;
                             } else if !self.menu_was_open_at_frame_start {
-                                self.open_tool_submenu = Some(5);
+                                self.open_tool_submenu = Some(4);
                             }
                         } else {
                             self.set_active_tool(self.object3d_group_current.clone());
@@ -3231,7 +3222,7 @@ impl App {
                         }
                     }
 
-                    // Slot 6: Add object (flyout with the four primitives)
+                    // Slot 5: Add object (flyout with the four primitives)
                     let add_resp = tool_btn_raw(
                         ui,
                         &self.theme,
@@ -3405,7 +3396,7 @@ impl App {
         let Some(slot) = self.open_tool_submenu else { return; };
         let is_3d = self.project.mode.is_three_d();
         let (slot_rect, current, others): (egui::Rect, ActiveTool, Vec<ActiveTool>) = match slot {
-            5 if is_3d => {
+            4 if is_3d => {
                 let Some(r) = self.object3d_slot_rect else { return; };
                 let cur = self.object3d_group_current.clone();
                 let others = match cur {
@@ -3417,10 +3408,9 @@ impl App {
             3 if is_3d => {
                 let Some(r) = self.modify3d_slot_rect else { return; };
                 let cur = self.modify3d_group_current.clone();
-                let others = match cur {
-                    ActiveTool::Extrude => vec![ActiveTool::Inset],
-                    _                   => vec![ActiveTool::Extrude],
-                };
+                let all = vec![ActiveTool::Extrude, ActiveTool::Inset, ActiveTool::LoopCut];
+                let others: Vec<ActiveTool> =
+                    all.into_iter().filter(|t| *t != cur).collect();
                 (r, cur, others)
             }
             0 => {
@@ -12278,6 +12268,7 @@ print("FAIL")
                                         ("1-6", "Snap view: Front/Back/Right/Left/Top/Bottom"),
                                         ("0", "Reset to home orbit view"),
                                         ("V", "Select tool (vertices, edges, faces)"),
+                                        ("K", "Loop Cut tool"),
                                         ("B", "Gradient: drag across a face; B cycles Dither / Ramp / Smooth"),
                                         ("E", "Extrude selected faces (Select tool)"),
                                         ("F", "Create face from 3-4 selected vertices"),
@@ -13869,6 +13860,11 @@ impl App {
                 }
                 if is_3d && ctx.input(|i| i.key_pressed(egui::Key::V)) {
                     self.set_active_tool(ActiveTool::Select3D);
+                }
+                // K: the knife — Loop Cut lives in the modify flyout, so it
+                // keeps a direct key.
+                if is_3d && ctx.input(|i| i.key_pressed(egui::Key::K)) {
+                    self.set_active_tool(ActiveTool::LoopCut);
                 }
                 // B: gradient tool; pressing it again cycles the blend style
                 // (same re-press idiom as Z / zoom-fit).
