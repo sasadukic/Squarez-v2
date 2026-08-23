@@ -2105,3 +2105,145 @@ fn slanted_faces_are_fully_paintable() {
         "renderable texels a lone slanted face cannot paint: {missed:?}"
     );
 }
+
+#[test]
+fn rotate_faces_four_turns_is_identity_and_marker_lands_correctly() {
+    use squarez::three_d::edit::rotate_faces;
+    let atlas = (128u32, 128u32);
+    let mut mesh = Mesh::cube(8);
+    mesh.allocate_all_islands(atlas).unwrap();
+    let mut layer = Layer::new("Texture".to_string(), atlas.0, atlas.1);
+    squarez::three_d::paint_islands_checker(&mut layer, &mesh);
+    // Asymmetric L marker on the +Z face so flips/transposes are caught.
+    let plus_z = mesh
+        .faces
+        .iter()
+        .position(|f| mesh.face_normal(f)[2] > 0.5)
+        .unwrap() as u32;
+    let isl = mesh.faces[plus_z as usize].island;
+    let mark = [200, 30, 30, 255];
+    for (dx, dy) in [(1, 1), (1, 2), (1, 3), (2, 3)] {
+        layer.set_pixel(isl.x as u32 + dx, isl.y as u32 + dy, mark);
+    }
+    let all: Vec<u32> = (0..mesh.faces.len() as u32).collect();
+
+    for axis in [[0, 1, 0], [1, 0, 0], [0, 0, 1]] {
+        let mut m = mesh.clone();
+        let mut l = layer.clone();
+        for _ in 0..4 {
+            let out = rotate_faces(&m, &l, &all, axis, 1, atlas).expect("fits");
+            for &(x, y, _, new) in &out.pixel_edits {
+                l.set_pixel(x, y, new);
+            }
+            m = out.mesh;
+        }
+        assert_eq!(m.vertices, mesh.vertices, "4 quarter turns about {axis:?} = identity");
+        assert_eq!(l.pixels, layer.pixels, "atlas must round-trip about {axis:?}");
+    }
+
+    // One turn about +Y sends the +Z normal to +X: the marker must live on
+    // the face now facing +X, still 4 texels of the mark color.
+    let out = rotate_faces(&mesh, &layer, &all, [0, 1, 0], 1, atlas).expect("fits");
+    let mut l = layer.clone();
+    for &(x, y, _, new) in &out.pixel_edits {
+        l.set_pixel(x, y, new);
+    }
+    let m = out.mesh;
+    let now_plus_x = &m.faces[plus_z as usize];
+    let n = m.face_normal(now_plus_x);
+    assert!(n[0] > 0.5, "the +Z face must now face +X, normal {n:?}");
+    let isl = now_plus_x.island;
+    let mut count = 0;
+    for j in 0..isl.h as u32 {
+        for i in 0..isl.w as u32 {
+            if l.get_pixel(isl.x as u32 + i, isl.y as u32 + j) == mark {
+                count += 1;
+            }
+        }
+    }
+    assert_eq!(count, 4, "the L marker must ride the face through the rotation");
+}
+
+#[test]
+fn rotate_faces_half_integer_lattice_and_cylinder_round_trip() {
+    use squarez::three_d::edit::rotate_faces;
+    let atlas = (128u32, 128u32);
+    // Odd cube: X/Z at half-integers.
+    let mut mesh = Mesh::cube(7);
+    mesh.allocate_all_islands(atlas).unwrap();
+    let mut layer = Layer::new("Texture".to_string(), atlas.0, atlas.1);
+    squarez::three_d::paint_islands_checker(&mut layer, &mesh);
+    let all: Vec<u32> = (0..mesh.faces.len() as u32).collect();
+    let out = rotate_faces(&mesh, &layer, &all, [0, 1, 0], 1, atlas).expect("fits");
+    for v in &out.mesh.vertices {
+        for a in 0..3 {
+            let frac = (v[a] * 2.0).round() / 2.0;
+            assert!((v[a] - frac).abs() < 1e-6, "vertex stays on the half lattice: {v:?}");
+        }
+    }
+    let mut m = mesh.clone();
+    let mut l = layer.clone();
+    for _ in 0..4 {
+        let out = rotate_faces(&m, &l, &all, [1, 0, 0], 1, atlas).expect("fits");
+        for &(x, y, _, new) in &out.pixel_edits {
+            l.set_pixel(x, y, new);
+        }
+        m = out.mesh;
+    }
+    assert_eq!(m.vertices, mesh.vertices);
+    assert_eq!(l.pixels, layer.pixels);
+
+    // Cylinder: slanted ring faces round-trip too.
+    let mut mesh = Mesh::cylinder(8);
+    mesh.allocate_all_islands(atlas).unwrap();
+    let mut layer = Layer::new("Texture".to_string(), atlas.0, atlas.1);
+    squarez::three_d::paint_islands_checker(&mut layer, &mesh);
+    let all: Vec<u32> = (0..mesh.faces.len() as u32).collect();
+    let mut m = mesh.clone();
+    let mut l = layer.clone();
+    for _ in 0..4 {
+        let out = rotate_faces(&m, &l, &all, [0, 0, 1], 1, atlas).expect("fits");
+        for &(x, y, _, new) in &out.pixel_edits {
+            l.set_pixel(x, y, new);
+        }
+        m = out.mesh;
+    }
+    assert_eq!(m.vertices, mesh.vertices, "cylinder 4x roll = identity");
+    assert_eq!(l.pixels, layer.pixels, "cylinder atlas round-trips");
+}
+
+#[test]
+fn rotating_one_object_leaves_the_other_untouched() {
+    use squarez::three_d::edit::rotate_faces;
+    let atlas = (128u32, 128u32);
+    let mut base = Mesh::cube(8);
+    base.allocate_all_islands(atlas).unwrap();
+    let mut layer = Layer::new("Texture".to_string(), atlas.0, atlas.1);
+    squarez::three_d::paint_islands_checker(&mut layer, &base);
+    let out = squarez::three_d::edit::add_object(&base, &layer, &Mesh::cube(6), atlas).unwrap();
+    let mut layer2 = layer.clone();
+    for &(x, y, _, new) in &out.pixel_edits {
+        layer2.set_pixel(x, y, new);
+    }
+    let mesh = out.mesh;
+    // Paint a marker on an untouched (first-object) face.
+    let keep_isl = mesh.faces[2].island;
+    layer2.set_pixel(keep_isl.x as u32 + 2, keep_isl.y as u32 + 2, [9, 8, 7, 255]);
+    // Rotate only the second object.
+    let second: Vec<u32> = (6..mesh.faces.len() as u32).collect();
+    let out = rotate_faces(&mesh, &layer2, &second, [0, 1, 0], 1, atlas).expect("fits");
+    let mut l = layer2.clone();
+    for &(x, y, _, new) in &out.pixel_edits {
+        l.set_pixel(x, y, new);
+    }
+    for fi in 0..6usize {
+        assert_eq!(out.mesh.faces[fi].island, mesh.faces[fi].island, "island {fi} must not move");
+        let isl = mesh.faces[fi].island;
+        for j in 0..isl.h as u32 {
+            for i in 0..isl.w as u32 {
+                let (x, y) = (isl.x as u32 + i, isl.y as u32 + j);
+                assert_eq!(l.get_pixel(x, y), layer2.get_pixel(x, y), "paint at ({x},{y}) must survive");
+            }
+        }
+    }
+}

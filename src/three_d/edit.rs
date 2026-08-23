@@ -267,6 +267,199 @@ pub fn move_islands(
     })
 }
 
+/// One exact quarter turn of `p` about the signed world `axis`
+/// (right-handed). Pure component swap/negate — no trig, no error.
+fn quarter_rot(p: [f32; 3], axis: [i32; 3]) -> [f32; 3] {
+    let [x, y, z] = p;
+    match axis {
+        [1, 0, 0] => [x, -z, y],
+        [-1, 0, 0] => [x, z, -y],
+        [0, 1, 0] => [z, y, -x],
+        [0, -1, 0] => [-z, y, x],
+        [0, 0, 1] => [-y, x, z],
+        [0, 0, -1] => [y, -x, z],
+        _ => p,
+    }
+}
+
+/// Rotate the given faces' object by `turns` quarter turns about the signed
+/// world `axis`, around the integer-rounded center of their bounding box.
+/// Quarter turns map the world lattice to itself exactly (half-integer
+/// coordinates included), so four turns are byte-identical to none.
+///
+/// The texture rides the faces: islands are re-planned for the rotated
+/// orientation and every destination texel pulls its color by mapping its
+/// world center back through the inverse rotation into the pre-rotation
+/// atlas. Unrotated faces reduce to relayout's 1:1 carry under the same rule.
+pub fn rotate_faces(
+    mesh: &Mesh,
+    layer: &Layer,
+    faces: &[u32],
+    axis: [i32; 3],
+    turns: i32,
+    atlas: (u32, u32),
+) -> Result<EditOutcome, AtlasFull> {
+    let mut sel: Vec<u32> = faces
+        .iter()
+        .copied()
+        .filter(|&f| (f as usize) < mesh.faces.len())
+        .collect();
+    sel.sort_unstable();
+    sel.dedup();
+    let t = turns.rem_euclid(4);
+    if sel.is_empty() || t == 0 || axis.iter().map(|a| a.abs()).sum::<i32>() != 1 {
+        return Ok(EditOutcome {
+            mesh: mesh.clone(),
+            select_faces: sel,
+            ..Default::default()
+        });
+    }
+
+    let moved: HashSet<u32> = sel
+        .iter()
+        .flat_map(|&fi| mesh.faces[fi as usize].verts.iter().copied())
+        .collect();
+    let mut min = [f32::MAX; 3];
+    let mut max = [f32::MIN; 3];
+    for &vi in &moved {
+        let v = mesh.vertices[vi as usize];
+        for a in 0..3 {
+            min[a] = min[a].min(v[a]);
+            max[a] = max[a].max(v[a]);
+        }
+    }
+    // Center on the half-integer lattice: vertices are multiples of 0.5, so
+    // min+max is (near-)integral and the exact bbox center keeps quarter
+    // turns lattice-exact AND reproducible call over call (the rotated bbox
+    // has the same center, so four separate single turns come home).
+    let c = [
+        (min[0] + max[0]).round() / 2.0,
+        (min[1] + max[1]).round() / 2.0,
+        (min[2] + max[2]).round() / 2.0,
+    ];
+    let rot = |p: [f32; 3], ax: [i32; 3]| -> [f32; 3] {
+        let mut q = [p[0] - c[0], p[1] - c[1], p[2] - c[2]];
+        for _ in 0..t {
+            q = quarter_rot(q, ax);
+        }
+        [q[0] + c[0], q[1] + c[1], q[2] + c[2]]
+    };
+    let inv_axis = [-axis[0], -axis[1], -axis[2]];
+
+    let mut out_mesh = mesh.clone();
+    for &vi in &moved {
+        let v = out_mesh.vertices[vi as usize];
+        out_mesh.vertices[vi as usize] = rot(v, axis);
+    }
+
+    // Re-plan islands for the rotated orientation (same selection rule as
+    // relayout), assigning before the pixel transfer so texel_quad_world
+    // speaks the new layout.
+    let plan = if out_mesh.manual_layout {
+        manual_plan(&out_mesh, atlas)?
+    } else {
+        super::layout::plan(&out_mesh, atlas)?
+    };
+    for (face, island) in out_mesh.faces.iter_mut().zip(plan.islands) {
+        face.island = island;
+    }
+    out_mesh.atlas_cursor = plan.cursor;
+
+    let rotated: HashSet<u32> = sel.iter().copied().collect();
+    let mut rec = PixelRecorder::new(layer);
+    let mut writes: Vec<(u32, u32, Rgba)> = Vec::new();
+    for fi in 0..out_mesh.faces.len() {
+        let dst = out_mesh.faces[fi].island;
+        if dst.w == 0 || dst.h == 0 {
+            continue;
+        }
+        let old_face = &mesh.faces[fi];
+        let src = old_face.island;
+        let is_rotated = rotated.contains(&(fi as u32));
+        if !is_rotated && src == dst {
+            continue;
+        }
+        // Placeholder-checker islands re-flow at atlas parity instead of
+        // being remapped (same material rule as relayout / move_islands).
+        let all_default = src.w > 0 && {
+            let mut all = true;
+            'scan: for j in 0..src.h {
+                for i in 0..src.w {
+                    let cpx = rec.read((src.x + i) as u32, (src.y + j) as u32);
+                    if cpx != DEFAULT_FACE_A && cpx != DEFAULT_FACE_B {
+                        all = false;
+                        break 'scan;
+                    }
+                }
+            }
+            all
+        };
+        if src.w == 0 || all_default {
+            for j in 0..dst.h as u32 {
+                for i in 0..dst.w as u32 {
+                    let (ax, ay) = (dst.x as u32 + i, dst.y as u32 + j);
+                    writes.push((ax, ay, default_texel(ax, ay)));
+                }
+            }
+            continue;
+        }
+        let uv = mesh.face_uv_map(old_face, 0.0);
+        for j in 0..dst.h as u32 {
+            for i in 0..dst.w as u32 {
+                let (ax, ay) = (dst.x as u32 + i, dst.y as u32 + j);
+                let Some(quad) = out_mesh.texel_quad_world(&out_mesh.faces[fi], ax, ay)
+                else {
+                    continue;
+                };
+                let mut w = [0.0f32; 3];
+                for q in &quad {
+                    for a in 0..3 {
+                        w[a] += q[a] * 0.25;
+                    }
+                }
+                if is_rotated {
+                    w = rot(w, inv_axis);
+                }
+                let (tx, ty) = uv.texel(w);
+                // texel() clamps into the source island, so the floor is
+                // always a valid read.
+                writes.push((ax, ay, rec.read(tx.floor() as u32, ty.floor() as u32)));
+            }
+        }
+    }
+    // Ground vacated by the re-plan that no island covers any more.
+    let covered = |x: u32, y: u32| -> bool {
+        out_mesh.faces.iter().any(|f| {
+            let o = f.island;
+            o.w > 0
+                && x >= o.x as u32
+                && y >= o.y as u32
+                && x < (o.x + o.w) as u32
+                && y < (o.y + o.h) as u32
+        })
+    };
+    for face in &mesh.faces {
+        let src = face.island;
+        for j in 0..src.h as u32 {
+            for i in 0..src.w as u32 {
+                let (x, y) = (src.x as u32 + i, src.y as u32 + j);
+                if !covered(x, y) {
+                    writes.push((x, y, [0, 0, 0, 0]));
+                }
+            }
+        }
+    }
+    for (x, y, cpx) in writes {
+        rec.write(x, y, cpx);
+    }
+    Ok(EditOutcome {
+        mesh: out_mesh,
+        pixel_edits: rec.edits,
+        select_faces: sel,
+        select_verts: Vec::new(),
+    })
+}
+
 /// Decide where every island goes, then carry the texels named by `sources`
 /// (index-aligned with `mesh.faces`) along.
 ///
