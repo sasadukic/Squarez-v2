@@ -2030,6 +2030,17 @@ impl App {
                     pixels[i + 3] = color[3];
                 }
             }
+            // The 3D gradient drag previews through the same bake: the model
+            // samples this texture, so the blend shows live on the face.
+            for &(x, y, color) in &self.three_d.gradient_preview {
+                if x < cw && y < ch {
+                    let i = (y * cw + x) as usize * 4;
+                    pixels[i]     = color[0];
+                    pixels[i + 1] = color[1];
+                    pixels[i + 2] = color[2];
+                    pixels[i + 3] = color[3];
+                }
+            }
         }
         // Overlay floating selection (sampled with nearest-neighbor through the transform)
         if !self.tile_display_active && self.select_state.has_float() {
@@ -5991,8 +6002,12 @@ impl App {
         let is_shape_mode_tool = matches!(self.active_tool, ActiveTool::Rectangle { .. } | ActiveTool::Ellipse { .. });
         let show_tile_row = self.wang_blob.mode != crate::wang_blob::WangBlobMode::None;
         
+        let is_gradient_tool = matches!(self.active_tool, ActiveTool::Gradient);
         let mut num_rows = if show_tile_row { 4 } else { 3 };
         if is_shape_mode_tool {
+            num_rows += 1;
+        }
+        if is_gradient_tool {
             num_rows += 1;
         }
         if is_select_tool {
@@ -6012,6 +6027,34 @@ impl App {
                 let controls_x = base.x;
                 let icon_size = egui::Vec2::splat(16.0);
                 let mut current_y = base.y;
+
+                // ── Gradient: blend style cycle (Dithered / Ramp / Smooth) ──
+                if is_gradient_tool {
+                    let row_rect = egui::Rect::from_min_size(
+                        egui::Pos2::new(base.x, current_y),
+                        Vec2::new(content_w, btn_h),
+                    );
+                    let resp = ui.interact(
+                        row_rect,
+                        egui::Id::new("ctx_gradient_style"),
+                        egui::Sense::click(),
+                    );
+                    let bg = if resp.hovered() { theme.accent } else { theme.surface };
+                    ui.painter().rect_filled(row_rect, 0.0, bg);
+                    let fg = if resp.hovered() { theme.fg } else { theme.fg_muted };
+                    ui.painter().text(
+                        row_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        self.gradient_style.label(),
+                        FontId::new(10.0, FontFamily::Proportional),
+                        fg,
+                    );
+                    resp.clone().on_hover_text("Gradient blend style (B also cycles)");
+                    if resp.clicked() {
+                        self.gradient_style = self.gradient_style.next();
+                    }
+                    current_y += btn_h + pad;
+                }
 
                 // ── Row 0: Mode Toggle (only for shape tools) ──
                 if is_shape_mode_tool {
@@ -6563,6 +6606,7 @@ impl App {
                 if self.project.mode.is_three_d() && !self.three_d.texture_view {
                     let active_tool = self.active_tool.clone();
                     let pending_add = self.pending_add_primitive.take();
+                    let gradient_ramp = self.gradient_ramp();
                     let out = crate::three_d::workspace::draw(
                         &mut self.three_d,
                         &mut self.project,
@@ -6574,6 +6618,8 @@ impl App {
                         &self.theme,
                         ui,
                         canvas_rect,
+                        self.gradient_style,
+                        gradient_ramp.as_deref(),
                     );
                     if out.canvas_dirty {
                         self.canvas_dirty = true;

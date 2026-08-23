@@ -101,6 +101,39 @@ fn commit_edit(
     output.modified = true;
 }
 
+/// Map a normalized atlas UV on `face` to its screen position via the
+/// face's projected triangles (affine per tri, extrapolates past edges).
+fn face_uv_to_screen(scene: &render::Scene, face: u32, uv: (f32, f32)) -> Option<Pos2> {
+    let p = Pos2::new(uv.0, uv.1);
+    for tri in &scene.tris {
+        if tri.face != face {
+            continue;
+        }
+        let t = tri.uvs;
+        let v0 = t[1] - t[0];
+        let v1 = t[2] - t[0];
+        let v2 = p - t[0];
+        let d00 = v0.dot(v0);
+        let d01 = v0.dot(v1);
+        let d11 = v1.dot(v1);
+        let d20 = v2.dot(v0);
+        let d21 = v2.dot(v1);
+        let denom = d00 * d11 - d01 * d01;
+        if denom.abs() < 1e-12 {
+            continue;
+        }
+        let v = (d11 * d20 - d01 * d21) / denom;
+        let w = (d00 * d21 - d01 * d20) / denom;
+        let u = 1.0 - v - w;
+        let s = tri.pts;
+        return Some(Pos2::new(
+            s[0].x * u + s[1].x * v + s[2].x * w,
+            s[0].y * u + s[1].y * v + s[2].y * w,
+        ));
+    }
+    None
+}
+
 fn dist3(a: [f32; 3], b: [f32; 3]) -> f32 {
     ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
 }
@@ -316,6 +349,8 @@ pub fn draw(
     theme: &Theme,
     ui: &mut egui::Ui,
     canvas_rect: Rect,
+    gradient_style: crate::tools::GradientStyle,
+    gradient_ramp: Option<&[crate::project::Rgba]>,
 ) -> Output {
     let mut output = Output::default();
     let painter = ui.painter_at(canvas_rect);
@@ -573,7 +608,18 @@ pub fn draw(
     if let Some(scene) = scene.as_ref() {
         if !over_ui {
             let paint_result =
-                paint::handle(state, project, undo, color_state, active_tool, scene, &response, ui);
+                paint::handle(
+                    state,
+                    project,
+                    undo,
+                    color_state,
+                    active_tool,
+                    scene,
+                    &response,
+                    ui,
+                    gradient_style,
+                    gradient_ramp,
+                );
             output.canvas_dirty |= paint_result.canvas_dirty;
             output.modified |= paint_result.modified;
         }
@@ -584,11 +630,28 @@ pub fn draw(
                 state.hover_face = None;
                 state.hover_texel = None;
             }
+            // Gradient drag: draw the axis start → end over the live preview.
+            if let Some(drag) = state.gradient_drag {
+                let (aw, ah) = atlas;
+                let to_screen = |t: (f32, f32)| {
+                    face_uv_to_screen(
+                        scene,
+                        drag.face,
+                        (t.0 / aw as f32, t.1 / ah as f32),
+                    )
+                };
+                if let (Some(a), Some(b)) = (to_screen(drag.start), to_screen(drag.end)) {
+                    painter.line_segment([a, b], Stroke::new(2.0, Color32::WHITE));
+                    painter.circle_filled(a, 3.0, Color32::WHITE);
+                    painter.circle_stroke(b, 3.5, Stroke::new(2.0, Color32::WHITE));
+                }
+            }
             if let (Some(fi), Some(mesh)) = (state.hover_face, project.mesh3d.as_ref()) {
                 if let Some(face) = mesh.faces.get(fi as usize) {
                     // Fill paints the whole face: outline the face itself.
                     // The other tools act on one texel: preview that texel.
-                    let face_outline = matches!(active_tool, ActiveTool::Fill);
+                    let face_outline =
+                        matches!(active_tool, ActiveTool::Fill | ActiveTool::Gradient);
                     if face_outline {
                         let stroke = Stroke::new(1.5, Color32::from_white_alpha(140));
                         let k = face.verts.len();
@@ -1231,7 +1294,12 @@ pub fn draw(
         Some(v) => v.label().to_string(),
         None => "Orbit".to_string(),
     };
+    let gradient_hint = format!(
+        "Gradient ({}): drag across a face · B cycles style · RMB orbit",
+        gradient_style.label()
+    );
     let hint = match active_tool {
+        ActiveTool::Gradient => gradient_hint.as_str(),
         ActiveTool::Select3D => "Select: click vertex/edge/face · alt = the one behind · drag move · shift multi · E extrude · F fill 3-4 verts · Del delete",
         ActiveTool::Extrude => "Extrude: drag a face to pull it out (whole units)",
         ActiveTool::Inset => "Inset: drag a face to grow an inset border",

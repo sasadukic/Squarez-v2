@@ -115,6 +115,20 @@ pub struct ThreeDState {
     /// In-flight island drag in the texture view: (start mouse texel,
     /// current integer delta).
     pub island_drag: Option<((i32, i32), (i32, i32))>,
+    /// In-flight gradient drag on the model (locked to one face).
+    pub gradient_drag: Option<GradientDrag>,
+    /// Live gradient preview texels, baked into the canvas texture by the
+    /// app's rebuild alongside shape_preview.
+    pub gradient_preview: Vec<(u32, u32, Rgba)>,
+}
+
+/// A gradient drag locked to `face`; start/end are absolute atlas texel
+/// coordinates (float, texel centers).
+#[derive(Debug, Clone, Copy)]
+pub struct GradientDrag {
+    pub face: u32,
+    pub start: (f32, f32),
+    pub end: (f32, f32),
 }
 
 /// Viewport lighting, toggled from the Windows menu.
@@ -154,6 +168,8 @@ impl Default for ThreeDState {
             texture_view: false,
             atlas_prompted: false,
             island_drag: None,
+            gradient_drag: None,
+            gradient_preview: Vec::new(),
         }
     }
 }
@@ -165,6 +181,8 @@ impl ThreeDState {
     pub fn cancel_gesture(&mut self) {
         self.drag = None;
         self.op_drag = None;
+        self.gradient_drag = None;
+        self.gradient_preview.clear();
     }
 
     /// Drop transient gesture state (selection, stroke) but keep the camera.
@@ -179,6 +197,8 @@ impl ThreeDState {
         self.stroke_edits.clear();
         self.stroke_painted.clear();
         self.last_paint = None;
+        self.gradient_drag = None;
+        self.gradient_preview.clear();
     }
 }
 

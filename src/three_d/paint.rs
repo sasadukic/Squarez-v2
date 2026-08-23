@@ -83,8 +83,50 @@ pub fn pick(scene: &Scene, pos: Pos2, mesh: &super::mesh::Mesh, atlas: (u32, u32
 pub fn is_paint_tool(tool: &ActiveTool) -> bool {
     matches!(
         tool,
-        ActiveTool::Pencil | ActiveTool::Eraser | ActiveTool::Fill | ActiveTool::Eyedropper
+        ActiveTool::Pencil
+            | ActiveTool::Eraser
+            | ActiveTool::Fill
+            | ActiveTool::Eyedropper
+            | ActiveTool::Gradient
     )
+}
+
+/// Project a screen position onto `face`'s plane, returning UNCLAMPED float
+/// atlas texel coordinates. Unlike `pick`, this evaluates barycentric coords
+/// without the inside test — the affine map extrapolates past the triangle —
+/// so a gradient axis endpoint can land beyond the face's edge. Returns None
+/// only when every screen triangle of the face is degenerate (edge-on view).
+pub fn pick_on_face_plane(
+    scene: &Scene,
+    face: u32,
+    pos: Pos2,
+    atlas: (u32, u32),
+) -> Option<(f32, f32)> {
+    for tri in scene.tris.iter() {
+        if tri.face != face {
+            continue;
+        }
+        let t = tri.pts;
+        let v0 = t[1] - t[0];
+        let v1 = t[2] - t[0];
+        let v2 = pos - t[0];
+        let d00 = v0.dot(v0);
+        let d01 = v0.dot(v1);
+        let d11 = v1.dot(v1);
+        let d20 = v2.dot(v0);
+        let d21 = v2.dot(v1);
+        let denom = d00 * d11 - d01 * d01;
+        if denom.abs() < 1e-6 {
+            continue;
+        }
+        let v = (d11 * d20 - d01 * d21) / denom;
+        let w = (d00 * d21 - d01 * d20) / denom;
+        let u = 1.0 - v - w;
+        let uv_x = tri.uvs[0].x * u + tri.uvs[1].x * v + tri.uvs[2].x * w;
+        let uv_y = tri.uvs[0].y * u + tri.uvs[1].y * v + tri.uvs[2].y * w;
+        return Some((uv_x * atlas.0 as f32, uv_y * atlas.1 as f32));
+    }
+    None
 }
 
 fn layer_paintable(layer: &Layer) -> bool {
@@ -249,6 +291,8 @@ pub fn handle(
     scene: &Scene,
     response: &egui::Response,
     ui: &egui::Ui,
+    gradient_style: crate::tools::GradientStyle,
+    gradient_ramp: Option<&[Rgba]>,
 ) -> PaintResult {
     let mut result = PaintResult::default();
     if !is_paint_tool(tool) || project.mesh3d.is_none() {
@@ -275,6 +319,96 @@ pub fn handle(
         state.stroke_edits.clear();
         state.stroke_painted.clear();
         state.last_paint = None;
+    }
+
+    // Gradient: its own press/drag/commit cycle. The drag is locked to the
+    // face under the press; the endpoint tracks the face PLANE (extrapolated
+    // past the edge), and the preview lives in gradient_preview — never the
+    // layer — so the generic stroke machinery below stays untouched.
+    if matches!(tool, ActiveTool::Gradient) {
+        if press_started {
+            if let Some(pos) = pointer {
+                let mesh = project.mesh3d.as_ref().unwrap();
+                if let Some(hit) = pick(scene, pos, mesh, atlas) {
+                    let c = (hit.texel.0 as f32 + 0.5, hit.texel.1 as f32 + 0.5);
+                    state.gradient_drag =
+                        Some(super::GradientDrag { face: hit.face, start: c, end: c });
+                }
+            }
+        }
+        if primary_down && !primary_released {
+            if let Some(mut drag) = state.gradient_drag {
+                let mesh = project.mesh3d.as_ref().unwrap();
+                if let Some(pos) = pointer {
+                    if let Some(end) = pick_on_face_plane(scene, drag.face, pos, atlas) {
+                        drag.end = end;
+                    }
+                }
+                let clip = FaceClip::new(mesh, drag.face);
+                state.gradient_drag = Some(drag);
+                if let Some(clip) = clip {
+                    let frame = &project.animations[0].frames[0];
+                    if let Some(layer) = frame.layers.get(li) {
+                        if layer_paintable(layer) {
+                            let isl = clip.isl;
+                            let preview: Vec<(u32, u32, Rgba)> = crate::tools::apply_gradient(
+                                layer,
+                                (isl.x as u32, isl.y as u32, isl.w as u32, isl.h as u32),
+                                |x, y| clip.contains(x, y),
+                                drag.start,
+                                drag.end,
+                                gradient_style,
+                                color_state.foreground,
+                                color_state.background,
+                                gradient_ramp,
+                            )
+                            .into_iter()
+                            .map(|(x, y, _, new)| (x, y, new))
+                            .collect();
+                            if preview != state.gradient_preview {
+                                state.gradient_preview = preview;
+                                result.canvas_dirty = true;
+                            }
+                        }
+                    }
+                }
+            }
+        } else if let Some(drag) = state.gradient_drag.take() {
+            state.gradient_preview.clear();
+            let clip = FaceClip::new(project.mesh3d.as_ref().unwrap(), drag.face);
+            let frame = &mut project.animations[0].frames[0];
+            if let (Some(clip), Some(layer)) = (clip, frame.layers.get_mut(li)) {
+                if layer_paintable(layer) {
+                    let isl = clip.isl;
+                    let edits = crate::tools::apply_gradient(
+                        layer,
+                        (isl.x as u32, isl.y as u32, isl.w as u32, isl.h as u32),
+                        |x, y| clip.contains(x, y),
+                        drag.start,
+                        drag.end,
+                        gradient_style,
+                        color_state.foreground,
+                        color_state.background,
+                        gradient_ramp,
+                    );
+                    if !edits.is_empty() {
+                        for &(x, y, _, new) in &edits {
+                            layer.set_pixel(x, y, new);
+                        }
+                        frame.dirty = true;
+                        undo.push(Command::PaintPixels {
+                            animation_id: 0,
+                            frame_id: 0,
+                            layer_id: li,
+                            edits,
+                        });
+                        result.modified = true;
+                    }
+                }
+            }
+            result.canvas_dirty = true;
+        }
+        return result;
     }
 
     let painting = primary_down && (response.dragged_by(egui::PointerButton::Primary) || response.hovered());
