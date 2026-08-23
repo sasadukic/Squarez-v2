@@ -3339,10 +3339,10 @@ impl App {
                         spread: 0,
                         color: Color32::from_rgba_unmultiplied(0, 0, 0, 89),
                     })
-                    .inner_margin(Margin::same(6))
+                    .inner_margin(Margin::same(0))
                     .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing = Vec2::ZERO;
                         ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing = Vec2::ZERO;
                             for (prim, name) in prims {
                                 let r = tool_btn_raw(ui, &theme, false, prim_icon(prim))
                                     .on_hover_text(format!("Add {}", name));
