@@ -40,6 +40,8 @@ pub enum ActiveTool {
     LoopCut,
     MoveObject,
     ScaleObject,
+    /// Quarter-turn object rotation (90-degree steps about the view axes).
+    RotateObject,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

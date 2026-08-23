@@ -1543,6 +1543,7 @@ impl App {
                     | ActiveTool::LoopCut
                     | ActiveTool::MoveObject
                     | ActiveTool::ScaleObject
+                    | ActiveTool::RotateObject
             ) {
                 self.set_active_tool(ActiveTool::Pencil);
             }
@@ -1802,7 +1803,7 @@ impl App {
                 ActiveTool::Fill | ActiveTool::Eyedropper | ActiveTool::Gradient => 1,
                 ActiveTool::Select3D                        => 2,
                 ActiveTool::Extrude | ActiveTool::Inset | ActiveTool::LoopCut => 3,
-                ActiveTool::MoveObject | ActiveTool::ScaleObject => 4,
+                ActiveTool::MoveObject | ActiveTool::ScaleObject | ActiveTool::RotateObject => 4,
                 ActiveTool::Zoom                            => 6,
                 _                                           => 0,
             }
@@ -1818,7 +1819,8 @@ impl App {
                 | ActiveTool::Inset
                 | ActiveTool::LoopCut
                 | ActiveTool::MoveObject
-                | ActiveTool::ScaleObject                         => 3, // 3D-only tools (not reachable in 2D)
+                | ActiveTool::ScaleObject
+                | ActiveTool::RotateObject                        => 3, // 3D-only tools (not reachable in 2D)
                 ActiveTool::RectSelect | ActiveTool::MagicWand | ActiveTool::Move => 3, // select group
                 ActiveTool::Zoom                                  => 4,
             }
@@ -1867,7 +1869,9 @@ impl App {
             ActiveTool::Extrude | ActiveTool::Inset | ActiveTool::LoopCut => {
                 self.modify3d_group_current = t.clone()
             }
-            ActiveTool::MoveObject | ActiveTool::ScaleObject => self.object3d_group_current = t.clone(),
+            ActiveTool::MoveObject | ActiveTool::ScaleObject | ActiveTool::RotateObject => {
+                self.object3d_group_current = t.clone()
+            }
             _ => {}
         }
         self.active_tool = t;
@@ -3204,8 +3208,10 @@ impl App {
                     }
 
                     // Slot 4: Object group (Move/Scale flyout)
-                    let obj_active =
-                        matches!(self.active_tool, ActiveTool::MoveObject | ActiveTool::ScaleObject);
+                    let obj_active = matches!(
+                        self.active_tool,
+                        ActiveTool::MoveObject | ActiveTool::ScaleObject | ActiveTool::RotateObject
+                    );
                     let obj_resp = tool_btn_raw(
                         ui,
                         &self.theme,
@@ -3379,10 +3385,13 @@ impl App {
             4 if is_3d => {
                 let Some(r) = self.object3d_slot_rect else { return; };
                 let cur = self.object3d_group_current.clone();
-                let others = match cur {
-                    ActiveTool::MoveObject => vec![ActiveTool::ScaleObject],
-                    _                      => vec![ActiveTool::MoveObject],
-                };
+                let all = vec![
+                    ActiveTool::MoveObject,
+                    ActiveTool::ScaleObject,
+                    ActiveTool::RotateObject,
+                ];
+                let others: Vec<ActiveTool> =
+                    all.into_iter().filter(|t| *t != cur).collect();
                 (r, cur, others)
             }
             3 if is_3d => {
@@ -12249,6 +12258,7 @@ print("FAIL")
                                         ("0", "Reset to home orbit view"),
                                         ("V", "Select tool (vertices, edges, faces)"),
                                         ("K", "Loop Cut tool"),
+                                        ("R", "Rotate tool (drag to spin in 90\u{b0} steps)"),
                                         ("B", "Gradient: drag across a face; B cycles Dither / Ramp / Smooth"),
                                         ("E", "Extrude selected faces (Select tool)"),
                                         ("F", "Create face from 3-4 selected vertices"),
@@ -14016,6 +14026,9 @@ impl App {
                 if is_3d && ctx.input(|i| i.key_pressed(egui::Key::K)) {
                     self.set_active_tool(ActiveTool::LoopCut);
                 }
+                if is_3d && ctx.input(|i| i.key_pressed(egui::Key::R)) {
+                    self.set_active_tool(ActiveTool::RotateObject);
+                }
                 // B: gradient tool; pressing it again cycles the blend style
                 // (same re-press idiom as Z / zoom-fit).
                 if ctx.input(|i| i.key_pressed(egui::Key::B)) {
@@ -14730,6 +14743,7 @@ fn tool_icon(tool: &ActiveTool) -> ImageSource<'static> {
         ActiveTool::LoopCut          => egui::include_image!("../assets/icons/loop_cut.svg"),
         ActiveTool::MoveObject       => egui::include_image!("../assets/icons/move_object.svg"),
         ActiveTool::ScaleObject      => egui::include_image!("../assets/icons/scale_object.svg"),
+        ActiveTool::RotateObject     => egui::include_image!("../assets/icons/rotate_object.svg"),
     }
 }
 
@@ -14753,6 +14767,7 @@ fn tool_tooltip_text(tool: &ActiveTool) -> &'static str {
         ActiveTool::LoopCut          => "Loop Cut Tool (Hover to preview, click to cut)",
         ActiveTool::MoveObject       => "Move Tool (Click an object, drag to move on the grid)",
         ActiveTool::ScaleObject      => "Scale Tool (Click an object, drag to resize in whole units)",
+        ActiveTool::RotateObject     => "Rotate Tool (Click an object, drag to spin in 90\u{b0} steps)",
     }
 }
 

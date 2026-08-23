@@ -134,6 +134,19 @@ fn face_uv_to_screen(scene: &render::Scene, face: u32, uv: (f32, f32)) -> Option
     None
 }
 
+/// The signed world axis a view-space direction is most aligned with —
+/// the arrow-nudge snapping rule.
+fn snap_world_axis(v: [f32; 3]) -> [i32; 3] {
+    let (ax, ay, az) = (v[0].abs(), v[1].abs(), v[2].abs());
+    if ax >= ay && ax >= az {
+        [v[0].signum() as i32, 0, 0]
+    } else if ay >= az {
+        [0, v[1].signum() as i32, 0]
+    } else {
+        [0, 0, v[2].signum() as i32]
+    }
+}
+
 fn dist3(a: [f32; 3], b: [f32; 3]) -> f32 {
     ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
 }
@@ -527,7 +540,8 @@ pub fn draw(
     let is_loop_tool = matches!(active_tool, ActiveTool::LoopCut);
     let is_move_object = matches!(active_tool, ActiveTool::MoveObject);
     let is_scale_object = matches!(active_tool, ActiveTool::ScaleObject);
-    let is_object_tool = is_move_object || is_scale_object;
+    let is_rotate_object = matches!(active_tool, ActiveTool::RotateObject);
+    let is_object_tool = is_move_object || is_scale_object || is_rotate_object;
     let mut action: Option<Action> = None;
     if let Some(req) = pending_add {
         if let Some(before) = project.mesh3d.clone() {
@@ -723,12 +737,15 @@ pub fn draw(
                 if od.applied != 0 {
                     let (kind, face, n) = (od.kind, od.face, od.applied);
                     let verts = od.verts.clone();
+                    let faces = od.faces.clone();
+                    let rot_axis = od.axis;
                     let before = od.start_mesh.clone();
                     let kept_faces = state.sel_faces.clone();
                     if let Some((outcome, canvas_before)) = with_atlas_growth(project, li, |m, layer, atlas| match kind {
                         OpKind::Extrude => edit::extrude_faces_n(m, layer, &[face], n, atlas),
                         OpKind::Inset => edit::inset_faces(m, layer, &[face], n as u32, atlas),
                         OpKind::Scale => edit::scale_verts(m, layer, &verts, n, atlas),
+                        OpKind::Rotate => edit::rotate_faces(m, layer, &faces, rot_axis, n, atlas),
                     }) {
                         commit_edit(state, project, undo, li, before, canvas_before, outcome, &mut output);
                         if kind == OpKind::Scale {
@@ -772,11 +789,12 @@ pub fn draw(
     }
 
     // ── Extrude / Inset / Scale drag ────────────────────────────────────────
-    if is_modify_tool || is_scale_object {
+    if is_modify_tool || is_scale_object || is_rotate_object {
         state.hover_face = None;
         let kind = match active_tool {
             ActiveTool::Inset => OpKind::Inset,
             ActiveTool::ScaleObject => OpKind::Scale,
+            ActiveTool::RotateObject => OpKind::Rotate,
             _ => OpKind::Extrude,
         };
 
@@ -811,6 +829,19 @@ pub fn draw(
                         let (verts, component) = if kind == OpKind::Scale {
                             let component = edit::connected_faces(mesh, hit.face);
                             (face_selection_verts(&component, mesh), component)
+                        } else if kind == OpKind::Rotate {
+                            // Move's rule: a click on an already-selected
+                            // component rotates the whole selection; anything
+                            // else selects just the clicked component.
+                            let component = edit::connected_faces(mesh, hit.face);
+                            let faces = if !state.sel_faces.is_empty()
+                                && component.iter().all(|f| state.sel_faces.contains(f))
+                            {
+                                state.sel_faces.clone()
+                            } else {
+                                component
+                            };
+                            (face_selection_verts(&faces, mesh), faces)
                         } else {
                             (Vec::new(), Vec::new())
                         };
@@ -818,12 +849,20 @@ pub fn draw(
                             kind,
                             face: hit.face,
                             verts,
+                            faces: if kind == OpKind::Rotate {
+                                component.clone()
+                            } else {
+                                Vec::new()
+                            },
                             start_mesh: mesh.clone(),
                             start_layer,
                             raw: 0.0,
                             applied: 0,
+                            cum: (0.0, 0.0),
+                            axis: [0, 0, 0],
+                            lock_h: false,
                         });
-                        if kind == OpKind::Scale {
+                        if kind == OpKind::Scale || kind == OpKind::Rotate {
                             state.sel_faces = component;
                             state.sel_verts.clear();
                             state.sel_edges.clear();
@@ -840,21 +879,42 @@ pub fn draw(
             if delta != Vec2::ZERO && state.op_drag.is_some() {
                 let zoom = cam_copy.zoom.max(0.001);
                 let Some(od) = state.op_drag.as_mut() else { unreachable!() };
-                od.raw += match od.kind {
-                    OpKind::Extrude => {
-                        let face = &od.start_mesh.faces[od.face as usize];
-                        let axis = edit::extrude_dir(&od.start_mesh, face);
-                        let w = cam_copy.unview([delta.x / zoom, -delta.y / zoom, 0.0]);
-                        w[0] * axis[0] + w[1] * axis[1] + w[2] * axis[2]
+                if od.kind == OpKind::Rotate {
+                    // Lock the world axis from the first dominant drag
+                    // direction: horizontal spins about the screen-vertical
+                    // axis, vertical about the screen-horizontal one.
+                    od.cum.0 += delta.x;
+                    od.cum.1 += delta.y;
+                    if od.axis == [0, 0, 0] && od.cum.0.abs().max(od.cum.1.abs()) > 8.0 {
+                        od.lock_h = od.cum.0.abs() >= od.cum.1.abs();
+                        let d = if od.lock_h {
+                            cam_copy.unview([0.0, 1.0, 0.0])
+                        } else {
+                            cam_copy.unview([1.0, 0.0, 0.0])
+                        };
+                        od.axis = snap_world_axis(d);
                     }
-                    // Drag right/down to grow the inset border.
-                    OpKind::Inset => (delta.x + delta.y) / (2.0 * zoom),
-                    // Drag right/up to grow the object.
-                    OpKind::Scale => (delta.x - delta.y) / (2.0 * zoom),
-                };
+                    if od.axis != [0, 0, 0] {
+                        od.raw = (if od.lock_h { od.cum.0 } else { od.cum.1 }) / 40.0;
+                    }
+                } else {
+                    od.raw += match od.kind {
+                        OpKind::Extrude => {
+                            let face = &od.start_mesh.faces[od.face as usize];
+                            let axis = edit::extrude_dir(&od.start_mesh, face);
+                            let w = cam_copy.unview([delta.x / zoom, -delta.y / zoom, 0.0]);
+                            w[0] * axis[0] + w[1] * axis[1] + w[2] * axis[2]
+                        }
+                        // Drag right/down to grow the inset border.
+                        OpKind::Inset => (delta.x + delta.y) / (2.0 * zoom),
+                        // Drag right/up to grow the object.
+                        OpKind::Scale => (delta.x - delta.y) / (2.0 * zoom),
+                        OpKind::Rotate => unreachable!(),
+                    };
+                }
                 let n: i32 = match od.kind {
-                    // Extrude and Scale go both ways; Inset only grows.
-                    OpKind::Extrude | OpKind::Scale => od.raw.round() as i32,
+                    // Extrude, Scale, and Rotate go both ways; Inset only grows.
+                    OpKind::Extrude | OpKind::Scale | OpKind::Rotate => od.raw.round() as i32,
                     OpKind::Inset => od.raw.round().max(0.0) as i32,
                 };
                 if n != od.applied {
@@ -868,6 +928,14 @@ pub fn draw(
                         OpKind::Scale => {
                             edit::scale_verts(&od.start_mesh, &od.start_layer, &od.verts, n, atlas)
                         }
+                        OpKind::Rotate => edit::rotate_faces(
+                            &od.start_mesh,
+                            &od.start_layer,
+                            &od.faces,
+                            od.axis,
+                            n,
+                            atlas,
+                        ),
                     };
                     if let Ok(outcome) = outcome {
                         let start_layer = od.start_layer.clone();
@@ -1310,6 +1378,7 @@ pub fn draw(
         ActiveTool::LoopCut => "Loop Cut: hover to preview the ring · click to cut",
         ActiveTool::MoveObject => "Move: click an object · shift-click to add more · drag moves them all",
         ActiveTool::ScaleObject => "Scale: click an object · drag right/up to resize in whole units",
+        ActiveTool::RotateObject => "Rotate: click an object · drag \u{2194}/\u{2195} to spin in 90\u{b0} steps around the view axes",
         t if paint::is_paint_tool(t) => "Paint on the model · RMB orbit · MMB pan · 1-6 snap views",
         _ => "RMB orbit · MMB pan · scroll zoom · 1-6 snap views",
     };

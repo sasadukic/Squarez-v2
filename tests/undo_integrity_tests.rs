@@ -171,6 +171,32 @@ fn undo_walks_the_full_operation_chain_both_ways() {
     }
     record("gradient on face 1", &app);
 
+    // 7. Rotate the first object a quarter turn about Y.
+    {
+        let mesh = app.project.mesh3d.clone().unwrap();
+        let layer = app.project.animations[0].frames[0].layers[0].clone();
+        let first: Vec<u32> = (0..6).collect();
+        let out = squarez::three_d::edit::rotate_faces(&mesh, &layer, &first, [0, 1, 0], 1, (128, 128))
+            .expect("fits");
+        let canvas = (app.project.canvas_width, app.project.canvas_height);
+        {
+            let frame = &mut app.project.animations[0].frames[0];
+            for &(x, y, _, new) in &out.pixel_edits {
+                frame.layers[0].set_pixel(x, y, new);
+            }
+        }
+        app.undo_stack.push(squarez::history::Command::MeshEdit {
+            before: mesh,
+            after: out.mesh.clone(),
+            layer_id: 0,
+            canvas_before: canvas,
+            canvas_after: canvas,
+            pixel_edits: out.pixel_edits,
+        });
+        app.project.mesh3d = Some(out.mesh);
+    }
+    record("rotate first object", &app);
+
     // Walk all the way down…
     for i in (1..checkpoints.len()).rev() {
         key(&ctx, &mut app, Key::Z, Modifiers::COMMAND);

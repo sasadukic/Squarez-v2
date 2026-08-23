@@ -64,6 +64,8 @@ pub enum OpKind {
     Inset,
     /// Uniform object scale; operates on `verts` instead of `face`.
     Scale,
+    /// Quarter-turn object rotation; operates on `faces` about `axis`.
+    Rotate,
 }
 
 /// An in-flight extrude/inset/scale drag: pristine mesh + layer snapshots
@@ -74,10 +76,17 @@ pub struct OpDrag {
     pub face: u32,
     /// Vertex set for Scale (the clicked object's vertices).
     pub verts: Vec<u32>,
+    /// Face set for Rotate (the selected objects' faces).
+    pub faces: Vec<u32>,
     pub start_mesh: mesh::Mesh,
     pub start_layer: Layer,
     pub raw: f32,
     pub applied: i32,
+    /// Rotate: accumulated raw screen delta, world axis once locked
+    /// ([0,0,0] = not locked yet), and which drag direction locked it.
+    pub cum: (f32, f32),
+    pub axis: [i32; 3],
+    pub lock_h: bool,
 }
 
 /// Per-tab UI state for the 3D workspace: camera, selection, and in-flight

@@ -31,8 +31,13 @@ pub struct EditOutcome {
 struct PixelRecorder<'a> {
     layer: &'a Layer,
     edits: Vec<PixelEdit>,
-    /// Values already written this operation (so later reads see them).
-    written: std::collections::HashMap<(u32, u32), Rgba>,
+    /// Index into `edits` per coordinate already written this operation, so
+    /// later reads see the current value AND repeat writes merge into ONE
+    /// edit whose `old` stays the pristine color. Two entries for one texel
+    /// would corrupt undo: the backward pass would restore the intermediate
+    /// value, not the original (hand-packed islands may overlap, so repeat
+    /// writes are legal).
+    written: std::collections::HashMap<(u32, u32), usize>,
 }
 
 impl<'a> PixelRecorder<'a> {
@@ -41,14 +46,24 @@ impl<'a> PixelRecorder<'a> {
     }
 
     fn read(&self, x: u32, y: u32) -> Rgba {
-        *self.written.get(&(x, y)).unwrap_or(&self.layer.get_pixel(x, y))
+        match self.written.get(&(x, y)) {
+            Some(&i) => self.edits[i].3,
+            None => self.layer.get_pixel(x, y),
+        }
     }
 
     fn write(&mut self, x: u32, y: u32, new: Rgba) {
-        let old = self.read(x, y);
-        if old != new {
-            self.edits.push((x, y, old, new));
-            self.written.insert((x, y), new);
+        match self.written.entry((x, y)) {
+            std::collections::hash_map::Entry::Occupied(e) => {
+                self.edits[*e.get()].3 = new;
+            }
+            std::collections::hash_map::Entry::Vacant(v) => {
+                let old = self.layer.get_pixel(x, y);
+                if old != new {
+                    v.insert(self.edits.len());
+                    self.edits.push((x, y, old, new));
+                }
+            }
         }
     }
 
