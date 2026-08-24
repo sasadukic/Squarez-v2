@@ -569,15 +569,18 @@ pub fn draw(
         if let Some(texture) = canvas.texture.as_ref() {
             render::paint_scene(&painter, scene, texture.id());
         }
-        render::paint_glow_halos(
-            &painter,
-            scene,
-            mesh,
-            &project.animations[0].frames[0],
-            &project.glow_colors,
-            atlas,
-            cam_copy.zoom,
-        );
+        if state.emission {
+            render::paint_glow_halos(
+                &painter,
+                scene,
+                mesh,
+                &project.animations[0].frames[0],
+                &project.glow_colors,
+                atlas,
+                cam_copy.zoom,
+                project.emission_intensity,
+            );
+        }
         // Off is a clean preview: raw texel colors with no edge seams.
         // Selection/hover overlays still draw, so the tools stay usable.
         if state.shading != super::Shading::Off {

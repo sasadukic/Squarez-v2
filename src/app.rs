@@ -2191,7 +2191,9 @@ impl App {
                         let d = i * 4;
                         // Emissive colors ignore lighting entirely.
                         let px = [pixels[d], pixels[d + 1], pixels[d + 2], pixels[d + 3]];
-                        if px[3] == 0 || self.project.is_glow_color(px) {
+                        if px[3] == 0
+                            || (self.three_d.emission && self.project.is_glow_color(px))
+                        {
                             continue;
                         }
                         let mut c = [px[0], px[1], px[2]];
@@ -8633,15 +8635,18 @@ print("FAIL")
                 if let Some(texture) = self.canvas.texture.as_ref() {
                     crate::three_d::render::paint_scene(&painter, &scene, texture.id());
                 }
-                crate::three_d::render::paint_glow_halos(
-                    &painter,
-                    &scene,
-                    mesh,
-                    &self.project.animations[0].frames[0],
-                    &self.project.glow_colors,
-                    atlas,
-                    cam.zoom,
-                );
+                if self.three_d.emission {
+                    crate::three_d::render::paint_glow_halos(
+                        &painter,
+                        &scene,
+                        mesh,
+                        &self.project.animations[0].frames[0],
+                        &self.project.glow_colors,
+                        atlas,
+                        cam.zoom,
+                        self.project.emission_intensity,
+                    );
+                }
             }
             return;
         }

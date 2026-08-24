@@ -40,10 +40,11 @@ impl ShadowMode {
 }
 
 pub const SHADOW_DIM: f32 = 0.55;
-/// Grid-flush rule: an occluder this close is ATTACHED (an object resting on
-/// another), and pixel-perfect solids must not shadow their own seam — only
-/// genuinely separated geometry casts.
-const MIN_SHADOW_DIST: f32 = 1.05;
+/// Grid-flush rule: a hit closer than this is the attached seam itself
+/// (an object resting on another must not shadow the contact crack). Kept
+/// well under one grid unit so cast shadows still hug an object's base —
+/// a larger cutoff visibly detaches the shadow from the object.
+const MIN_SHADOW_DIST: f32 = 0.35;
 pub const AO_STRENGTH: f32 = 0.5;
 /// Tight contact range: only creases and contact points darken, never a
 /// broad film over the model.

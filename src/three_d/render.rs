@@ -709,8 +709,9 @@ pub fn paint_glow_halos(
     glow: &[crate::project::Rgba],
     atlas: (u32, u32),
     zoom: f32,
+    intensity: u8,
 ) {
-    if glow.is_empty() {
+    if glow.is_empty() || intensity == 0 {
         return;
     }
     // Top-down first-visible-pixel rule (matches the compositor's winner for
@@ -764,10 +765,12 @@ pub fn paint_glow_halos(
     // center carries alpha and whose rim is fully transparent, so overlapping
     // neighbours melt into one continuous glow instead of pixelated rings.
     let mut bloom = egui::Mesh::default();
+    // Intensity 50% = the reference look; 0 disables, 100 doubles the reach.
+    let alpha = ((92.0 * intensity as f32 / 100.0) as u8).max(8);
     let mut add_disc = |pos: Pos2, radius: f32, c: crate::project::Rgba| {
         const SEGS: u32 = 16;
         let center = bloom.vertices.len() as u32;
-        bloom.colored_vertex(pos, Color32::from_rgba_unmultiplied(c[0], c[1], c[2], 46));
+        bloom.colored_vertex(pos, Color32::from_rgba_unmultiplied(c[0], c[1], c[2], alpha));
         let rim = Color32::from_rgba_unmultiplied(c[0], c[1], c[2], 0);
         for k in 0..SEGS {
             let a = k as f32 * std::f32::consts::TAU / SEGS as f32;
@@ -782,7 +785,7 @@ pub fn paint_glow_halos(
     };
 
     let (aw, ah) = atlas;
-    let r = (zoom * 2.8).min(64.0);
+    let r = (zoom * 2.8 * (0.4 + 0.012 * intensity as f32)).min(90.0);
     let mut drawn = 0usize;
     'faces: for &fi in &scene.visible_faces {
         let Some(face) = mesh.faces.get(fi as usize) else { continue };
