@@ -12,7 +12,38 @@ use super::mesh::Mesh;
 /// home orbit.
 pub const SUN: [f32; 3] = [-0.394, 0.788, 0.473];
 
+/// Cast-shadow rendering mode (3D effects menu, per tab).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ShadowMode {
+    #[default]
+    Off,
+    Hard,
+    Soft,
+}
+
+impl ShadowMode {
+    pub fn next(self) -> Self {
+        match self {
+            ShadowMode::Off => ShadowMode::Hard,
+            ShadowMode::Hard => ShadowMode::Soft,
+            ShadowMode::Soft => ShadowMode::Off,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ShadowMode::Off => "Off",
+            ShadowMode::Hard => "On",
+            ShadowMode::Soft => "Soft",
+        }
+    }
+}
+
 pub const SHADOW_DIM: f32 = 0.55;
+/// Grid-flush rule: an occluder this close is ATTACHED (an object resting on
+/// another), and pixel-perfect solids must not shadow their own seam — only
+/// genuinely separated geometry casts.
+const MIN_SHADOW_DIST: f32 = 1.05;
 pub const AO_STRENGTH: f32 = 0.5;
 /// Tight contact range: only creases and contact points darken, never a
 /// broad film over the model.
@@ -60,10 +91,82 @@ fn ray_tri(orig: [f32; 3], dir: [f32; 3], a: [f32; 3], b: [f32; 3], c: [f32; 3])
     if t > EPS { Some(t) } else { None }
 }
 
+fn point_in_poly(poly: &[(f32, f32)], p: (f32, f32)) -> bool {
+    let n = poly.len();
+    let mut inside = false;
+    for i in 0..n {
+        let (x0, y0) = poly[i];
+        let (x1, y1) = poly[(i + 1) % n];
+        if (y0 > p.1) != (y1 > p.1) {
+            let t = (p.1 - y0) / (y1 - y0);
+            if p.0 < x0 + t * (x1 - x0) {
+                inside = !inside;
+            }
+        }
+    }
+    inside
+}
+
+/// Faces fully sandwiched against an opposed coincident face (the hidden
+/// planes between grid-flush stacked objects). They are invisible and must
+/// neither receive light nor occlude anything.
+pub fn buried_faces(mesh: &Mesh) -> Vec<bool> {
+    let n = mesh.faces.len();
+    let mut buried = vec![false; n];
+    let normals: Vec<[f32; 3]> = mesh.faces.iter().map(|f| norm(mesh.face_normal(f))).collect();
+    for a in 0..n {
+        let fa = &mesh.faces[a];
+        let basis = mesh.face_plane_basis(fa);
+        let axis = basis.dropped_axis();
+        let plane_a = mesh.vertices[fa.verts[0] as usize][axis];
+        // Sample points slightly inside face a (its vertices pulled toward
+        // the centroid) — full containment in some opposed face buries it.
+        let mut centroid = [0.0f32; 3];
+        for &vi in &fa.verts {
+            let v = mesh.vertices[vi as usize];
+            for k in 0..3 {
+                centroid[k] += v[k] / fa.verts.len() as f32;
+            }
+        }
+        'other: for b in 0..n {
+            if a == b || dot(normals[a], normals[b]) > -0.9 {
+                continue;
+            }
+            let fb = &mesh.faces[b];
+            let plane_b = mesh.vertices[fb.verts[0] as usize][axis];
+            if (plane_a - plane_b).abs() > 0.05 {
+                continue;
+            }
+            let poly_b: Vec<(f32, f32)> = fb
+                .verts
+                .iter()
+                .map(|&vi| basis.project(mesh.vertices[vi as usize]))
+                .collect();
+            for &vi in &fa.verts {
+                let v = mesh.vertices[vi as usize];
+                let inset = [
+                    v[0] + (centroid[0] - v[0]) * 0.02,
+                    v[1] + (centroid[1] - v[1]) * 0.02,
+                    v[2] + (centroid[2] - v[2]) * 0.02,
+                ];
+                if !point_in_poly(&poly_b, basis.project(inset)) {
+                    continue 'other;
+                }
+            }
+            buried[a] = true;
+            break;
+        }
+    }
+    buried
+}
+
 /// The mesh's triangles (fan-triangulated quads), pre-extracted once per bake.
-fn triangles(mesh: &Mesh) -> Vec<[[f32; 3]; 3]> {
+fn triangles(mesh: &Mesh, buried: &[bool]) -> Vec<[[f32; 3]; 3]> {
     let mut tris = Vec::new();
-    for face in &mesh.faces {
+    for (fi, face) in mesh.faces.iter().enumerate() {
+        if buried.get(fi).copied().unwrap_or(false) {
+            continue;
+        }
         let v = &face.verts;
         for i in 1..v.len().saturating_sub(1) {
             tris.push([
@@ -79,6 +182,14 @@ fn triangles(mesh: &Mesh) -> Vec<[[f32; 3]; 3]> {
 fn occluded(tris: &[[[f32; 3]; 3]], orig: [f32; 3], dir: [f32; 3], max_t: f32) -> bool {
     tris.iter().any(|t| {
         ray_tri(orig, dir, t[0], t[1], t[2]).is_some_and(|d| d < max_t)
+    })
+}
+
+/// Shadow-ray test honoring the grid-flush rule: hits closer than
+/// MIN_SHADOW_DIST come from attached geometry and cast nothing.
+fn shadowed(tris: &[[[f32; 3]; 3]], orig: [f32; 3], dir: [f32; 3]) -> bool {
+    tris.iter().any(|t| {
+        ray_tri(orig, dir, t[0], t[1], t[2]).is_some_and(|d| d > MIN_SHADOW_DIST)
     })
 }
 
@@ -132,19 +243,19 @@ pub const UNLIT: LightTexel = LightTexel { lambert: 255, shadow: 255, ao: 255 };
 pub fn bake_lightmap(
     mesh: &Mesh,
     atlas: (u32, u32),
-    shadows: bool,
-    soft_shadows: bool,
+    shadow_mode: ShadowMode,
     ao: bool,
 ) -> Vec<LightTexel> {
     let (aw, ah) = atlas;
     let mut map = vec![UNLIT; (aw as usize) * (ah as usize)];
     let mut claimed = vec![0u64; ((aw as usize) * (ah as usize)).div_ceil(64)];
-    let tris = triangles(mesh);
+    let buried = buried_faces(mesh);
+    let tris = triangles(mesh, &buried);
     let hemi = hemi_dirs();
 
-    for face in &mesh.faces {
+    for (fi, face) in mesh.faces.iter().enumerate() {
         let isl = face.island;
-        if isl.w == 0 || isl.h == 0 {
+        if isl.w == 0 || isl.h == 0 || buried[fi] {
             continue;
         }
         let n = norm(mesh.face_normal(face));
@@ -177,8 +288,8 @@ pub fn bake_lightmap(
                     shadow: 255,
                     ao: 255,
                 };
-                if shadows {
-                    let lit_frac = if soft_shadows {
+                if shadow_mode != ShadowMode::Off {
+                    let lit_frac = if shadow_mode == ShadowMode::Soft {
                         // A small cone of jittered rays: the lit fraction
                         // gives fractional penumbra instead of a hard step.
                         let mut lit = 0u32;
@@ -194,12 +305,12 @@ pub fn bake_lightmap(
                             norm([SUN[0] + jitter, SUN[1], SUN[2] - jitter]),
                         ];
                         for d in &dirs {
-                            if !occluded(&tris, orig, *d, f32::MAX) {
+                            if !shadowed(&tris, orig, *d) {
                                 lit += 1;
                             }
                         }
                         lit as f32 / dirs.len() as f32
-                    } else if occluded(&tris, orig, SUN, f32::MAX) {
+                    } else if shadowed(&tris, orig, SUN) {
                         0.0
                     } else {
                         1.0
@@ -231,13 +342,7 @@ pub fn bake_lightmap(
 }
 
 /// Cache key for a bake: geometry + islands + atlas + toggles.
-pub fn lightmap_key(
-    mesh: &Mesh,
-    atlas: (u32, u32),
-    shadows: bool,
-    soft_shadows: bool,
-    ao: bool,
-) -> u64 {
+pub fn lightmap_key(mesh: &Mesh, atlas: (u32, u32), shadow_mode: ShadowMode, ao: bool) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     for v in &mesh.vertices {
@@ -250,6 +355,104 @@ pub fn lightmap_key(
         (f.island.x, f.island.y, f.island.w, f.island.h).hash(&mut h);
     }
     atlas.hash(&mut h);
-    (shadows, soft_shadows, ao).hash(&mut h);
+    (shadow_mode, ao).hash(&mut h);
     h.finish()
+}
+
+
+/// Additive light bounce from emissive texels onto nearby geometry.
+/// Recomputed per canvas rebuild (it depends on paint, not just the mesh —
+/// and it is cheap: emitters are capped). Returns per-texel additive RGB
+/// scaled by `intensity` (0-100).
+pub fn emissive_bounce(
+    mesh: &Mesh,
+    frame: &crate::project::Frame,
+    glow: &[crate::project::Rgba],
+    atlas: (u32, u32),
+    intensity: u8,
+) -> Vec<[u16; 3]> {
+    const RANGE: f32 = 5.0;
+    const MAX_EMITTERS: usize = 160;
+    let (aw, ah) = atlas;
+    let mut add = vec![[0u16; 3]; (aw as usize) * (ah as usize)];
+    if glow.is_empty() || intensity == 0 {
+        return add;
+    }
+    let top_color = |x: u32, y: u32| -> Option<crate::project::Rgba> {
+        for layer in frame.layers.iter().rev() {
+            if !layer.visible || layer.is_group || layer.pixels.is_empty() {
+                continue;
+            }
+            let c = layer.get_pixel(x, y);
+            if c[3] > 0 {
+                return Some(c);
+            }
+        }
+        None
+    };
+    // Collect emitters (world center + color), stride-sampling if plentiful.
+    let mut emitters: Vec<([f32; 3], crate::project::Rgba)> = Vec::new();
+    'collect: for face in &mesh.faces {
+        let isl = face.island;
+        for j in 0..isl.h as u32 {
+            for i in 0..isl.w as u32 {
+                let (gx, gy) = (isl.x as u32 + i, isl.y as u32 + j);
+                let Some(c) = top_color(gx, gy) else { continue };
+                if !glow.contains(&c) {
+                    continue;
+                }
+                if let Some(q) = mesh.texel_quad_world(face, gx, gy) {
+                    let mut w = [0.0f32; 3];
+                    for corner in &q {
+                        for a in 0..3 {
+                            w[a] += corner[a] * 0.25;
+                        }
+                    }
+                    emitters.push((w, c));
+                    if emitters.len() >= MAX_EMITTERS {
+                        break 'collect;
+                    }
+                }
+            }
+        }
+    }
+    if emitters.is_empty() {
+        return add;
+    }
+    let strength = intensity as f32 / 100.0 * 0.5;
+    for face in &mesh.faces {
+        let isl = face.island;
+        for j in 0..isl.h as u32 {
+            for i in 0..isl.w as u32 {
+                let (gx, gy) = (isl.x as u32 + i, isl.y as u32 + j);
+                let Some(q) = mesh.texel_quad_world(face, gx, gy) else { continue };
+                let mut w = [0.0f32; 3];
+                for corner in &q {
+                    for a in 0..3 {
+                        w[a] += corner[a] * 0.25;
+                    }
+                }
+                let mut acc = [0.0f32; 3];
+                for (e, c) in &emitters {
+                    let d2 = (w[0] - e[0]).powi(2) + (w[1] - e[1]).powi(2) + (w[2] - e[2]).powi(2);
+                    if d2 >= RANGE * RANGE || d2 < 0.25 {
+                        continue; // own texel / immediate neighbours glow already
+                    }
+                    let f = (1.0 - d2.sqrt() / RANGE).powi(2) * strength;
+                    acc[0] += c[0] as f32 * f;
+                    acc[1] += c[1] as f32 * f;
+                    acc[2] += c[2] as f32 * f;
+                }
+                if acc[0] + acc[1] + acc[2] > 1.0 {
+                    let idx = (gy * aw + gx) as usize;
+                    add[idx] = [
+                        acc[0].min(255.0) as u16,
+                        acc[1].min(255.0) as u16,
+                        acc[2].min(255.0) as u16,
+                    ];
+                }
+            }
+        }
+    }
+    add
 }

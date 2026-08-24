@@ -130,11 +130,12 @@ pub struct ThreeDState {
     /// Live gradient preview texels, baked into the canvas texture by the
     /// app's rebuild alongside shape_preview.
     pub gradient_preview: Vec<(u32, u32, Rgba)>,
-    /// Baked-lighting toggles (Windows menu) and the bake cache
-    /// (key, per-texel multiplier) — display-only, never in layer data.
-    pub bake_shadows: bool,
-    pub soft_shadows: bool,
+    /// Baked-lighting settings (3D effects menu) and the bake cache
+    /// (key, per-texel channels) — display-only, never in layer data.
+    pub shadow_mode: light::ShadowMode,
     pub bake_ao: bool,
+    /// Master switch for emissive rendering (halo + light bounce).
+    pub emission: bool,
     pub light_cache: Option<(u64, Vec<light::LightTexel>)>,
     /// The texture exists once its size was chosen (or a painted file was
     /// opened). Until then paint tools prompt for a size instead of drawing.
@@ -192,9 +193,9 @@ impl Default for ThreeDState {
             island_drag: None,
             gradient_drag: None,
             gradient_preview: Vec::new(),
-            bake_shadows: false,
-            soft_shadows: false,
+            shadow_mode: light::ShadowMode::Off,
             bake_ao: false,
+            emission: true,
             light_cache: None,
             texture_created: false,
             texture_request: false,

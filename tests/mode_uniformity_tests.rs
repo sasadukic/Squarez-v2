@@ -276,3 +276,36 @@ fn fresh_texture_prompt_defaults_to_32x32() {
         "a fresh texture defaults to 32x32"
     );
 }
+
+#[test]
+fn glow_and_shadow_color_choices_are_undoable() {
+    let ctx = egui::Context::default();
+    let mut app = App::new_with(&ctx, None);
+    app.open_project_for_test(project_for(ProjectMode::ThreeD));
+    frame(&ctx, &mut app, vec![], Modifiers::default());
+    let c = app.project.palette[2];
+
+    // Simulate the swatch context-menu actions (same code path: helper + push).
+    let before = (app.project.glow_colors.clone(), app.project.shadow_color);
+    app.project.toggle_glow_color(c);
+    app.undo_stack.push(squarez::history::Command::SetLighting {
+        before,
+        after: (app.project.glow_colors.clone(), app.project.shadow_color),
+    });
+    assert!(app.project.is_glow_color(c));
+
+    let before = (app.project.glow_colors.clone(), app.project.shadow_color);
+    app.project.shadow_color = Some(c);
+    app.undo_stack.push(squarez::history::Command::SetLighting {
+        before,
+        after: (app.project.glow_colors.clone(), app.project.shadow_color),
+    });
+
+    key(&ctx, &mut app, Key::Z, Modifiers::COMMAND);
+    assert_eq!(app.project.shadow_color, None, "undo reverts the shadow color");
+    assert!(app.project.is_glow_color(c), "glow untouched by the second undo step");
+    key(&ctx, &mut app, Key::Z, Modifiers::COMMAND);
+    assert!(!app.project.is_glow_color(c), "undo reverts the glow toggle");
+    key(&ctx, &mut app, Key::Z, Modifiers::COMMAND | Modifiers::SHIFT);
+    assert!(app.project.is_glow_color(c), "redo restores it");
+}

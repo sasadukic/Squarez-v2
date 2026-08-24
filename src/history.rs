@@ -66,6 +66,13 @@ pub enum Command {
         color_a: Rgba,
         color_b: Rgba,
     },
+    /// Palette lighting settings (glow set + unified shadow color) — the
+    /// swatch context-menu toggles push this so they undo like everything
+    /// else.
+    SetLighting {
+        before: (Vec<Rgba>, Option<Rgba>),
+        after: (Vec<Rgba>, Option<Rgba>),
+    },
     /// One modeling gesture in ThreeD mode: full mesh snapshots before/after,
     /// plus any texture-island pixel moves that accompanied the topology change
     /// (so mesh and texture stay atomic through undo/redo).
@@ -290,6 +297,17 @@ pub fn apply_command(project: &mut Project, color_state: Option<&mut ColorState>
                     Direction::Forward => *cs = after.clone(),
                     Direction::Backward => *cs = before.clone(),
                 }
+            }
+        }
+        Command::SetLighting { before, after } => {
+            let (glow, shadow) = match dir {
+                Direction::Forward => after.clone(),
+                Direction::Backward => before.clone(),
+            };
+            project.glow_colors = glow;
+            project.shadow_color = shadow;
+            if let Some(frame) = project.animations.get_mut(0).and_then(|a| a.frames.get_mut(0)) {
+                frame.dirty = true;
             }
         }
         Command::SwapColors { color_a, color_b } => {

@@ -729,17 +729,20 @@ enum TopMenu {
     Layer,
     Animation,
     Windows,
+    Effects3D,
 }
 
 impl TopMenu {
     /// Menu-bar order, left to right. Panel visibility lives in Windows
     /// alone — a View menu duplicating it was removed as redundant.
-    const ALL: [TopMenu; 5] = [
+    /// Effects3D appears only for 3D projects (see `visible_menus`).
+    const ALL: [TopMenu; 6] = [
         TopMenu::File,
         TopMenu::Edit,
         TopMenu::Layer,
         TopMenu::Animation,
         TopMenu::Windows,
+        TopMenu::Effects3D,
     ];
 
     fn label(self) -> &'static str {
@@ -749,6 +752,7 @@ impl TopMenu {
             Self::Layer => "Layer",
             Self::Animation => "Animation",
             Self::Windows => "Windows",
+            Self::Effects3D => "3D effects",
         }
     }
 }
@@ -1418,6 +1422,56 @@ impl App {
 
     /// Returns true when any floating modal is currently on screen.
     /// Used to enforce one-modal-at-a-time: no second dialog can open while one is already open.
+    /// A dropdown row hosting a 0-100% DragValue (menu-embedded control).
+    fn dropdown_percent_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        theme: &Theme,
+        label: &str,
+        id: &str,
+        get: impl Fn(&mut Self) -> &mut u8,
+    ) {
+        let (rect, _) = ui.allocate_exact_size(
+            Vec2::new(crate::top_bar::DROPDOWN_WIDTH, crate::top_bar::DROPDOWN_ROW_HEIGHT),
+            egui::Sense::hover(),
+        );
+        ui.painter().text(
+            Pos2::new(rect.left() + 14.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            label,
+            FontId::new(FONT_SIZE_SM, FontFamily::Proportional),
+            theme.fg,
+        );
+        let dv_rect = egui::Rect::from_min_size(
+            Pos2::new(rect.right() - 62.0, rect.center().y - 9.0),
+            Vec2::new(52.0, 18.0),
+        );
+        let mut v = *get(self) as u32;
+        let resp = ui.put(
+            dv_rect,
+            egui::DragValue::new(&mut v)
+                .range(0..=100)
+                .suffix("%")
+                .speed(1.0),
+        );
+        let _ = egui::Id::new(id);
+        if resp.changed() {
+            *get(self) = v as u8;
+            self.canvas_dirty = true;
+            self.active_modified = true;
+        }
+    }
+
+    /// Menu-bar entries for the current mode: "3D effects" only exists for
+    /// 3D projects. Both the width sum and the title loop must use this list
+    /// or the hit rects desynchronize.
+    fn visible_menus(&self) -> Vec<TopMenu> {
+        TopMenu::ALL
+            .into_iter()
+            .filter(|m| *m != TopMenu::Effects3D || self.project.mode.is_three_d())
+            .collect()
+    }
+
     fn any_modal_open(&self) -> bool {
         self.pending_recovery.is_some()
             || self.atlas_dialog.is_some()
@@ -2098,15 +2152,15 @@ impl App {
         // dilation copies shaded edge texels (no bright seams). Display-only:
         // layer data, exports, and the texture view never see either pass.
         if self.project.mode.is_three_d() && !self.three_d.texture_view {
-            if (self.three_d.bake_shadows || self.three_d.bake_ao)
-                && self.project.mesh3d.is_some()
-            {
+            let want_bake = self.three_d.shadow_mode
+                != crate::three_d::light::ShadowMode::Off
+                || self.three_d.bake_ao;
+            if want_bake && self.project.mesh3d.is_some() {
                 let mesh = self.project.mesh3d.as_ref().unwrap();
                 let key = crate::three_d::light::lightmap_key(
                     mesh,
                     (out_w, out_h),
-                    self.three_d.bake_shadows,
-                    self.three_d.soft_shadows,
+                    self.three_d.shadow_mode,
                     self.three_d.bake_ao,
                 );
                 let cached = matches!(&self.three_d.light_cache, Some((k, _)) if *k == key);
@@ -2114,14 +2168,14 @@ impl App {
                     let map = crate::three_d::light::bake_lightmap(
                         mesh,
                         (out_w, out_h),
-                        self.three_d.bake_shadows,
-                        self.three_d.soft_shadows,
+                        self.three_d.shadow_mode,
                         self.three_d.bake_ao,
                     );
                     self.three_d.light_cache = Some((key, map));
                 }
                 let shadow_col = self.project.shadow_color;
                 let ao_col = self.project.shadow_color;
+                let strength = 0.9 * self.project.shadow_intensity as f32 / 100.0;
                 if let Some((_, map)) = &self.three_d.light_cache {
                     let lerp3 = |c: [u8; 3], t: [u8; 4], a: f32| -> [u8; 3] {
                         [
@@ -2147,15 +2201,13 @@ impl App {
                             ((c[1] as u32 * f) / 255) as u8,
                             ((c[2] as u32 * f) / 255) as u8,
                         ];
-                        let shadow_amt = 1.0 - m.shadow as f32 / 255.0;
+                        let shadow_amt = (1.0 - m.shadow as f32 / 255.0) * strength;
                         if shadow_amt > 0.0 {
                             match shadow_col {
                                 // A chosen shadow color tints; otherwise darken.
-                                Some(t) => c = lerp3(c, t, shadow_amt * 0.8),
+                                Some(t) => c = lerp3(c, t, shadow_amt),
                                 None => {
-                                    let f = crate::three_d::light::SHADOW_DIM
-                                        + (1.0 - crate::three_d::light::SHADOW_DIM)
-                                            * (1.0 - shadow_amt);
+                                    let f = 1.0 - shadow_amt;
                                     c = [
                                         (c[0] as f32 * f) as u8,
                                         (c[1] as f32 * f) as u8,
@@ -2183,6 +2235,36 @@ impl App {
                         pixels[d + 1] = c[1];
                         pixels[d + 2] = c[2];
                     }
+                }
+            }
+            if self.three_d.emission
+                && !self.project.glow_colors.is_empty()
+                && self.project.mesh3d.is_some()
+            {
+                let mesh = self.project.mesh3d.as_ref().unwrap();
+                let frame = &self.project.animations[0].frames[0];
+                let bounce = crate::three_d::light::emissive_bounce(
+                    mesh,
+                    frame,
+                    &self.project.glow_colors,
+                    (out_w, out_h),
+                    self.project.emission_intensity,
+                );
+                for (i, b) in bounce.iter().enumerate() {
+                    if b[0] == 0 && b[1] == 0 && b[2] == 0 {
+                        continue;
+                    }
+                    let d = i * 4;
+                    if pixels[d + 3] == 0 {
+                        continue;
+                    }
+                    let px = [pixels[d], pixels[d + 1], pixels[d + 2], pixels[d + 3]];
+                    if self.project.is_glow_color(px) {
+                        continue;
+                    }
+                    pixels[d] = (pixels[d] as u16 + b[0]).min(255) as u8;
+                    pixels[d + 1] = (pixels[d + 1] as u16 + b[1]).min(255) as u8;
+                    pixels[d + 2] = (pixels[d + 2] as u16 + b[2]).min(255) as u8;
                 }
             }
             if let Some(mesh) = self.project.mesh3d.as_ref() {
@@ -2247,7 +2329,11 @@ impl App {
             0.18,
         );
         let menus_full_w: f32 = MENU_LEFT_GAP
-            + TopMenu::ALL.iter().map(|m| menu_zone_width(m.label())).sum::<f32>();
+            + self
+                .visible_menus()
+                .iter()
+                .map(|m| menu_zone_width(m.label()))
+                .sum::<f32>();
         let menus_w = menus_full_w * menu_t;
         let tabs_x  = BRAND_WIDTH + menus_w;
         let screen_w = ctx.screen_rect().width();
@@ -2304,7 +2390,7 @@ impl App {
                         let clip = ui.painter().with_clip_rect(strip_rect);
                         let mut x = strip_rect.left() + menus_w - menus_full_w + MENU_LEFT_GAP;
                         let open_now: Option<TopMenu> = self.top_menu_open.map(|(m, _)| m);
-                        for m in TopMenu::ALL {
+                        for m in self.visible_menus() {
                             let zw = menu_zone_width(m.label());
                             let rect = egui::Rect::from_min_size(
                                 Pos2::new(x, strip_rect.top()),
@@ -2801,6 +2887,12 @@ impl App {
     }
 
     fn draw_top_menu_dropdown(&mut self, ctx: &egui::Context) {
+        if let Some((TopMenu::Effects3D, _)) = self.top_menu_open {
+            if !self.project.mode.is_three_d() {
+                self.top_menu_open = None;
+                return;
+            }
+        }
         let Some((menu, pos)) = self.top_menu_open else { return; };
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.top_menu_open = None;
@@ -3063,7 +3155,61 @@ impl App {
                                     close_menu = true;
                                 }
 
-                                // ── 3D view settings ────────────────────────
+                            }
+                            TopMenu::Effects3D => {
+                                // Everything here is 3D-only by construction:
+                                // the menu title itself only exists in 3D.
+                                if dropdown_row(
+                                    ui,
+                                    &theme,
+                                    "Texture view",
+                                    window_check(self.three_d.texture_view),
+                                    true,
+                                )
+                                .clicked()
+                                {
+                                    self.toggle_texture_view();
+                                    close_menu = true;
+                                }
+                                if dropdown_row(
+                                    ui,
+                                    &theme,
+                                    "Shading",
+                                    window_check(
+                                        self.three_d.shading == crate::three_d::Shading::Soft,
+                                    ),
+                                    true,
+                                )
+                                .clicked()
+                                {
+                                    self.three_d.shading = self.three_d.shading.toggled();
+                                }
+                                {
+                                    use crate::three_d::camera::Projection;
+                                    let persp =
+                                        self.three_d.camera.projection == Projection::Perspective;
+                                    if dropdown_row(
+                                        ui,
+                                        &theme,
+                                        "Perspective",
+                                        window_check(persp),
+                                        true,
+                                    )
+                                    .clicked()
+                                    {
+                                        self.three_d.camera.projection = if persp {
+                                            Projection::Orthographic
+                                        } else {
+                                            Projection::Perspective
+                                        };
+                                    }
+                                }
+                                if dropdown_row(ui, &theme, "Isometric view", None, true)
+                                    .clicked()
+                                {
+                                    self.three_d.camera.snap_isometric();
+                                    close_menu = true;
+                                }
                                 {
                                     let (line_rect, _) = ui.allocate_exact_size(
                                         Vec2::new(DROPDOWN_WIDTH, 9.0),
@@ -3077,104 +3223,57 @@ impl App {
                                         egui::Stroke::new(1.0, theme.border),
                                     );
                                 }
-                                let is_3d = self.project.mode.is_three_d();
-                                if dropdown_row(
-                                    ui,
-                                    &theme,
-                                    "Texture view",
-                                    window_check(is_3d && self.three_d.texture_view),
-                                    is_3d,
-                                )
-                                .clicked()
-                                    && is_3d
-                                {
-                                    self.toggle_texture_view();
-                                    close_menu = true;
-                                }
-                                if dropdown_row(
-                                    ui,
-                                    &theme,
-                                    "Shading",
-                                    window_check(
-                                        is_3d
-                                            && self.three_d.shading
-                                                == crate::three_d::Shading::Soft,
-                                    ),
-                                    is_3d,
-                                )
-                                .clicked()
-                                    && is_3d
-                                {
-                                    self.three_d.shading = self.three_d.shading.toggled();
-                                }
-                                {
-                                    use crate::three_d::camera::Projection;
-                                    let persp =
-                                        self.three_d.camera.projection == Projection::Perspective;
-                                    if dropdown_row(
-                                        ui,
-                                        &theme,
-                                        "Perspective",
-                                        window_check(is_3d && persp),
-                                        is_3d,
-                                    )
-                                    .clicked()
-                                        && is_3d
-                                    {
-                                        self.three_d.camera.projection = if persp {
-                                            Projection::Orthographic
-                                        } else {
-                                            Projection::Perspective
-                                        };
-                                    }
-                                }
+                                // Shadows: one 3-way row (Off / On / Soft).
                                 if dropdown_row(
                                     ui,
                                     &theme,
                                     "Shadows",
-                                    window_check(is_3d && self.three_d.bake_shadows),
-                                    is_3d,
+                                    Some(self.three_d.shadow_mode.label()),
+                                    true,
                                 )
                                 .clicked()
-                                    && is_3d
                                 {
-                                    self.three_d.bake_shadows = !self.three_d.bake_shadows;
+                                    self.three_d.shadow_mode = self.three_d.shadow_mode.next();
                                     self.canvas_dirty = true;
                                 }
-                                if dropdown_row(
+                                self.dropdown_percent_row(
                                     ui,
                                     &theme,
-                                    "Soft shadows",
-                                    window_check(is_3d && self.three_d.soft_shadows),
-                                    is_3d && self.three_d.bake_shadows,
-                                )
-                                .clicked()
-                                    && is_3d
-                                    && self.three_d.bake_shadows
-                                {
-                                    self.three_d.soft_shadows = !self.three_d.soft_shadows;
-                                    self.canvas_dirty = true;
-                                }
+                                    "Shadow strength",
+                                    "fx_shadow_strength",
+                                    |app| &mut app.project.shadow_intensity,
+                                );
                                 if dropdown_row(
                                     ui,
                                     &theme,
                                     "Ambient occlusion",
-                                    window_check(is_3d && self.three_d.bake_ao),
-                                    is_3d,
+                                    window_check(self.three_d.bake_ao),
+                                    true,
                                 )
                                 .clicked()
-                                    && is_3d
                                 {
                                     self.three_d.bake_ao = !self.three_d.bake_ao;
                                     self.canvas_dirty = true;
                                 }
-                                if dropdown_row(ui, &theme, "Isometric view", None, is_3d)
-                                    .clicked()
-                                    && is_3d
+                                if dropdown_row(
+                                    ui,
+                                    &theme,
+                                    "Emission",
+                                    window_check(self.three_d.emission),
+                                    true,
+                                )
+                                .clicked()
                                 {
-                                    self.three_d.camera.snap_isometric();
-                                    close_menu = true;
+                                    self.three_d.emission = !self.three_d.emission;
+                                    self.canvas_dirty = true;
                                 }
+                                self.dropdown_percent_row(
+                                    ui,
+                                    &theme,
+                                    "Emission strength",
+                                    "fx_emission_strength",
+                                    |app| &mut app.project.emission_intensity,
+                                );
                             }
                         }
 
@@ -4507,7 +4606,12 @@ impl App {
                     );
                     let gresp = gresp.on_hover_text("Glow (emissive in 3D)");
                     if gresp.clicked() {
+                        let before = (self.project.glow_colors.clone(), self.project.shadow_color);
                         self.project.toggle_glow_color(swatch);
+                        self.undo_stack.push(crate::history::Command::SetLighting {
+                            before,
+                            after: (self.project.glow_colors.clone(), self.project.shadow_color),
+                        });
                         self.canvas_dirty = true;
                         self.active_modified = true;
                         ui.close_menu();
@@ -4546,11 +4650,16 @@ impl App {
                         resp.clicked()
                     };
                     if tint_row(ui, self.project.shadow_color, "Use as shadow & AO color (3D)", 'S') {
+                        let before = (self.project.glow_colors.clone(), self.project.shadow_color);
                         self.project.shadow_color = if self.project.shadow_color == Some(swatch) {
                             None
                         } else {
                             Some(swatch)
                         };
+                        self.undo_stack.push(crate::history::Command::SetLighting {
+                            before,
+                            after: (self.project.glow_colors.clone(), self.project.shadow_color),
+                        });
                         self.canvas_dirty = true;
                         self.active_modified = true;
                         ui.close_menu();

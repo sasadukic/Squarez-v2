@@ -557,7 +557,7 @@ pub fn draw(
             atlas,
             // Baked lighting owns shading: the view-space Soft tint on top of
             // the baked texture would double-shade.
-            if state.bake_shadows || state.bake_ao {
+            if state.shadow_mode != super::light::ShadowMode::Off || state.bake_ao {
                 super::Shading::Off
             } else {
                 state.shading
