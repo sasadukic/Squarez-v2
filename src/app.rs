@@ -2121,7 +2121,7 @@ impl App {
                     self.three_d.light_cache = Some((key, map));
                 }
                 let shadow_col = self.project.shadow_color;
-                let ao_col = self.project.ao_color;
+                let ao_col = self.project.shadow_color;
                 if let Some((_, map)) = &self.three_d.light_cache {
                     let lerp3 = |c: [u8; 3], t: [u8; 4], a: f32| -> [u8; 3] {
                         [
@@ -4375,13 +4375,7 @@ impl App {
                         Color32::from_rgb(40, 40, 90),
                     );
                 }
-                if self.project.ao_color == Some(swatch) {
-                    painter.circle_filled(
-                        rect.left_bottom() + Vec2::new(4.0, -4.0),
-                        2.0,
-                        Color32::from_rgb(110, 50, 120),
-                    );
-                }
+
 
                 let current_fg = self.color_state.foreground;
                 let is_active = self.active_palette_idx == Some(i) || (self.active_palette_idx.is_none() && swatch == current_fg);
@@ -4551,18 +4545,8 @@ impl App {
                         resp.clone().on_hover_text(label.to_string());
                         resp.clicked()
                     };
-                    if tint_row(ui, self.project.shadow_color, "Use as shadow color (3D)", 'S') {
+                    if tint_row(ui, self.project.shadow_color, "Use as shadow & AO color (3D)", 'S') {
                         self.project.shadow_color = if self.project.shadow_color == Some(swatch) {
-                            None
-                        } else {
-                            Some(swatch)
-                        };
-                        self.canvas_dirty = true;
-                        self.active_modified = true;
-                        ui.close_menu();
-                    }
-                    if tint_row(ui, self.project.ao_color, "Use as ambient occlusion color (3D)", 'O') {
-                        self.project.ao_color = if self.project.ao_color == Some(swatch) {
                             None
                         } else {
                             Some(swatch)

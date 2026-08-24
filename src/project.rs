@@ -81,12 +81,24 @@ pub struct Project {
     /// VALUE, not palette index, so palette reorder/swap cannot desync it.
     #[serde(default)]
     pub glow_colors: Vec<Rgba>,
-    /// Optional palette color that cast shadows tint toward (None = darken).
+    /// Optional palette color that cast shadows AND ambient occlusion tint
+    /// toward (None = plain darkening).
     #[serde(default)]
     pub shadow_color: Option<Rgba>,
-    /// Optional palette color that ambient occlusion tints toward.
-    #[serde(default)]
-    pub ao_color: Option<Rgba>,
+    /// How dark shadows get, 0-100 (applied at display time, not baked).
+    #[serde(default = "default_shadow_intensity")]
+    pub shadow_intensity: u8,
+    /// Emission (glow) strength, 0-100: halo alpha and light bounce.
+    #[serde(default = "default_emission_intensity")]
+    pub emission_intensity: u8,
+}
+
+fn default_shadow_intensity() -> u8 {
+    45
+}
+
+fn default_emission_intensity() -> u8 {
+    50
 }
 
 fn default_id_counter() -> u64 { 1 }
@@ -128,7 +140,8 @@ impl Project {
             mesh3d: None,
             glow_colors: Vec::new(),
             shadow_color: None,
-            ao_color: None,
+            shadow_intensity: 45,
+            emission_intensity: 50,
         }
     }
 

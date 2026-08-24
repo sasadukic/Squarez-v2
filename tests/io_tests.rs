@@ -501,33 +501,78 @@ fn v3_files_load_with_empty_glow_and_v4_roundtrips_glow() {
     let mut p = Project::new_with_mode(32, 32, "glow".to_string(), ProjectMode::ThreeD);
     p.glow_colors = vec![[255, 0, 200, 255]];
     p.shadow_color = Some([30, 30, 80, 255]);
-    p.ao_color = Some([80, 30, 90, 255]);
+    p.shadow_intensity = 70;
+    p.emission_intensity = 25;
     let path = dir.join("g.sqr");
     squarez::io::sqr::save_sqr(&p, &path).unwrap();
     let loaded = squarez::io::sqr::load_sqr(&path).unwrap();
-    assert_eq!(loaded.glow_colors, vec![[255, 0, 200, 255]], "v5 roundtrip keeps glow");
-    assert_eq!(loaded.shadow_color, Some([30, 30, 80, 255]), "v5 keeps the shadow color");
-    assert_eq!(loaded.ao_color, Some([80, 30, 90, 255]), "v5 keeps the AO color");
+    assert_eq!(loaded.glow_colors, vec![[255, 0, 200, 255]], "v6 roundtrip keeps glow");
+    assert_eq!(loaded.shadow_color, Some([30, 30, 80, 255]), "v6 keeps the shadow color");
+    assert_eq!(loaded.shadow_intensity, 70, "v6 keeps shadow intensity");
+    assert_eq!(loaded.emission_intensity, 25, "v6 keeps emission intensity");
 
-    // Doctor the version byte: each older reader decodes its prefix and
-    // defaults the fields it predates (bincode tolerates trailing bytes).
-    let bytes = std::fs::read(&path).unwrap();
-    assert_eq!(bytes[4], 5, "current files are v5");
-    let mut v4 = bytes.clone();
-    v4[4] = 4;
-    let v4_path = dir.join("g4.sqr");
-    std::fs::write(&v4_path, &v4).unwrap();
-    let loaded = squarez::io::sqr::load_sqr(&v4_path).unwrap();
-    assert_eq!(loaded.glow_colors, vec![[255, 0, 200, 255]], "v4 files keep glow");
-    assert_eq!(loaded.shadow_color, None, "v4 files default shadow color to None");
+    // A REAL v5 payload (separate shadow/AO colors) written via a test-side
+    // mirror: an old ao_color must fold into the unified shadow color when
+    // no shadow color was set.
+    #[derive(serde::Serialize)]
+    struct V5Project {
+        name: String,
+        canvas_width: u32,
+        canvas_height: u32,
+        palette: Vec<[u8; 4]>,
+        animations: Vec<squarez::project::Animation>,
+        active_animation: usize,
+        active_frame: usize,
+        active_layer: usize,
+        layer_id_counter: u64,
+        tiles_w: u32,
+        tiles_h: u32,
+        tile_w: u32,
+        tile_h: u32,
+        mode: squarez::project::ProjectMode,
+        sprite_stack_max_layers: Option<u32>,
+        mesh3d: Option<squarez::three_d::mesh::Mesh>,
+        glow_colors: Vec<[u8; 4]>,
+        shadow_color: Option<[u8; 4]>,
+        ao_color: Option<[u8; 4]>,
+    }
+    let payload = bincode::serialize(&V5Project {
+        name: "v5".to_string(),
+        canvas_width: 32,
+        canvas_height: 32,
+        palette: p.palette.clone(),
+        animations: p.animations.clone(),
+        active_animation: 0,
+        active_frame: 0,
+        active_layer: 0,
+        layer_id_counter: 1,
+        tiles_w: 1,
+        tiles_h: 1,
+        tile_w: 0,
+        tile_h: 0,
+        mode: ProjectMode::ThreeD,
+        sprite_stack_max_layers: None,
+        mesh3d: p.mesh3d.clone(),
+        glow_colors: vec![[255, 0, 200, 255]],
+        shadow_color: None,
+        ao_color: Some([80, 30, 90, 255]),
+    })
+    .unwrap();
+    let compressed = lz4_flex::compress_prepend_size(&payload);
+    let v5_path = dir.join("g5.sqr");
+    let mut v5_bytes = b"SQR\0\x05".to_vec();
+    v5_bytes.extend(compressed);
+    std::fs::write(&v5_path, v5_bytes).unwrap();
+    let loaded = squarez::io::sqr::load_sqr(&v5_path).unwrap();
+    assert_eq!(loaded.glow_colors, vec![[255, 0, 200, 255]], "v5 files keep glow");
+    assert_eq!(
+        loaded.shadow_color,
+        Some([80, 30, 90, 255]),
+        "an old ao_color becomes the unified shadow color"
+    );
+    assert_eq!(loaded.shadow_intensity, 45, "v5 files get the default intensity");
 
-    let mut v3 = bytes.clone();
-    v3[4] = 3;
-    let v3_path = dir.join("g3.sqr");
-    std::fs::write(&v3_path, &v3).unwrap();
-    let loaded = squarez::io::sqr::load_sqr(&v3_path).unwrap();
-    assert!(loaded.glow_colors.is_empty(), "v3 files default to no glow");
-    assert_eq!(loaded.canvas_width, 32, "the rest of the project decodes intact");
+    assert_eq!(std::fs::read(&path).unwrap()[4], 6, "current files are v6");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

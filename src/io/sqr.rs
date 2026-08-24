@@ -5,7 +5,60 @@ use serde::Deserialize;
 use crate::project::{Animation, BlendMode, Frame, Layer, Project};
 
 const MAGIC: &[u8; 4] = b"SQR\0";
-const VERSION: u8 = 5;
+const VERSION: u8 = 6;
+
+/// Version 5 file layout: separate `shadow_color` and `ao_color`, no
+/// intensity fields. The two colors merged in v6 — an old ao_color survives
+/// as the unified shadow color when no shadow color was set.
+#[derive(serde::Deserialize)]
+struct LegacyProjectV6Less {
+    name: String,
+    canvas_width: u32,
+    canvas_height: u32,
+    palette: Vec<crate::project::Rgba>,
+    animations: Vec<crate::project::Animation>,
+    active_animation: usize,
+    active_frame: usize,
+    active_layer: usize,
+    layer_id_counter: u64,
+    tiles_w: u32,
+    tiles_h: u32,
+    tile_w: u32,
+    tile_h: u32,
+    mode: crate::project::ProjectMode,
+    sprite_stack_max_layers: Option<u32>,
+    mesh3d: Option<crate::three_d::mesh::Mesh>,
+    glow_colors: Vec<crate::project::Rgba>,
+    shadow_color: Option<crate::project::Rgba>,
+    ao_color: Option<crate::project::Rgba>,
+}
+
+impl LegacyProjectV6Less {
+    fn into_project(self) -> Project {
+        Project {
+            name: self.name,
+            canvas_width: self.canvas_width,
+            canvas_height: self.canvas_height,
+            palette: self.palette,
+            animations: self.animations,
+            active_animation: self.active_animation,
+            active_frame: self.active_frame,
+            active_layer: self.active_layer,
+            layer_id_counter: self.layer_id_counter,
+            tiles_w: self.tiles_w,
+            tiles_h: self.tiles_h,
+            tile_w: self.tile_w,
+            tile_h: self.tile_h,
+            mode: self.mode,
+            sprite_stack_max_layers: self.sprite_stack_max_layers,
+            mesh3d: self.mesh3d,
+            glow_colors: self.glow_colors,
+            shadow_color: self.shadow_color.or(self.ao_color),
+            shadow_intensity: 45,
+            emission_intensity: 50,
+        }
+    }
+}
 
 /// Version 4 file layout: today's `Project` without the trailing
 /// `shadow_color` / `ao_color`.
@@ -51,7 +104,8 @@ impl LegacyProjectV5Less {
             mesh3d: self.mesh3d,
             glow_colors: self.glow_colors,
             shadow_color: None,
-            ao_color: None,
+            shadow_intensity: 45,
+            emission_intensity: 50,
         }
     }
 }
@@ -101,7 +155,8 @@ impl LegacyProjectV4Less {
             mesh3d: self.mesh3d,
             glow_colors: Vec::new(),
             shadow_color: None,
-            ao_color: None,
+            shadow_intensity: 45,
+            emission_intensity: 50,
         }
     }
 }
@@ -126,8 +181,10 @@ pub fn load_sqr(path: &Path) -> Result<Project, Box<dyn std::error::Error>> {
         file.read_to_end(&mut compressed)?;
         let decoded = lz4_flex::decompress_size_prepended(&compressed)?;
         match version[0] {
-            // Version 5: current Project layout (shadow/AO colors at the tail).
-            5 => Ok(bincode::deserialize::<Project>(&decoded)?),
+            // Version 6: current Project layout (one shadow color + intensities).
+            6 => Ok(bincode::deserialize::<Project>(&decoded)?),
+            // Version 5: separate shadow_color / ao_color, no intensities.
+            5 => Ok(bincode::deserialize::<LegacyProjectV6Less>(&decoded)?.into_project()),
             // Version 4: no shadow_color / ao_color yet.
             4 => Ok(bincode::deserialize::<LegacyProjectV5Less>(&decoded)?.into_project()),
             // Version 3: same Project except no glow_colors field.
@@ -293,7 +350,8 @@ impl LegacyProjectNoMode {
             mesh3d: None,
             glow_colors: Vec::new(),
             shadow_color: None,
-            ao_color: None,
+            shadow_intensity: 45,
+            emission_intensity: 50,
         }
     }
 }
@@ -319,7 +377,8 @@ impl LegacyProjectMode {
             mesh3d: None,
             glow_colors: Vec::new(),
             shadow_color: None,
-            ao_color: None,
+            shadow_intensity: 45,
+            emission_intensity: 50,
         }
     }
 }
@@ -345,7 +404,8 @@ impl LegacyProjectModeStack {
             mesh3d: None,
             glow_colors: Vec::new(),
             shadow_color: None,
-            ao_color: None,
+            shadow_intensity: 45,
+            emission_intensity: 50,
         }
     }
 }
@@ -464,7 +524,8 @@ impl LegacyProjectV2 {
             mesh3d: None,
             glow_colors: Vec::new(),
             shadow_color: None,
-            ao_color: None,
+            shadow_intensity: 45,
+            emission_intensity: 50,
         }
     }
 }
@@ -502,7 +563,8 @@ impl LegacyProjectV1 {
             mesh3d: None,
             glow_colors: Vec::new(),
             shadow_color: None,
-            ao_color: None,
+            shadow_intensity: 45,
+            emission_intensity: 50,
         }
     }
 }
@@ -631,7 +693,8 @@ impl LegacyProjectV3Less {
             }),
             glow_colors: Vec::new(),
             shadow_color: None,
-            ao_color: None,
+            shadow_intensity: 45,
+            emission_intensity: 50,
         }
     }
 }
