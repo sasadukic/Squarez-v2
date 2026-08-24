@@ -77,6 +77,10 @@ pub struct Project {
     /// 3D model data for ThreeD-mode projects; None for all other modes.
     #[serde(default)]
     pub mesh3d: Option<crate::three_d::mesh::Mesh>,
+    /// Colors that render emissive (full-bright + halo) in 3D. Keyed by
+    /// VALUE, not palette index, so palette reorder/swap cannot desync it.
+    #[serde(default)]
+    pub glow_colors: Vec<Rgba>,
 }
 
 fn default_id_counter() -> u64 { 1 }
@@ -116,6 +120,7 @@ impl Project {
             mode: ProjectMode::Normal,
             sprite_stack_max_layers: None,
             mesh3d: None,
+            glow_colors: Vec::new(),
         }
     }
 
@@ -211,6 +216,18 @@ impl Project {
         self.tiles_h = new_tiles_h;
         self.canvas_width = new_canvas_width;
         self.canvas_height = new_canvas_height;
+    }
+
+    pub fn is_glow_color(&self, c: Rgba) -> bool {
+        self.glow_colors.contains(&c)
+    }
+
+    pub fn toggle_glow_color(&mut self, c: Rgba) {
+        if let Some(i) = self.glow_colors.iter().position(|&g| g == c) {
+            self.glow_colors.remove(i);
+        } else {
+            self.glow_colors.push(c);
+        }
     }
 
     pub fn next_layer_id(&mut self) -> u64 {

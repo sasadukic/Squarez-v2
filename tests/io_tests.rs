@@ -485,3 +485,50 @@ fn v3_roundtrip_preserves_manual_layout() {
         "hand-packed flag must survive save/load"
     );
 }
+
+#[test]
+fn v3_files_load_with_empty_glow_and_v4_roundtrips_glow() {
+    use squarez::project::{Project, ProjectMode};
+    let dir = std::env::temp_dir().join("squarez_v4_glow_test");
+    std::fs::create_dir_all(&dir).unwrap();
+
+    // A v3 payload is today's Project minus glow_colors: serialize a current
+    // project, strip nothing (bincode tolerates trailing bytes on the mirror
+    // side, but a true v3 file simply lacks the tail) — emulate by writing a
+    // v3-tagged file from a serialized prefix-compatible struct. Simplest
+    // faithful emulation: write the current project WITH empty glow under the
+    // v3 version byte; the v3 mirror decodes the prefix and ignores the tail.
+    let mut p = Project::new_with_mode(32, 32, "glow".to_string(), ProjectMode::ThreeD);
+    p.glow_colors = vec![[255, 0, 200, 255]];
+    let path = dir.join("g.sqr");
+    squarez::io::sqr::save_sqr(&p, &path).unwrap();
+    let loaded = squarez::io::sqr::load_sqr(&path).unwrap();
+    assert_eq!(loaded.glow_colors, vec![[255, 0, 200, 255]], "v4 roundtrip keeps glow");
+
+    // Doctor the version byte down to 3: the mirror must decode and default
+    // glow to empty (the v3 prefix of the payload is identical).
+    let mut bytes = std::fs::read(&path).unwrap();
+    assert_eq!(bytes[4], 4, "current files are v4");
+    bytes[4] = 3;
+    let v3_path = dir.join("g3.sqr");
+    std::fs::write(&v3_path, &bytes).unwrap();
+    let loaded = squarez::io::sqr::load_sqr(&v3_path).unwrap();
+    assert!(loaded.glow_colors.is_empty(), "v3 files default to no glow");
+    assert_eq!(loaded.canvas_width, 32, "the rest of the project decodes intact");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn glow_flag_is_keyed_by_color_value() {
+    use squarez::project::{Project, ProjectMode};
+    let mut p = Project::new_with_mode(16, 16, "k".to_string(), ProjectMode::Normal);
+    let c = p.palette[3];
+    p.toggle_glow_color(c);
+    assert!(p.is_glow_color(c));
+    // Reordering the palette does not move the flag off the color.
+    let moved = p.palette.remove(3);
+    p.palette.insert(0, moved);
+    assert!(p.is_glow_color(c), "glow follows the color value, not the index");
+    p.toggle_glow_color(c);
+    assert!(!p.is_glow_color(c));
+}
