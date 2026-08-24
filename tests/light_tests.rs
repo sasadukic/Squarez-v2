@@ -237,3 +237,126 @@ fn emissive_bounce_tints_nearby_geometry_and_scales() {
     let none = emissive_bounce(&mesh, frame, &p.glow_colors, ATLAS, 0);
     assert!(none.iter().all(|b| *b == [0, 0, 0]), "zero intensity emits nothing");
 }
+
+#[test]
+fn thin_leg_shadow_connects_to_its_base() {
+    // A 1x4x1 post resting on the plane: on the shadow side the ground texel
+    // right beside the post must be shadowed — no detached-gap ring.
+    let mut plane = Mesh::plane(16);
+    plane.allocate_all_islands(ATLAS).unwrap();
+    let layer = Layer::new("t".to_string(), ATLAS.0, ATLAS.1);
+    let mut post = Mesh::cube(1);
+    // Stretch to 4 tall.
+    for v in &mut post.vertices {
+        if v[1] > 0.5 {
+            v[1] = 4.0;
+        }
+    }
+    let out = edit::add_object(&plane, &layer, &post, ATLAS).unwrap();
+    let mut mesh = out.mesh;
+    let pmin = mesh.vertices.iter().skip(4).map(|v| v[1]).fold(f32::MAX, f32::min);
+    for v in mesh.vertices.iter_mut().skip(4) {
+        v[1] -= pmin;
+    }
+    let isl = mesh.faces[0].island;
+    let map = bake_lightmap(&mesh, ATLAS, ShadowMode::Hard, false);
+    // Shadow side per light::SUN: +X / -Z of the post (sun sits at -X/+Z).
+    // The post occupies the island center texel column.
+    let (cx, cy) = (isl.w as u32 / 2, isl.h as u32 / 2);
+    let adjacent = [(cx + 1, cy), (cx + 1, cy - 1), (cx, cy - 1)];
+    let mut connected = 0;
+    for (i, j) in adjacent {
+        let idx = ((isl.y as u32 + j) * ATLAS.0 + isl.x as u32 + i) as usize;
+        if map[idx].shadow < 255 {
+            connected += 1;
+        }
+    }
+    assert!(
+        connected >= 1,
+        "the shadow must touch the post's base on the shadow side"
+    );
+}
+
+#[test]
+fn elevated_slab_shadow_has_no_interior_holes() {
+    // A tabletop slab floating above the ground: its shadow must be solid —
+    // per row, everything between the first and last shadowed texel is
+    // shadowed (the old fan-diagonal ray leak punched lit notches through).
+    let mut plane = Mesh::plane(18);
+    plane.allocate_all_islands(ATLAS).unwrap();
+    let layer = Layer::new("t".to_string(), ATLAS.0, ATLAS.1);
+    let mut slab = Mesh::plane(8);
+    for v in &mut slab.vertices {
+        v[1] += 5.0;
+    }
+    let out = edit::add_object(&plane, &layer, &slab, ATLAS).unwrap();
+    let mut mesh = out.mesh;
+    // add_object lifts; force the slab to y = 5 exactly.
+    let smin = mesh.vertices.iter().skip(4).map(|v| v[1]).fold(f32::MAX, f32::min);
+    for v in mesh.vertices.iter_mut().skip(4) {
+        v[1] += 5.0 - smin;
+    }
+    let isl = mesh.faces[0].island;
+    let map = bake_lightmap(&mesh, ATLAS, ShadowMode::Hard, false);
+    let mut shadow_texels = 0;
+    for j in 0..isl.h as u32 {
+        let mut first: Option<u32> = None;
+        let mut last: Option<u32> = None;
+        for i in 0..isl.w as u32 {
+            let idx = ((isl.y as u32 + j) * ATLAS.0 + isl.x as u32 + i) as usize;
+            if map[idx].shadow < 255 {
+                if first.is_none() {
+                    first = Some(i);
+                }
+                last = Some(i);
+                shadow_texels += 1;
+            }
+        }
+        if let (Some(f), Some(l)) = (first, last) {
+            for i in f..=l {
+                let idx = ((isl.y as u32 + j) * ATLAS.0 + isl.x as u32 + i) as usize;
+                assert!(
+                    map[idx].shadow < 255,
+                    "lit hole inside the slab shadow at row {j}, col {i}"
+                );
+            }
+        }
+    }
+    assert!(shadow_texels > 20, "the slab must cast a real shadow ({shadow_texels})");
+}
+
+#[test]
+fn emissive_bounce_does_not_wrap_behind_the_emitter() {
+    use squarez::three_d::light::emissive_bounce;
+    use squarez::project::{Project, ProjectMode};
+    // Glow on a cube's +X wall: texels of the SAME cube's -X wall (behind
+    // the emitting surface) must receive nothing.
+    let mut mesh = Mesh::cube(4);
+    mesh.allocate_all_islands(ATLAS).unwrap();
+    let glow_color = [255, 40, 220, 255];
+    let mut p = Project::new_with_mode(ATLAS.0, ATLAS.1, "d".to_string(), ProjectMode::ThreeD);
+    p.glow_colors = vec![glow_color];
+    let plus_x = (0..6)
+        .position(|i| mesh.face_normal(&mesh.faces[i])[0] > 0.5)
+        .unwrap();
+    let isl = mesh.faces[plus_x].island;
+    {
+        let layer = &mut p.animations[0].frames[0].layers[0];
+        for j in 0..isl.h as u32 {
+            for i in 0..isl.w as u32 {
+                layer.set_pixel(isl.x as u32 + i, isl.y as u32 + j, glow_color);
+            }
+        }
+    }
+    let bounce = emissive_bounce(&mesh, &p.animations[0].frames[0], &p.glow_colors, ATLAS, 80);
+    let minus_x = (0..6)
+        .position(|i| mesh.face_normal(&mesh.faces[i])[0] < -0.5)
+        .unwrap();
+    let isl_b = mesh.faces[minus_x].island;
+    for j in 0..isl_b.h as u32 {
+        for i in 0..isl_b.w as u32 {
+            let idx = ((isl_b.y as u32 + j) * ATLAS.0 + isl_b.x as u32 + i) as usize;
+            assert_eq!(bounce[idx], [0, 0, 0], "no light behind the emitting wall");
+        }
+    }
+}

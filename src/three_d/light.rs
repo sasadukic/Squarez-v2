@@ -42,11 +42,11 @@ impl ShadowMode {
 }
 
 pub const SHADOW_DIM: f32 = 0.55;
-/// Grid-flush rule: a hit closer than this is the attached seam itself
-/// (an object resting on another must not shadow the contact crack). Kept
-/// well under one grid unit so cast shadows still hug an object's base —
-/// a larger cutoff visibly detaches the shadow from the object.
-const MIN_SHADOW_DIST: f32 = 0.35;
+/// Just above the ray-origin offset so a surface cannot shadow itself;
+/// everything else counts — the seam between flush objects is protected by
+/// buried-face exclusion, not by distance (a distance cutoff detaches thin
+/// objects' shadows from their base).
+const MIN_SHADOW_DIST: f32 = 0.05;
 pub const AO_STRENGTH: f32 = 0.5;
 /// Tight contact range: only creases and contact points darken, never a
 /// broad film over the model.
@@ -70,28 +70,54 @@ fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     ]
 }
 
-/// Möller–Trumbore; returns the hit distance along `dir` if positive.
-fn ray_tri(orig: [f32; 3], dir: [f32; 3], a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> Option<f32> {
-    let e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-    let e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
-    let p = cross(dir, e2);
-    let det = dot(e1, p);
-    if det.abs() < 1e-9 {
-        return None;
+/// An occluder face as a planar polygon: no fan-triangulation, so no
+/// diagonal seam a grazing ray can slip through (that seam produced lit
+/// notches across otherwise straight shadows).
+struct OccPoly {
+    point: [f32; 3],
+    normal: [f32; 3],
+    /// Vertices in the 2D plane frame (u = tangent, v = bitangent).
+    verts2: Vec<(f32, f32)>,
+    tangent: [f32; 3],
+    bitangent: [f32; 3],
+}
+
+impl OccPoly {
+    /// Hit distance along `dir`, if the ray crosses the polygon's plane
+    /// inside it (edges inclusive).
+    fn hit(&self, orig: [f32; 3], dir: [f32; 3]) -> Option<f32> {
+        let denom = dot(dir, self.normal);
+        if denom.abs() < 1e-9 {
+            return None;
+        }
+        let t = (dot(self.point, self.normal) - dot(orig, self.normal)) / denom;
+        if t <= EPS {
+            return None;
+        }
+        let hp = [
+            orig[0] + dir[0] * t,
+            orig[1] + dir[1] * t,
+            orig[2] + dir[2] * t,
+        ];
+        let rel = [hp[0] - self.point[0], hp[1] - self.point[1], hp[2] - self.point[2]];
+        let p2 = (dot(rel, self.tangent), dot(rel, self.bitangent));
+        // Inclusive edge test: grow the polygon a hair so boundary hits and
+        // shared face edges always count (double-counting is harmless for
+        // boolean occlusion).
+        let n = self.verts2.len();
+        let mut inside = false;
+        for i in 0..n {
+            let (x0, y0) = self.verts2[i];
+            let (x1, y1) = self.verts2[(i + 1) % n];
+            if (y0 > p2.1) != (y1 > p2.1) {
+                let tt = (p2.1 - y0) / (y1 - y0);
+                if p2.0 < x0 + tt * (x1 - x0) + 1e-4 {
+                    inside = !inside;
+                }
+            }
+        }
+        if inside { Some(t) } else { None }
     }
-    let inv = 1.0 / det;
-    let t_vec = [orig[0] - a[0], orig[1] - a[1], orig[2] - a[2]];
-    let u = dot(t_vec, p) * inv;
-    if !(-1e-6..=1.0 + 1e-6).contains(&u) {
-        return None;
-    }
-    let q = cross(t_vec, e1);
-    let v = dot(dir, q) * inv;
-    if v < -1e-6 || u + v > 1.0 + 1e-6 {
-        return None;
-    }
-    let t = dot(e2, q) * inv;
-    if t > EPS { Some(t) } else { None }
 }
 
 fn point_in_poly(poly: &[(f32, f32)], p: (f32, f32)) -> bool {
@@ -163,44 +189,44 @@ pub fn buried_faces(mesh: &Mesh) -> Vec<bool> {
     buried
 }
 
-/// The mesh's triangles (fan-triangulated quads), pre-extracted once per bake.
-fn triangles(mesh: &Mesh, buried: &[bool]) -> Vec<[[f32; 3]; 3]> {
-    let mut tris = Vec::new();
+/// Occluder polygons for every non-buried face, pre-extracted per bake.
+fn occluder_polys(mesh: &Mesh, buried: &[bool]) -> Vec<OccPoly> {
+    let mut polys = Vec::new();
     for (fi, face) in mesh.faces.iter().enumerate() {
-        if buried.get(fi).copied().unwrap_or(false) {
+        if buried.get(fi).copied().unwrap_or(false) || face.verts.len() < 3 {
             continue;
         }
-        let v = &face.verts;
-        for i in 1..v.len().saturating_sub(1) {
-            tris.push([
-                mesh.vertices[v[0] as usize],
-                mesh.vertices[v[i] as usize],
-                mesh.vertices[v[i + 1] as usize],
-            ]);
-        }
+        let normal = norm(mesh.face_normal(face));
+        let p0 = mesh.vertices[face.verts[0] as usize];
+        let up = if normal[1].abs() < 0.9 { [0.0, 1.0, 0.0] } else { [1.0, 0.0, 0.0] };
+        let tangent = norm(cross(up, normal));
+        let bitangent = cross(normal, tangent);
+        let verts2 = face
+            .verts
+            .iter()
+            .map(|&vi| {
+                let v = mesh.vertices[vi as usize];
+                let rel = [v[0] - p0[0], v[1] - p0[1], v[2] - p0[2]];
+                (dot(rel, tangent), dot(rel, bitangent))
+            })
+            .collect();
+        polys.push(OccPoly { point: p0, normal, verts2, tangent, bitangent });
     }
-    tris
+    polys
 }
 
-fn occluded(tris: &[[[f32; 3]; 3]], orig: [f32; 3], dir: [f32; 3], max_t: f32) -> bool {
-    tris.iter().any(|t| {
-        ray_tri(orig, dir, t[0], t[1], t[2]).is_some_and(|d| d < max_t)
-    })
-}
-
-/// Shadow-ray test honoring the grid-flush rule: hits closer than
-/// MIN_SHADOW_DIST come from attached geometry and cast nothing.
-fn shadowed(tris: &[[[f32; 3]; 3]], orig: [f32; 3], dir: [f32; 3]) -> bool {
-    tris.iter().any(|t| {
-        ray_tri(orig, dir, t[0], t[1], t[2]).is_some_and(|d| d > MIN_SHADOW_DIST)
-    })
+/// Shadow-ray test: anything past the self-hit guard casts.
+fn shadowed(polys: &[OccPoly], orig: [f32; 3], dir: [f32; 3]) -> bool {
+    polys
+        .iter()
+        .any(|p| p.hit(orig, dir).is_some_and(|d| d > MIN_SHADOW_DIST))
 }
 
 /// Nearest hit distance within range, if any — used for distance-weighted AO.
-fn nearest_hit(tris: &[[[f32; 3]; 3]], orig: [f32; 3], dir: [f32; 3], max_t: f32) -> Option<f32> {
+fn nearest_hit(polys: &[OccPoly], orig: [f32; 3], dir: [f32; 3], max_t: f32) -> Option<f32> {
     let mut best: Option<f32> = None;
-    for t in tris {
-        if let Some(d) = ray_tri(orig, dir, t[0], t[1], t[2]) {
+    for p in polys {
+        if let Some(d) = p.hit(orig, dir) {
             if d < max_t && best.is_none_or(|b| d < b) {
                 best = Some(d);
             }
@@ -253,7 +279,7 @@ pub fn bake_lightmap(
     let mut map = vec![UNLIT; (aw as usize) * (ah as usize)];
     let mut claimed = vec![0u64; ((aw as usize) * (ah as usize)).div_ceil(64)];
     let buried = buried_faces(mesh);
-    let tris = triangles(mesh, &buried);
+    let polys = occluder_polys(mesh, &buried);
     let hemi = hemi_dirs();
 
     for (fi, face) in mesh.faces.iter().enumerate() {
@@ -308,12 +334,12 @@ pub fn bake_lightmap(
                             norm([SUN[0] + jitter, SUN[1], SUN[2] - jitter]),
                         ];
                         for d in &dirs {
-                            if !shadowed(&tris, orig, *d) {
+                            if !shadowed(&polys, orig, *d) {
                                 lit += 1;
                             }
                         }
                         lit as f32 / dirs.len() as f32
-                    } else if shadowed(&tris, orig, SUN) {
+                    } else if shadowed(&polys, orig, SUN) {
                         0.0
                     } else {
                         1.0
@@ -330,7 +356,7 @@ pub fn bake_lightmap(
                             tx[1] * d[0] + ty[1] * d[1] + n[1] * d[2],
                             tx[2] * d[0] + ty[2] * d[1] + n[2] * d[2],
                         ];
-                        if let Some(dist) = nearest_hit(&tris, orig, w, AO_RANGE) {
+                        if let Some(dist) = nearest_hit(&polys, orig, w, AO_RANGE) {
                             occ += 1.0 - dist / AO_RANGE;
                         }
                     }
@@ -393,10 +419,12 @@ pub fn emissive_bounce(
         }
         None
     };
-    // Collect emitters (world center + color), stride-sampling if plentiful.
-    let mut emitters: Vec<([f32; 3], crate::project::Rgba)> = Vec::new();
+    // Collect emitters (world center + color + facing), stride-sampling if
+    // plentiful. Light leaves a surface FORWARD: nothing spills behind it.
+    let mut emitters: Vec<([f32; 3], crate::project::Rgba, [f32; 3])> = Vec::new();
     'collect: for face in &mesh.faces {
         let isl = face.island;
+        let fnorm = norm(mesh.face_normal(face));
         for j in 0..isl.h as u32 {
             for i in 0..isl.w as u32 {
                 let (gx, gy) = (isl.x as u32 + i, isl.y as u32 + j);
@@ -411,7 +439,7 @@ pub fn emissive_bounce(
                             w[a] += corner[a] * 0.25;
                         }
                     }
-                    emitters.push((w, c));
+                    emitters.push((w, c, fnorm));
                     if emitters.len() >= MAX_EMITTERS {
                         break 'collect;
                     }
@@ -425,6 +453,7 @@ pub fn emissive_bounce(
     let strength = intensity as f32 / 100.0 * 0.5;
     for face in &mesh.faces {
         let isl = face.island;
+        let rnorm = norm(mesh.face_normal(face));
         for j in 0..isl.h as u32 {
             for i in 0..isl.w as u32 {
                 let (gx, gy) = (isl.x as u32 + i, isl.y as u32 + j);
@@ -436,8 +465,17 @@ pub fn emissive_bounce(
                     }
                 }
                 let mut acc = [0.0f32; 3];
-                for (e, c) in &emitters {
-                    let d2 = (w[0] - e[0]).powi(2) + (w[1] - e[1]).powi(2) + (w[2] - e[2]).powi(2);
+                for (e, c, en) in &emitters {
+                    let to_recv = [w[0] - e[0], w[1] - e[1], w[2] - e[2]];
+                    // Behind the emitting surface: no light.
+                    if dot(to_recv, *en) <= 0.05 {
+                        continue;
+                    }
+                    // The receiving surface must face the emitter.
+                    if dot(rnorm, [-to_recv[0], -to_recv[1], -to_recv[2]]) <= 0.0 {
+                        continue;
+                    }
+                    let d2 = to_recv[0].powi(2) + to_recv[1].powi(2) + to_recv[2].powi(2);
                     if d2 >= RANGE * RANGE || d2 < 0.25 {
                         continue; // own texel / immediate neighbours glow already
                     }
