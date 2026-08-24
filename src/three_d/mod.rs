@@ -133,8 +133,9 @@ pub struct ThreeDState {
     /// Baked-lighting toggles (Windows menu) and the bake cache
     /// (key, per-texel multiplier) — display-only, never in layer data.
     pub bake_shadows: bool,
+    pub soft_shadows: bool,
     pub bake_ao: bool,
-    pub light_cache: Option<(u64, Vec<u8>)>,
+    pub light_cache: Option<(u64, Vec<light::LightTexel>)>,
     /// The texture exists once its size was chosen (or a painted file was
     /// opened). Until then paint tools prompt for a size instead of drawing.
     pub texture_created: bool,
@@ -192,6 +193,7 @@ impl Default for ThreeDState {
             gradient_drag: None,
             gradient_preview: Vec::new(),
             bake_shadows: false,
+            soft_shadows: false,
             bake_ao: false,
             light_cache: None,
             texture_created: false,

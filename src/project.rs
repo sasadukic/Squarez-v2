@@ -81,6 +81,12 @@ pub struct Project {
     /// VALUE, not palette index, so palette reorder/swap cannot desync it.
     #[serde(default)]
     pub glow_colors: Vec<Rgba>,
+    /// Optional palette color that cast shadows tint toward (None = darken).
+    #[serde(default)]
+    pub shadow_color: Option<Rgba>,
+    /// Optional palette color that ambient occlusion tints toward.
+    #[serde(default)]
+    pub ao_color: Option<Rgba>,
 }
 
 fn default_id_counter() -> u64 { 1 }
@@ -121,6 +127,8 @@ impl Project {
             sprite_stack_max_layers: None,
             mesh3d: None,
             glow_colors: Vec::new(),
+            shadow_color: None,
+            ao_color: None,
         }
     }
 

@@ -31,8 +31,8 @@ fn shadows_darken_under_the_cube_and_not_far_away() {
     let mesh = cube_over_plane();
     let plane = top_face_of_plane(&mesh);
     let isl = mesh.faces[plane as usize].island;
-    let lit = bake_lightmap(&mesh, ATLAS, false, false);
-    let shadowed = bake_lightmap(&mesh, ATLAS, true, false);
+    let lit = bake_lightmap(&mesh, ATLAS, false, false, false);
+    let shadowed = bake_lightmap(&mesh, ATLAS, true, false, false);
 
     // Somewhere on the plane must be darker with shadows on…
     let mut darker = 0;
@@ -40,7 +40,7 @@ fn shadows_darken_under_the_cube_and_not_far_away() {
     for j in 0..isl.h as u32 {
         for i in 0..isl.w as u32 {
             let idx = ((isl.y as u32 + j) * ATLAS.0 + isl.x as u32 + i) as usize;
-            if shadowed[idx] < lit[idx] {
+            if shadowed[idx].shadow < lit[idx].shadow {
                 darker += 1;
                 if (i <= 1 || i >= isl.w as u32 - 2) && (j <= 1 || j >= isl.h as u32 - 2) {
                     changed_far_corner = true;
@@ -77,14 +77,14 @@ fn ao_darkens_contact_more_than_open_ground() {
         v[1] -= dy;
     }
     let isl = mesh.faces[0].island;
-    let no_ao = bake_lightmap(&mesh, ATLAS, false, false);
-    let ao = bake_lightmap(&mesh, ATLAS, false, true);
+    let no_ao = bake_lightmap(&mesh, ATLAS, false, false, false);
+    let ao = bake_lightmap(&mesh, ATLAS, false, false, true);
     let mut near = Vec::new();
     let mut far = Vec::new();
     for j in 0..isl.h as u32 {
         for i in 0..isl.w as u32 {
             let idx = ((isl.y as u32 + j) * ATLAS.0 + isl.x as u32 + i) as usize;
-            let drop = no_ao[idx] as i32 - ao[idx] as i32;
+            let drop = no_ao[idx].ao as i32 - ao[idx].ao as i32;
             let (cx, cy) = (isl.w as f32 / 2.0, isl.h as f32 / 2.0);
             let d = ((i as f32 - cx).powi(2) + (j as f32 - cy).powi(2)).sqrt();
             if d < 4.0 {
@@ -106,14 +106,26 @@ fn ao_darkens_contact_more_than_open_ground() {
 #[test]
 fn lightmap_cache_key_tracks_geometry_not_paint() {
     let mesh = cube_over_plane();
-    let k1 = lightmap_key(&mesh, ATLAS, true, true);
-    assert_eq!(k1, lightmap_key(&mesh, ATLAS, true, true), "stable");
+    let k1 = lightmap_key(&mesh, ATLAS, true, false, true);
+    assert_eq!(k1, lightmap_key(&mesh, ATLAS, true, false, true), "stable");
     let mut moved = mesh.clone();
     moved.vertices[0][0] += 1.0;
-    assert_ne!(k1, lightmap_key(&moved, ATLAS, true, true), "geometry changes the key");
+    assert_ne!(k1, lightmap_key(&moved, ATLAS, true, false, true), "geometry changes the key");
     assert_ne!(
         k1,
-        lightmap_key(&mesh, ATLAS, false, true),
+        lightmap_key(&mesh, ATLAS, false, false, true),
         "toggle changes the key"
     );
+}
+
+#[test]
+fn soft_shadows_produce_fractional_penumbra() {
+    let mesh = cube_over_plane();
+    let hard = bake_lightmap(&mesh, ATLAS, true, false, false);
+    let soft = bake_lightmap(&mesh, ATLAS, true, true, false);
+    let frac = |m: &[squarez::three_d::light::LightTexel]| {
+        m.iter().filter(|t| t.shadow > 0 && t.shadow < 255).count()
+    };
+    assert_eq!(frac(&hard), 0, "hard shadows are binary");
+    assert!(frac(&soft) > 3, "soft shadows must have penumbra texels ({})", frac(&soft));
 }

@@ -2106,36 +2106,82 @@ impl App {
                     mesh,
                     (out_w, out_h),
                     self.three_d.bake_shadows,
+                    self.three_d.soft_shadows,
                     self.three_d.bake_ao,
                 );
-                let cached = match &self.three_d.light_cache {
-                    Some((k, _)) if *k == key => true,
-                    _ => false,
-                };
+                let cached = matches!(&self.three_d.light_cache, Some((k, _)) if *k == key);
                 if !cached {
                     let map = crate::three_d::light::bake_lightmap(
                         mesh,
                         (out_w, out_h),
                         self.three_d.bake_shadows,
+                        self.three_d.soft_shadows,
                         self.three_d.bake_ao,
                     );
                     self.three_d.light_cache = Some((key, map));
                 }
+                let shadow_col = self.project.shadow_color;
+                let ao_col = self.project.ao_color;
                 if let Some((_, map)) = &self.three_d.light_cache {
-                    for (i, &m) in map.iter().enumerate() {
-                        if m == 255 {
+                    let lerp3 = |c: [u8; 3], t: [u8; 4], a: f32| -> [u8; 3] {
+                        [
+                            (c[0] as f32 + (t[0] as f32 - c[0] as f32) * a) as u8,
+                            (c[1] as f32 + (t[1] as f32 - c[1] as f32) * a) as u8,
+                            (c[2] as f32 + (t[2] as f32 - c[2] as f32) * a) as u8,
+                        ]
+                    };
+                    for (i, m) in map.iter().enumerate() {
+                        if m.lambert == 255 && m.shadow == 255 && m.ao == 255 {
                             continue;
                         }
                         let d = i * 4;
                         // Emissive colors ignore lighting entirely.
-                        let c = [pixels[d], pixels[d + 1], pixels[d + 2], pixels[d + 3]];
-                        if c[3] == 0 || self.project.is_glow_color(c) {
+                        let px = [pixels[d], pixels[d + 1], pixels[d + 2], pixels[d + 3]];
+                        if px[3] == 0 || self.project.is_glow_color(px) {
                             continue;
                         }
-                        let f = m as u32;
-                        pixels[d] = ((pixels[d] as u32 * f) / 255) as u8;
-                        pixels[d + 1] = ((pixels[d + 1] as u32 * f) / 255) as u8;
-                        pixels[d + 2] = ((pixels[d + 2] as u32 * f) / 255) as u8;
+                        let mut c = [px[0], px[1], px[2]];
+                        let f = m.lambert as u32;
+                        c = [
+                            ((c[0] as u32 * f) / 255) as u8,
+                            ((c[1] as u32 * f) / 255) as u8,
+                            ((c[2] as u32 * f) / 255) as u8,
+                        ];
+                        let shadow_amt = 1.0 - m.shadow as f32 / 255.0;
+                        if shadow_amt > 0.0 {
+                            match shadow_col {
+                                // A chosen shadow color tints; otherwise darken.
+                                Some(t) => c = lerp3(c, t, shadow_amt * 0.8),
+                                None => {
+                                    let f = crate::three_d::light::SHADOW_DIM
+                                        + (1.0 - crate::three_d::light::SHADOW_DIM)
+                                            * (1.0 - shadow_amt);
+                                    c = [
+                                        (c[0] as f32 * f) as u8,
+                                        (c[1] as f32 * f) as u8,
+                                        (c[2] as f32 * f) as u8,
+                                    ];
+                                }
+                            }
+                        }
+                        let ao_amt =
+                            (1.0 - m.ao as f32 / 255.0) * crate::three_d::light::AO_STRENGTH;
+                        if ao_amt > 0.0 {
+                            match ao_col {
+                                Some(t) => c = lerp3(c, t, ao_amt),
+                                None => {
+                                    let f = 1.0 - ao_amt;
+                                    c = [
+                                        (c[0] as f32 * f) as u8,
+                                        (c[1] as f32 * f) as u8,
+                                        (c[2] as f32 * f) as u8,
+                                    ];
+                                }
+                            }
+                        }
+                        pixels[d] = c[0];
+                        pixels[d + 1] = c[1];
+                        pixels[d + 2] = c[2];
                     }
                 }
             }
@@ -3093,6 +3139,20 @@ impl App {
                                     && is_3d
                                 {
                                     self.three_d.bake_shadows = !self.three_d.bake_shadows;
+                                    self.canvas_dirty = true;
+                                }
+                                if dropdown_row(
+                                    ui,
+                                    &theme,
+                                    "Soft shadows",
+                                    window_check(is_3d && self.three_d.soft_shadows),
+                                    is_3d && self.three_d.bake_shadows,
+                                )
+                                .clicked()
+                                    && is_3d
+                                    && self.three_d.bake_shadows
+                                {
+                                    self.three_d.soft_shadows = !self.three_d.soft_shadows;
                                     self.canvas_dirty = true;
                                 }
                                 if dropdown_row(
@@ -4308,6 +4368,20 @@ impl App {
                         Color32::from_rgb(255, 235, 160),
                     );
                 }
+                if self.project.shadow_color == Some(swatch) {
+                    painter.circle_filled(
+                        rect.right_bottom() + Vec2::new(-4.0, -4.0),
+                        2.0,
+                        Color32::from_rgb(40, 40, 90),
+                    );
+                }
+                if self.project.ao_color == Some(swatch) {
+                    painter.circle_filled(
+                        rect.left_bottom() + Vec2::new(4.0, -4.0),
+                        2.0,
+                        Color32::from_rgb(110, 50, 120),
+                    );
+                }
 
                 let current_fg = self.color_state.foreground;
                 let is_active = self.active_palette_idx == Some(i) || (self.active_palette_idx.is_none() && swatch == current_fg);
@@ -4440,6 +4514,59 @@ impl App {
                     let gresp = gresp.on_hover_text("Glow (emissive in 3D)");
                     if gresp.clicked() {
                         self.project.toggle_glow_color(swatch);
+                        self.canvas_dirty = true;
+                        self.active_modified = true;
+                        ui.close_menu();
+                    }
+
+                    // --- Shadow color / AO color (3D tint targets) ---
+                    let mut tint_row = |ui: &mut egui::Ui,
+                                        current: Option<crate::project::Rgba>,
+                                        label: &str,
+                                        glyph: char|
+                     -> bool {
+                        let (r, resp) = ui.allocate_exact_size(Vec2::splat(24.0), egui::Sense::click());
+                        let selected = current == Some(swatch);
+                        if resp.hovered() || selected {
+                            ui.painter().rect_filled(
+                                r,
+                                0.0,
+                                if resp.hovered() { theme.accent } else { theme.surface },
+                            );
+                        }
+                        let tint = if selected {
+                            Color32::WHITE
+                        } else if resp.hovered() {
+                            Color32::WHITE
+                        } else {
+                            theme.fg_desc
+                        };
+                        ui.painter().text(
+                            r.center(),
+                            egui::Align2::CENTER_CENTER,
+                            glyph,
+                            FontId::new(12.0, FontFamily::Proportional),
+                            tint,
+                        );
+                        resp.clone().on_hover_text(label.to_string());
+                        resp.clicked()
+                    };
+                    if tint_row(ui, self.project.shadow_color, "Use as shadow color (3D)", 'S') {
+                        self.project.shadow_color = if self.project.shadow_color == Some(swatch) {
+                            None
+                        } else {
+                            Some(swatch)
+                        };
+                        self.canvas_dirty = true;
+                        self.active_modified = true;
+                        ui.close_menu();
+                    }
+                    if tint_row(ui, self.project.ao_color, "Use as ambient occlusion color (3D)", 'O') {
+                        self.project.ao_color = if self.project.ao_color == Some(swatch) {
+                            None
+                        } else {
+                            Some(swatch)
+                        };
                         self.canvas_dirty = true;
                         self.active_modified = true;
                         ui.close_menu();

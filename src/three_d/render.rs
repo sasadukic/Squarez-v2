@@ -760,10 +760,31 @@ pub fn paint_glow_halos(
         None
     };
 
+    // One smooth radial-gradient disc per glow texel: a triangle fan whose
+    // center carries alpha and whose rim is fully transparent, so overlapping
+    // neighbours melt into one continuous glow instead of pixelated rings.
+    let mut bloom = egui::Mesh::default();
+    let mut add_disc = |pos: Pos2, radius: f32, c: crate::project::Rgba| {
+        const SEGS: u32 = 16;
+        let center = bloom.vertices.len() as u32;
+        bloom.colored_vertex(pos, Color32::from_rgba_unmultiplied(c[0], c[1], c[2], 46));
+        let rim = Color32::from_rgba_unmultiplied(c[0], c[1], c[2], 0);
+        for k in 0..SEGS {
+            let a = k as f32 * std::f32::consts::TAU / SEGS as f32;
+            bloom.colored_vertex(
+                Pos2::new(pos.x + radius * a.cos(), pos.y + radius * a.sin()),
+                rim,
+            );
+        }
+        for k in 0..SEGS {
+            bloom.add_triangle(center, center + 1 + k, center + 1 + (k + 1) % SEGS);
+        }
+    };
+
     let (aw, ah) = atlas;
-    let r = zoom.min(24.0);
+    let r = (zoom * 2.8).min(64.0);
     let mut drawn = 0usize;
-    for &fi in &scene.visible_faces {
+    'faces: for &fi in &scene.visible_faces {
         let Some(face) = mesh.faces.get(fi as usize) else { continue };
         let isl = face.island;
         for j in 0..isl.h as u32 {
@@ -775,15 +796,15 @@ pub fn paint_glow_halos(
                 }
                 let uv = ((gx as f32 + 0.5) / aw as f32, (gy as f32 + 0.5) / ah as f32);
                 let Some(pos) = uv_to_screen(fi, uv) else { continue };
-                let col = |a: u8| Color32::from_rgba_unmultiplied(c[0], c[1], c[2], a);
-                painter.circle_filled(pos, r * 2.4, col(14));
-                painter.circle_filled(pos, r * 1.5, col(28));
-                painter.circle_filled(pos, r * 0.8, col(56));
+                add_disc(pos, r, c);
                 drawn += 1;
                 if drawn > 400 {
-                    return; // enough bloom; keep the frame cheap
+                    break 'faces; // enough bloom; keep the frame cheap
                 }
             }
         }
+    }
+    if !bloom.vertices.is_empty() {
+        painter.add(egui::Shape::mesh(bloom));
     }
 }

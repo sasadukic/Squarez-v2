@@ -500,18 +500,31 @@ fn v3_files_load_with_empty_glow_and_v4_roundtrips_glow() {
     // v3 version byte; the v3 mirror decodes the prefix and ignores the tail.
     let mut p = Project::new_with_mode(32, 32, "glow".to_string(), ProjectMode::ThreeD);
     p.glow_colors = vec![[255, 0, 200, 255]];
+    p.shadow_color = Some([30, 30, 80, 255]);
+    p.ao_color = Some([80, 30, 90, 255]);
     let path = dir.join("g.sqr");
     squarez::io::sqr::save_sqr(&p, &path).unwrap();
     let loaded = squarez::io::sqr::load_sqr(&path).unwrap();
-    assert_eq!(loaded.glow_colors, vec![[255, 0, 200, 255]], "v4 roundtrip keeps glow");
+    assert_eq!(loaded.glow_colors, vec![[255, 0, 200, 255]], "v5 roundtrip keeps glow");
+    assert_eq!(loaded.shadow_color, Some([30, 30, 80, 255]), "v5 keeps the shadow color");
+    assert_eq!(loaded.ao_color, Some([80, 30, 90, 255]), "v5 keeps the AO color");
 
-    // Doctor the version byte down to 3: the mirror must decode and default
-    // glow to empty (the v3 prefix of the payload is identical).
-    let mut bytes = std::fs::read(&path).unwrap();
-    assert_eq!(bytes[4], 4, "current files are v4");
-    bytes[4] = 3;
+    // Doctor the version byte: each older reader decodes its prefix and
+    // defaults the fields it predates (bincode tolerates trailing bytes).
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(bytes[4], 5, "current files are v5");
+    let mut v4 = bytes.clone();
+    v4[4] = 4;
+    let v4_path = dir.join("g4.sqr");
+    std::fs::write(&v4_path, &v4).unwrap();
+    let loaded = squarez::io::sqr::load_sqr(&v4_path).unwrap();
+    assert_eq!(loaded.glow_colors, vec![[255, 0, 200, 255]], "v4 files keep glow");
+    assert_eq!(loaded.shadow_color, None, "v4 files default shadow color to None");
+
+    let mut v3 = bytes.clone();
+    v3[4] = 3;
     let v3_path = dir.join("g3.sqr");
-    std::fs::write(&v3_path, &bytes).unwrap();
+    std::fs::write(&v3_path, &v3).unwrap();
     let loaded = squarez::io::sqr::load_sqr(&v3_path).unwrap();
     assert!(loaded.glow_colors.is_empty(), "v3 files default to no glow");
     assert_eq!(loaded.canvas_width, 32, "the rest of the project decodes intact");

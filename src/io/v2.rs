@@ -537,6 +537,8 @@ pub fn load_v2(path: &Path) -> Result<Project, LoadError> {
         sprite_stack_max_layers: proj_meta.sprite_stack_max_layers,
         mesh3d: None,
         glow_colors: Vec::new(),
+            shadow_color: None,
+            ao_color: None,
     })
 }
 

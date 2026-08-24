@@ -5,7 +5,56 @@ use serde::Deserialize;
 use crate::project::{Animation, BlendMode, Frame, Layer, Project};
 
 const MAGIC: &[u8; 4] = b"SQR\0";
-const VERSION: u8 = 4;
+const VERSION: u8 = 5;
+
+/// Version 4 file layout: today's `Project` without the trailing
+/// `shadow_color` / `ao_color`.
+#[derive(serde::Deserialize)]
+struct LegacyProjectV5Less {
+    name: String,
+    canvas_width: u32,
+    canvas_height: u32,
+    palette: Vec<crate::project::Rgba>,
+    animations: Vec<crate::project::Animation>,
+    active_animation: usize,
+    active_frame: usize,
+    active_layer: usize,
+    layer_id_counter: u64,
+    tiles_w: u32,
+    tiles_h: u32,
+    tile_w: u32,
+    tile_h: u32,
+    mode: crate::project::ProjectMode,
+    sprite_stack_max_layers: Option<u32>,
+    mesh3d: Option<crate::three_d::mesh::Mesh>,
+    glow_colors: Vec<crate::project::Rgba>,
+}
+
+impl LegacyProjectV5Less {
+    fn into_project(self) -> Project {
+        Project {
+            name: self.name,
+            canvas_width: self.canvas_width,
+            canvas_height: self.canvas_height,
+            palette: self.palette,
+            animations: self.animations,
+            active_animation: self.active_animation,
+            active_frame: self.active_frame,
+            active_layer: self.active_layer,
+            layer_id_counter: self.layer_id_counter,
+            tiles_w: self.tiles_w,
+            tiles_h: self.tiles_h,
+            tile_w: self.tile_w,
+            tile_h: self.tile_h,
+            mode: self.mode,
+            sprite_stack_max_layers: self.sprite_stack_max_layers,
+            mesh3d: self.mesh3d,
+            glow_colors: self.glow_colors,
+            shadow_color: None,
+            ao_color: None,
+        }
+    }
+}
 
 /// Version 3 file layout: today's `Project` without the trailing
 /// `glow_colors`. Bincode is positional, so decoding a v3 payload as the
@@ -51,6 +100,8 @@ impl LegacyProjectV4Less {
             sprite_stack_max_layers: self.sprite_stack_max_layers,
             mesh3d: self.mesh3d,
             glow_colors: Vec::new(),
+            shadow_color: None,
+            ao_color: None,
         }
     }
 }
@@ -75,8 +126,10 @@ pub fn load_sqr(path: &Path) -> Result<Project, Box<dyn std::error::Error>> {
         file.read_to_end(&mut compressed)?;
         let decoded = lz4_flex::decompress_size_prepended(&compressed)?;
         match version[0] {
-            // Version 4: current Project layout (glow_colors at the tail).
-            4 => Ok(bincode::deserialize::<Project>(&decoded)?),
+            // Version 5: current Project layout (shadow/AO colors at the tail).
+            5 => Ok(bincode::deserialize::<Project>(&decoded)?),
+            // Version 4: no shadow_color / ao_color yet.
+            4 => Ok(bincode::deserialize::<LegacyProjectV5Less>(&decoded)?.into_project()),
             // Version 3: same Project except no glow_colors field.
             3 => Ok(bincode::deserialize::<LegacyProjectV4Less>(&decoded)?.into_project()),
             // Version 2: additionally, Mesh had no manual_layout flag.
@@ -239,6 +292,8 @@ impl LegacyProjectNoMode {
             sprite_stack_max_layers: None,
             mesh3d: None,
             glow_colors: Vec::new(),
+            shadow_color: None,
+            ao_color: None,
         }
     }
 }
@@ -263,6 +318,8 @@ impl LegacyProjectMode {
             sprite_stack_max_layers: None,
             mesh3d: None,
             glow_colors: Vec::new(),
+            shadow_color: None,
+            ao_color: None,
         }
     }
 }
@@ -287,6 +344,8 @@ impl LegacyProjectModeStack {
             sprite_stack_max_layers: self.sprite_stack_max_layers,
             mesh3d: None,
             glow_colors: Vec::new(),
+            shadow_color: None,
+            ao_color: None,
         }
     }
 }
@@ -404,6 +463,8 @@ impl LegacyProjectV2 {
             sprite_stack_max_layers: self.sprite_stack_max_layers,
             mesh3d: None,
             glow_colors: Vec::new(),
+            shadow_color: None,
+            ao_color: None,
         }
     }
 }
@@ -440,6 +501,8 @@ impl LegacyProjectV1 {
             sprite_stack_max_layers: None,
             mesh3d: None,
             glow_colors: Vec::new(),
+            shadow_color: None,
+            ao_color: None,
         }
     }
 }
@@ -567,6 +630,8 @@ impl LegacyProjectV3Less {
                 manual_layout: false,
             }),
             glow_colors: Vec::new(),
+            shadow_color: None,
+            ao_color: None,
         }
     }
 }

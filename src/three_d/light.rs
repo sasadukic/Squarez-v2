@@ -12,9 +12,11 @@ use super::mesh::Mesh;
 /// home orbit.
 pub const SUN: [f32; 3] = [-0.394, 0.788, 0.473];
 
-const SHADOW_DIM: f32 = 0.55;
-const AO_STRENGTH: f32 = 0.45;
-const AO_RANGE: f32 = 8.0;
+pub const SHADOW_DIM: f32 = 0.55;
+pub const AO_STRENGTH: f32 = 0.5;
+/// Tight contact range: only creases and contact points darken, never a
+/// broad film over the model.
+const AO_RANGE: f32 = 2.5;
 const EPS: f32 = 1e-4;
 
 fn norm(v: [f32; 3]) -> [f32; 3] {
@@ -80,12 +82,27 @@ fn occluded(tris: &[[[f32; 3]; 3]], orig: [f32; 3], dir: [f32; 3], max_t: f32) -
     })
 }
 
-/// 16 fixed cosine-ish hemisphere directions around +Z, rotated per normal.
+/// Nearest hit distance within range, if any — used for distance-weighted AO.
+fn nearest_hit(tris: &[[[f32; 3]; 3]], orig: [f32; 3], dir: [f32; 3], max_t: f32) -> Option<f32> {
+    let mut best: Option<f32> = None;
+    for t in tris {
+        if let Some(d) = ray_tri(orig, dir, t[0], t[1], t[2]) {
+            if d < max_t && best.is_none_or(|b| d < b) {
+                best = Some(d);
+            }
+        }
+    }
+    best
+}
+
+/// 16 fixed hemisphere directions around +Z, biased upward — grazing rays
+/// read distant walls as occlusion and smear AO into a film, so both rings
+/// stay high.
 fn hemi_dirs() -> [[f32; 3]; 16] {
     let mut dirs = [[0.0f32; 3]; 16];
     let mut i = 0;
     for ring in 0..2 {
-        let z = if ring == 0 { 0.85 } else { 0.4 };
+        let z = if ring == 0 { 0.85 } else { 0.6 };
         let r = (1.0f32 - z * z).sqrt();
         for k in 0..8 {
             let a = (k as f32 + ring as f32 * 0.5) * std::f32::consts::TAU / 8.0;
@@ -96,11 +113,31 @@ fn hemi_dirs() -> [[f32; 3]; 16] {
     dirs
 }
 
-/// Per-atlas-texel brightness multiplier, 0..=255 (255 = fully lit). Texels
-/// outside every island stay 255. Contested texels: first face wins.
-pub fn bake_lightmap(mesh: &Mesh, atlas: (u32, u32), shadows: bool, ao: bool) -> Vec<u8> {
+/// Per-texel lighting channels, each 0..=255:
+/// `lambert` = base directional level, `shadow` = 255 fully sunlit .. 0 fully
+/// in cast shadow (fractional with soft shadows), `ao` = 255 open .. 0 fully
+/// occluded contact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LightTexel {
+    pub lambert: u8,
+    pub shadow: u8,
+    pub ao: u8,
+}
+
+pub const UNLIT: LightTexel = LightTexel { lambert: 255, shadow: 255, ao: 255 };
+
+/// Per-atlas-texel lighting channels. Texels outside every island stay
+/// UNLIT. Contested texels: first face wins. `soft_shadows` casts a small
+/// cone of jittered sun rays for fractional (anti-aliased) shadow edges.
+pub fn bake_lightmap(
+    mesh: &Mesh,
+    atlas: (u32, u32),
+    shadows: bool,
+    soft_shadows: bool,
+    ao: bool,
+) -> Vec<LightTexel> {
     let (aw, ah) = atlas;
-    let mut map = vec![255u8; (aw as usize) * (ah as usize)];
+    let mut map = vec![UNLIT; (aw as usize) * (ah as usize)];
     let mut claimed = vec![0u64; ((aw as usize) * (ah as usize)).div_ceil(64)];
     let tris = triangles(mesh);
     let hemi = hemi_dirs();
@@ -135,25 +172,58 @@ pub fn bake_lightmap(mesh: &Mesh, atlas: (u32, u32), shadows: bool, ao: bool) ->
                 }
                 let orig = [c[0] + n[0] * 0.01, c[1] + n[1] * 0.01, c[2] + n[2] * 0.01];
 
-                let mut level = lambert;
-                if shadows && occluded(&tris, orig, SUN, f32::MAX) {
-                    level *= SHADOW_DIM;
+                let mut texel = LightTexel {
+                    lambert: (lambert.clamp(0.0, 1.0) * 255.0).round() as u8,
+                    shadow: 255,
+                    ao: 255,
+                };
+                if shadows {
+                    let lit_frac = if soft_shadows {
+                        // A small cone of jittered rays: the lit fraction
+                        // gives fractional penumbra instead of a hard step.
+                        let mut lit = 0u32;
+                        let jitter = 0.12f32;
+                        let dirs = [
+                            SUN,
+                            norm([SUN[0] + jitter, SUN[1], SUN[2]]),
+                            norm([SUN[0] - jitter, SUN[1], SUN[2]]),
+                            norm([SUN[0], SUN[1] + jitter, SUN[2]]),
+                            norm([SUN[0], SUN[1] - jitter, SUN[2]]),
+                            norm([SUN[0], SUN[1], SUN[2] + jitter]),
+                            norm([SUN[0], SUN[1], SUN[2] - jitter]),
+                            norm([SUN[0] + jitter, SUN[1], SUN[2] - jitter]),
+                        ];
+                        for d in &dirs {
+                            if !occluded(&tris, orig, *d, f32::MAX) {
+                                lit += 1;
+                            }
+                        }
+                        lit as f32 / dirs.len() as f32
+                    } else if occluded(&tris, orig, SUN, f32::MAX) {
+                        0.0
+                    } else {
+                        1.0
+                    };
+                    texel.shadow = (lit_frac * 255.0).round() as u8;
                 }
                 if ao {
-                    let mut occ = 0u32;
+                    // Distance-weighted: a hit right at the surface occludes
+                    // fully, one at the range edge barely at all.
+                    let mut occ = 0.0f32;
                     for d in &hemi {
                         let w = [
                             tx[0] * d[0] + ty[0] * d[1] + n[0] * d[2],
                             tx[1] * d[0] + ty[1] * d[1] + n[1] * d[2],
                             tx[2] * d[0] + ty[2] * d[1] + n[2] * d[2],
                         ];
-                        if occluded(&tris, orig, w, AO_RANGE) {
-                            occ += 1;
+                        if let Some(dist) = nearest_hit(&tris, orig, w, AO_RANGE) {
+                            occ += 1.0 - dist / AO_RANGE;
                         }
                     }
-                    level *= 1.0 - AO_STRENGTH * (occ as f32 / hemi.len() as f32);
+                    let frac = (occ / hemi.len() as f32).clamp(0.0, 1.0);
+                    texel.ao = ((1.0 - frac) * 255.0).round() as u8;
                 }
-                map[bit] = (level.clamp(0.0, 1.0) * 255.0).round() as u8;
+                map[bit] = texel;
             }
         }
     }
@@ -161,7 +231,13 @@ pub fn bake_lightmap(mesh: &Mesh, atlas: (u32, u32), shadows: bool, ao: bool) ->
 }
 
 /// Cache key for a bake: geometry + islands + atlas + toggles.
-pub fn lightmap_key(mesh: &Mesh, atlas: (u32, u32), shadows: bool, ao: bool) -> u64 {
+pub fn lightmap_key(
+    mesh: &Mesh,
+    atlas: (u32, u32),
+    shadows: bool,
+    soft_shadows: bool,
+    ao: bool,
+) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     for v in &mesh.vertices {
@@ -174,6 +250,6 @@ pub fn lightmap_key(mesh: &Mesh, atlas: (u32, u32), shadows: bool, ao: bool) -> 
         (f.island.x, f.island.y, f.island.w, f.island.h).hash(&mut h);
     }
     atlas.hash(&mut h);
-    (shadows, ao).hash(&mut h);
+    (shadows, soft_shadows, ao).hash(&mut h);
     h.finish()
 }
