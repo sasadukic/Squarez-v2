@@ -7,6 +7,7 @@ pub mod camera;
 pub mod edit;
 pub mod gizmo;
 pub mod layout;
+pub mod light;
 pub mod mesh;
 pub mod paint;
 pub mod render;
@@ -129,6 +130,11 @@ pub struct ThreeDState {
     /// Live gradient preview texels, baked into the canvas texture by the
     /// app's rebuild alongside shape_preview.
     pub gradient_preview: Vec<(u32, u32, Rgba)>,
+    /// Baked-lighting toggles (Windows menu) and the bake cache
+    /// (key, per-texel multiplier) — display-only, never in layer data.
+    pub bake_shadows: bool,
+    pub bake_ao: bool,
+    pub light_cache: Option<(u64, Vec<u8>)>,
     /// The texture exists once its size was chosen (or a painted file was
     /// opened). Until then paint tools prompt for a size instead of drawing.
     pub texture_created: bool,
@@ -185,6 +191,9 @@ impl Default for ThreeDState {
             island_drag: None,
             gradient_drag: None,
             gradient_preview: Vec::new(),
+            bake_shadows: false,
+            bake_ao: false,
+            light_cache: None,
             texture_created: false,
             texture_request: false,
         }
