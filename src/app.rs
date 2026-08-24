@@ -3237,6 +3237,12 @@ impl App {
                                 .clicked()
                                 {
                                     self.project.shadow_mode = self.project.shadow_mode.next();
+                                    if self.project.shadow_mode
+                                        != crate::three_d::light::ShadowMode::Off
+                                        && self.project.shadow_intensity == 0
+                                    {
+                                        self.project.shadow_intensity = 45;
+                                    }
                                     self.active_modified = true;
                                     self.canvas_dirty = true;
                                 }
@@ -3270,6 +3276,11 @@ impl App {
                                 .clicked()
                                 {
                                     self.project.emission = !self.project.emission;
+                                    if self.project.emission
+                                        && self.project.emission_intensity == 0
+                                    {
+                                        self.project.emission_intensity = 50;
+                                    }
                                     self.active_modified = true;
                                     self.canvas_dirty = true;
                                 }
@@ -4614,6 +4625,14 @@ impl App {
                     if gresp.clicked() {
                         let before = (self.project.glow_colors.clone(), self.project.shadow_color);
                         self.project.toggle_glow_color(swatch);
+                        if self.project.is_glow_color(swatch) {
+                            // Choosing a glow color IS choosing emission —
+                            // revive a switched-off/zeroed setup.
+                            self.project.emission = true;
+                            if self.project.emission_intensity == 0 {
+                                self.project.emission_intensity = 50;
+                            }
+                        }
                         self.undo_stack.push(crate::history::Command::SetLighting {
                             before,
                             after: (self.project.glow_colors.clone(), self.project.shadow_color),

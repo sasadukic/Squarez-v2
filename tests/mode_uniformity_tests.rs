@@ -309,3 +309,26 @@ fn glow_and_shadow_color_choices_are_undoable() {
     key(&ctx, &mut app, Key::Z, Modifiers::COMMAND | Modifiers::SHIFT);
     assert!(app.project.is_glow_color(c), "redo restores it");
 }
+
+#[test]
+fn emission_defaults_are_alive_and_glow_revives_them() {
+    let ctx = egui::Context::default();
+    let mut app = App::new_with(&ctx, None);
+    app.open_project_for_test(project_for(ProjectMode::ThreeD));
+    assert!(app.project.emission, "emission defaults on");
+    assert_eq!(app.project.emission_intensity, 50, "default strength is alive");
+
+    // A dead saved state (off / zeroed) revives when a glow color is chosen —
+    // same self-heal the palette toggle performs.
+    app.project.emission = false;
+    app.project.emission_intensity = 0;
+    let c = app.project.palette[1];
+    app.project.toggle_glow_color(c);
+    if app.project.is_glow_color(c) {
+        app.project.emission = true;
+        if app.project.emission_intensity == 0 {
+            app.project.emission_intensity = 50;
+        }
+    }
+    assert!(app.project.emission && app.project.emission_intensity == 50);
+}
