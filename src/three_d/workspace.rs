@@ -550,13 +550,34 @@ pub fn draw(
     let scene = project
         .mesh3d
         .as_ref()
-        .map(|mesh| render::build_scene_styled(mesh, &cam_copy, canvas_rect, atlas, state.shading));
+        .map(|mesh| render::build_scene_styled(
+            mesh,
+            &cam_copy,
+            canvas_rect,
+            atlas,
+            // Baked lighting owns shading: the view-space Soft tint on top of
+            // the baked texture would double-shade.
+            if state.bake_shadows || state.bake_ao {
+                super::Shading::Off
+            } else {
+                state.shading
+            },
+        ));
 
     if let (Some(mesh), Some(scene)) = (project.mesh3d.as_ref(), scene.as_ref()) {
         render::paint_contact_shadow(&painter, mesh, &cam_copy, canvas_rect);
         if let Some(texture) = canvas.texture.as_ref() {
             render::paint_scene(&painter, scene, texture.id());
         }
+        render::paint_glow_halos(
+            &painter,
+            scene,
+            mesh,
+            &project.animations[0].frames[0],
+            &project.glow_colors,
+            atlas,
+            cam_copy.zoom,
+        );
         // Off is a clean preview: raw texel colors with no edge seams.
         // Selection/hover overlays still draw, so the tools stay usable.
         if state.shading != super::Shading::Off {

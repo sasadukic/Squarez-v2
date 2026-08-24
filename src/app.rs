@@ -2093,11 +2093,52 @@ impl App {
                 }
             }
         }
-        // 3D mode: dilate island edge colors into the gutters so boundary
-        // sampling never shows a seam at face borders. Not in texture view,
-        // where this texture is the visible canvas — the clamp-extended rims
-        // would read as broken checker rows around every island.
+        // 3D mode: bake lighting (shadows/AO) into the DISPLAYED texture,
+        // then dilate island edges into the gutters. Bake first so the
+        // dilation copies shaded edge texels (no bright seams). Display-only:
+        // layer data, exports, and the texture view never see either pass.
         if self.project.mode.is_three_d() && !self.three_d.texture_view {
+            if (self.three_d.bake_shadows || self.three_d.bake_ao)
+                && self.project.mesh3d.is_some()
+            {
+                let mesh = self.project.mesh3d.as_ref().unwrap();
+                let key = crate::three_d::light::lightmap_key(
+                    mesh,
+                    (out_w, out_h),
+                    self.three_d.bake_shadows,
+                    self.three_d.bake_ao,
+                );
+                let cached = match &self.three_d.light_cache {
+                    Some((k, _)) if *k == key => true,
+                    _ => false,
+                };
+                if !cached {
+                    let map = crate::three_d::light::bake_lightmap(
+                        mesh,
+                        (out_w, out_h),
+                        self.three_d.bake_shadows,
+                        self.three_d.bake_ao,
+                    );
+                    self.three_d.light_cache = Some((key, map));
+                }
+                if let Some((_, map)) = &self.three_d.light_cache {
+                    for (i, &m) in map.iter().enumerate() {
+                        if m == 255 {
+                            continue;
+                        }
+                        let d = i * 4;
+                        // Emissive colors ignore lighting entirely.
+                        let c = [pixels[d], pixels[d + 1], pixels[d + 2], pixels[d + 3]];
+                        if c[3] == 0 || self.project.is_glow_color(c) {
+                            continue;
+                        }
+                        let f = m as u32;
+                        pixels[d] = ((pixels[d] as u32 * f) / 255) as u8;
+                        pixels[d + 1] = ((pixels[d + 1] as u32 * f) / 255) as u8;
+                        pixels[d + 2] = ((pixels[d + 2] as u32 * f) / 255) as u8;
+                    }
+                }
+            }
             if let Some(mesh) = self.project.mesh3d.as_ref() {
                 crate::three_d::pad_island_gutters(&mut pixels, out_w, out_h, mesh);
             }
@@ -3040,6 +3081,32 @@ impl App {
                                             Projection::Perspective
                                         };
                                     }
+                                }
+                                if dropdown_row(
+                                    ui,
+                                    &theme,
+                                    "Shadows",
+                                    window_check(is_3d && self.three_d.bake_shadows),
+                                    is_3d,
+                                )
+                                .clicked()
+                                    && is_3d
+                                {
+                                    self.three_d.bake_shadows = !self.three_d.bake_shadows;
+                                    self.canvas_dirty = true;
+                                }
+                                if dropdown_row(
+                                    ui,
+                                    &theme,
+                                    "Ambient occlusion",
+                                    window_check(is_3d && self.three_d.bake_ao),
+                                    is_3d,
+                                )
+                                .clicked()
+                                    && is_3d
+                                {
+                                    self.three_d.bake_ao = !self.three_d.bake_ao;
+                                    self.canvas_dirty = true;
                                 }
                                 if dropdown_row(ui, &theme, "Isometric view", None, is_3d)
                                     .clicked()
@@ -4233,6 +4300,14 @@ impl App {
                 let swatch = self.project.palette[i];
                 let color = Color32::from_rgba_unmultiplied(swatch[0], swatch[1], swatch[2], swatch[3]);
                 painter.rect_filled(rect, 0.0, color);
+                if self.project.is_glow_color(swatch) {
+                    // Emissive marker: a bright dot in the swatch corner.
+                    painter.circle_filled(
+                        rect.right_top() + Vec2::new(-4.0, 4.0),
+                        2.0,
+                        Color32::from_rgb(255, 235, 160),
+                    );
+                }
 
                 let current_fg = self.color_state.foreground;
                 let is_active = self.active_palette_idx == Some(i) || (self.active_palette_idx.is_none() && swatch == current_fg);
@@ -4335,6 +4410,38 @@ impl App {
                                 self.mark_all_thumbnails_dirty();
                             }
                         }
+                        ui.close_menu();
+                    }
+
+                    // --- Glow (3D: emissive color, full-bright + halo) ---
+                    let (r2, gresp) = ui.allocate_exact_size(Vec2::splat(24.0), egui::Sense::click());
+                    let glowing = self.project.is_glow_color(swatch);
+                    if gresp.hovered() || glowing {
+                        ui.painter().rect_filled(
+                            r2,
+                            0.0,
+                            if gresp.hovered() { theme.accent } else { theme.surface },
+                        );
+                    }
+                    let icon_rect2 = egui::Rect::from_center_size(r2.center(), Vec2::splat(16.0));
+                    let tint2 = if glowing {
+                        Color32::from_rgb(255, 220, 120)
+                    } else if gresp.hovered() {
+                        Color32::WHITE
+                    } else {
+                        theme.fg_desc
+                    };
+                    ui.put(
+                        icon_rect2,
+                        Image::new(egui::include_image!("../assets/icons/gradient.svg"))
+                            .tint(tint2)
+                            .fit_to_exact_size(Vec2::splat(16.0)),
+                    );
+                    let gresp = gresp.on_hover_text("Glow (emissive in 3D)");
+                    if gresp.clicked() {
+                        self.project.toggle_glow_color(swatch);
+                        self.canvas_dirty = true;
+                        self.active_modified = true;
                         ui.close_menu();
                     }
                 });
@@ -8306,6 +8413,15 @@ print("FAIL")
                 if let Some(texture) = self.canvas.texture.as_ref() {
                     crate::three_d::render::paint_scene(&painter, &scene, texture.id());
                 }
+                crate::three_d::render::paint_glow_halos(
+                    &painter,
+                    &scene,
+                    mesh,
+                    &self.project.animations[0].frames[0],
+                    &self.project.glow_colors,
+                    atlas,
+                    cam.zoom,
+                );
             }
             return;
         }

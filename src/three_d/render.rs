@@ -696,3 +696,94 @@ pub fn paint_contact_shadow(painter: &egui::Painter, mesh: &Mesh, cam: &Camera3D
         ));
     }
 }
+
+/// Screen-space glow halos for emissive texels: soft concentric discs over
+/// every visible texel whose composited color is in `glow`. Drawn after
+/// paint_scene; the underlying texels already render full-bright (the bake
+/// skips glow colors), so the halo is what sells the emission.
+pub fn paint_glow_halos(
+    painter: &egui::Painter,
+    scene: &Scene,
+    mesh: &super::mesh::Mesh,
+    frame: &crate::project::Frame,
+    glow: &[crate::project::Rgba],
+    atlas: (u32, u32),
+    zoom: f32,
+) {
+    if glow.is_empty() {
+        return;
+    }
+    // Top-down first-visible-pixel rule (matches the compositor's winner for
+    // exact-color purposes).
+    let top_color = |x: u32, y: u32| -> Option<crate::project::Rgba> {
+        for layer in frame.layers.iter().rev() {
+            if !layer.visible || layer.is_group || layer.pixels.is_empty() {
+                continue;
+            }
+            let c = layer.get_pixel(x, y);
+            if c[3] > 0 {
+                return Some(c);
+            }
+        }
+        None
+    };
+    // uv -> screen via the face's first non-degenerate projected triangle
+    // (affine per tri; same math as the gradient axis overlay).
+    let uv_to_screen = |face: u32, uv: (f32, f32)| -> Option<Pos2> {
+        let p = Pos2::new(uv.0, uv.1);
+        for tri in &scene.tris {
+            if tri.face != face {
+                continue;
+            }
+            let t = tri.uvs;
+            let v0 = t[1] - t[0];
+            let v1 = t[2] - t[0];
+            let v2 = p - t[0];
+            let d00 = v0.dot(v0);
+            let d01 = v0.dot(v1);
+            let d11 = v1.dot(v1);
+            let d20 = v2.dot(v0);
+            let d21 = v2.dot(v1);
+            let den = d00 * d11 - d01 * d01;
+            if den.abs() < 1e-12 {
+                continue;
+            }
+            let v = (d11 * d20 - d01 * d21) / den;
+            let w = (d00 * d21 - d01 * d20) / den;
+            let u = 1.0 - v - w;
+            let s = tri.pts;
+            return Some(Pos2::new(
+                s[0].x * u + s[1].x * v + s[2].x * w,
+                s[0].y * u + s[1].y * v + s[2].y * w,
+            ));
+        }
+        None
+    };
+
+    let (aw, ah) = atlas;
+    let r = zoom.min(24.0);
+    let mut drawn = 0usize;
+    for &fi in &scene.visible_faces {
+        let Some(face) = mesh.faces.get(fi as usize) else { continue };
+        let isl = face.island;
+        for j in 0..isl.h as u32 {
+            for i in 0..isl.w as u32 {
+                let (gx, gy) = (isl.x as u32 + i, isl.y as u32 + j);
+                let Some(c) = top_color(gx, gy) else { continue };
+                if !glow.contains(&c) {
+                    continue;
+                }
+                let uv = ((gx as f32 + 0.5) / aw as f32, (gy as f32 + 0.5) / ah as f32);
+                let Some(pos) = uv_to_screen(fi, uv) else { continue };
+                let col = |a: u8| Color32::from_rgba_unmultiplied(c[0], c[1], c[2], a);
+                painter.circle_filled(pos, r * 2.4, col(14));
+                painter.circle_filled(pos, r * 1.5, col(28));
+                painter.circle_filled(pos, r * 0.8, col(56));
+                drawn += 1;
+                if drawn > 400 {
+                    return; // enough bloom; keep the frame cheap
+                }
+            }
+        }
+    }
+}
