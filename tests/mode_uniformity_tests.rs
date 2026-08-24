@@ -252,3 +252,27 @@ fn undoing_add_layer_does_not_strand_the_active_layer() {
         egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: false, modifiers: Modifiers::default() },
     ], Modifiers::default());
 }
+
+#[test]
+fn fresh_texture_prompt_defaults_to_32x32() {
+    let ctx = egui::Context::default();
+    let mut app = App::new_with(&ctx, None);
+    app.open_project_for_test(project_for(ProjectMode::ThreeD));
+    app.active_tool = ActiveTool::Pencil;
+    for _ in 0..3 {
+        frame(&ctx, &mut app, vec![], Modifiers::default());
+    }
+    let p = Pos2::new(SCREEN.x / 2.0 / 1.5, SCREEN.y / 2.0 / 1.5);
+    frame(&ctx, &mut app, vec![
+        egui::Event::PointerMoved(p),
+        egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: true, modifiers: Modifiers::default() },
+    ], Modifiers::default());
+    frame(&ctx, &mut app, vec![
+        egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: false, modifiers: Modifiers::default() },
+    ], Modifiers::default());
+    assert_eq!(
+        app.atlas_dialog_fields_for_test(),
+        Some(("32".to_string(), "32".to_string())),
+        "a fresh texture defaults to 32x32"
+    );
+}

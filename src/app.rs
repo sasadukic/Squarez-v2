@@ -6664,10 +6664,7 @@ impl App {
                     if self.three_d.texture_request {
                         self.three_d.texture_request = false;
                         if self.atlas_dialog.is_none() {
-                            self.atlas_dialog = Some((
-                                self.project.canvas_width.to_string(),
-                                self.project.canvas_height.to_string(),
-                            ));
+                            self.atlas_dialog = Some(self.atlas_dialog_fields());
                         }
                     }
                     return;
@@ -12423,10 +12420,7 @@ print("FAIL")
         self.pending_zoom_fit = true;
         if self.three_d.texture_view && !self.three_d.atlas_prompted {
             self.three_d.atlas_prompted = true;
-            self.atlas_dialog = Some((
-                self.project.canvas_width.to_string(),
-                self.project.canvas_height.to_string(),
-            ));
+            self.atlas_dialog = Some(self.atlas_dialog_fields());
         }
     }
 
@@ -12676,7 +12670,7 @@ print("FAIL")
         self.push_paint_edits(&edits);
         self.three_d.texture_created = false;
         self.three_d.atlas_prompted = false;
-        self.atlas_dialog = Some((w.to_string(), h.to_string()));
+        self.atlas_dialog = Some(self.atlas_dialog_fields());
     }
 
     /// The gradient tool's colors: the shift-click shading-ramp slice of the
@@ -12807,6 +12801,19 @@ print("FAIL")
     /// texture-view size choice. Returns false when the islands cannot fit
     /// the requested size (the dialog stays open so a larger one can be
     /// picked). Recorded as one undoable step.
+    /// Prefill for the texture-size prompt: a fresh texture defaults to
+    /// 32x32; resizing an existing one starts from its current size.
+    fn atlas_dialog_fields(&self) -> (String, String) {
+        if self.three_d.texture_created {
+            (
+                self.project.canvas_width.to_string(),
+                self.project.canvas_height.to_string(),
+            )
+        } else {
+            ("32".to_string(), "32".to_string())
+        }
+    }
+
     pub fn apply_atlas_size(&mut self, w: u32, h: u32) -> bool {
         let (w, h) = (w.clamp(16, 4096), h.clamp(16, 4096));
         if (w, h) == (self.project.canvas_width, self.project.canvas_height) {
@@ -12990,6 +12997,11 @@ print("FAIL")
 
     pub fn add_shape_dialog_open(&self) -> bool {
         self.add_shape_dialog.is_some()
+    }
+
+    /// Test hook: the size prompt's current field strings, if open.
+    pub fn atlas_dialog_fields_for_test(&self) -> Option<(String, String)> {
+        self.atlas_dialog.clone()
     }
 
     /// Test hook: the gradient tool's current blend style.
