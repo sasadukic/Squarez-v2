@@ -540,6 +540,10 @@ pub fn load_v2(path: &Path) -> Result<Project, LoadError> {
             shadow_color: None,
             shadow_intensity: 45,
             emission_intensity: 50,
+            shading: crate::three_d::Shading::Off,
+            shadow_mode: crate::three_d::light::ShadowMode::Off,
+            bake_ao: false,
+            emission: true,
     })
 }
 

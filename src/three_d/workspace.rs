@@ -557,10 +557,10 @@ pub fn draw(
             atlas,
             // Baked lighting owns shading: the view-space Soft tint on top of
             // the baked texture would double-shade.
-            if state.shadow_mode != super::light::ShadowMode::Off || state.bake_ao {
+            if project.shadow_mode != super::light::ShadowMode::Off || project.bake_ao {
                 super::Shading::Off
             } else {
-                state.shading
+                project.shading
             },
         ));
 
@@ -569,7 +569,7 @@ pub fn draw(
         if let Some(texture) = canvas.texture.as_ref() {
             render::paint_scene(&painter, scene, texture.id());
         }
-        if state.emission {
+        if project.emission {
             render::paint_glow_halos(
                 &painter,
                 scene,
@@ -583,7 +583,7 @@ pub fn draw(
         }
         // Off is a clean preview: raw texel colors with no edge seams.
         // Selection/hover overlays still draw, so the tools stay usable.
-        if state.shading != super::Shading::Off {
+        if project.shading != super::Shading::Off {
             render::paint_wireframe(&painter, mesh, scene, &cam_copy, canvas_rect, theme);
         }
     }

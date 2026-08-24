@@ -2152,24 +2152,24 @@ impl App {
         // dilation copies shaded edge texels (no bright seams). Display-only:
         // layer data, exports, and the texture view never see either pass.
         if self.project.mode.is_three_d() && !self.three_d.texture_view {
-            let want_bake = self.three_d.shadow_mode
+            let want_bake = self.project.shadow_mode
                 != crate::three_d::light::ShadowMode::Off
-                || self.three_d.bake_ao;
+                || self.project.bake_ao;
             if want_bake && self.project.mesh3d.is_some() {
                 let mesh = self.project.mesh3d.as_ref().unwrap();
                 let key = crate::three_d::light::lightmap_key(
                     mesh,
                     (out_w, out_h),
-                    self.three_d.shadow_mode,
-                    self.three_d.bake_ao,
+                    self.project.shadow_mode,
+                    self.project.bake_ao,
                 );
                 let cached = matches!(&self.three_d.light_cache, Some((k, _)) if *k == key);
                 if !cached {
                     let map = crate::three_d::light::bake_lightmap(
                         mesh,
                         (out_w, out_h),
-                        self.three_d.shadow_mode,
-                        self.three_d.bake_ao,
+                        self.project.shadow_mode,
+                        self.project.bake_ao,
                     );
                     self.three_d.light_cache = Some((key, map));
                 }
@@ -2192,7 +2192,7 @@ impl App {
                         // Emissive colors ignore lighting entirely.
                         let px = [pixels[d], pixels[d + 1], pixels[d + 2], pixels[d + 3]];
                         if px[3] == 0
-                            || (self.three_d.emission && self.project.is_glow_color(px))
+                            || (self.project.emission && self.project.is_glow_color(px))
                         {
                             continue;
                         }
@@ -2239,7 +2239,7 @@ impl App {
                     }
                 }
             }
-            if self.three_d.emission
+            if self.project.emission
                 && !self.project.glow_colors.is_empty()
                 && self.project.mesh3d.is_some()
             {
@@ -3178,13 +3178,14 @@ impl App {
                                     &theme,
                                     "Shading",
                                     window_check(
-                                        self.three_d.shading == crate::three_d::Shading::Soft,
+                                        self.project.shading == crate::three_d::Shading::Soft,
                                     ),
                                     true,
                                 )
                                 .clicked()
                                 {
-                                    self.three_d.shading = self.three_d.shading.toggled();
+                                    self.project.shading = self.project.shading.toggled();
+                                    self.active_modified = true;
                                 }
                                 {
                                     use crate::three_d::camera::Projection;
@@ -3230,12 +3231,13 @@ impl App {
                                     ui,
                                     &theme,
                                     "Shadows",
-                                    Some(self.three_d.shadow_mode.label()),
+                                    Some(self.project.shadow_mode.label()),
                                     true,
                                 )
                                 .clicked()
                                 {
-                                    self.three_d.shadow_mode = self.three_d.shadow_mode.next();
+                                    self.project.shadow_mode = self.project.shadow_mode.next();
+                                    self.active_modified = true;
                                     self.canvas_dirty = true;
                                 }
                                 self.dropdown_percent_row(
@@ -3249,24 +3251,26 @@ impl App {
                                     ui,
                                     &theme,
                                     "Ambient occlusion",
-                                    window_check(self.three_d.bake_ao),
+                                    window_check(self.project.bake_ao),
                                     true,
                                 )
                                 .clicked()
                                 {
-                                    self.three_d.bake_ao = !self.three_d.bake_ao;
+                                    self.project.bake_ao = !self.project.bake_ao;
+                                    self.active_modified = true;
                                     self.canvas_dirty = true;
                                 }
                                 if dropdown_row(
                                     ui,
                                     &theme,
                                     "Emission",
-                                    window_check(self.three_d.emission),
+                                    window_check(self.project.emission),
                                     true,
                                 )
                                 .clicked()
                                 {
-                                    self.three_d.emission = !self.three_d.emission;
+                                    self.project.emission = !self.project.emission;
+                                    self.active_modified = true;
                                     self.canvas_dirty = true;
                                 }
                                 self.dropdown_percent_row(
@@ -8630,12 +8634,12 @@ print("FAIL")
                     &cam,
                     rect,
                     atlas,
-                    self.three_d.shading,
+                    self.project.shading,
                 );
                 if let Some(texture) = self.canvas.texture.as_ref() {
                     crate::three_d::render::paint_scene(&painter, &scene, texture.id());
                 }
-                if self.three_d.emission {
+                if self.project.emission {
                     crate::three_d::render::paint_glow_halos(
                         &painter,
                         &scene,

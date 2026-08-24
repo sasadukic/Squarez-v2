@@ -114,9 +114,6 @@ pub struct ThreeDState {
     pub last_paint: Option<(u32, (i64, i64))>,
     /// Wheel/trackpad disambiguation timestamp (same trick as CanvasState).
     pub last_mouse_wheel_time: f64,
-    /// How faces are lit in the viewport. Snapped views always render flat
-    /// so texel colors read true regardless of this setting.
-    pub shading: Shading,
     /// Main window shows the texture for direct 2D painting; the model moves
     /// to the preview panel. Toggled with Tab.
     pub texture_view: bool,
@@ -130,12 +127,8 @@ pub struct ThreeDState {
     /// Live gradient preview texels, baked into the canvas texture by the
     /// app's rebuild alongside shape_preview.
     pub gradient_preview: Vec<(u32, u32, Rgba)>,
-    /// Baked-lighting settings (3D effects menu) and the bake cache
-    /// (key, per-texel channels) — display-only, never in layer data.
-    pub shadow_mode: light::ShadowMode,
-    pub bake_ao: bool,
-    /// Master switch for emissive rendering (halo + light bounce).
-    pub emission: bool,
+    /// Bake cache (key, per-texel channels) — display-only. The lighting
+    /// SETTINGS live on Project so they save with the file.
     pub light_cache: Option<(u64, Vec<light::LightTexel>)>,
     /// The texture exists once its size was chosen (or a painted file was
     /// opened). Until then paint tools prompt for a size instead of drawing.
@@ -154,8 +147,9 @@ pub struct GradientDrag {
     pub end: (f32, f32),
 }
 
-/// Viewport lighting, toggled from the Windows menu.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Viewport lighting, toggled from the 3D effects menu. Saved with the
+/// project.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Shading {
     /// Smooth per-face warm/cool tint (Blender-solid-like).
     Soft,
@@ -187,15 +181,11 @@ impl Default for ThreeDState {
             stroke_painted: std::collections::HashSet::new(),
             last_paint: None,
             last_mouse_wheel_time: 0.0,
-            shading: Shading::Off,
             texture_view: false,
             atlas_prompted: false,
             island_drag: None,
             gradient_drag: None,
             gradient_preview: Vec::new(),
-            shadow_mode: light::ShadowMode::Off,
-            bake_ao: false,
-            emission: true,
             light_cache: None,
             texture_created: false,
             texture_request: false,

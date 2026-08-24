@@ -91,6 +91,26 @@ pub struct Project {
     /// Emission (glow) strength, 0-100: halo alpha and light bounce.
     #[serde(default = "default_emission_intensity")]
     pub emission_intensity: u8,
+    /// Viewport lighting style (3D).
+    #[serde(default = "default_shading")]
+    pub shading: crate::three_d::Shading,
+    /// Cast-shadow mode (3D).
+    #[serde(default)]
+    pub shadow_mode: crate::three_d::light::ShadowMode,
+    /// Ambient occlusion (3D).
+    #[serde(default)]
+    pub bake_ao: bool,
+    /// Emissive rendering master switch (3D).
+    #[serde(default = "default_emission_on")]
+    pub emission: bool,
+}
+
+fn default_shading() -> crate::three_d::Shading {
+    crate::three_d::Shading::Off
+}
+
+fn default_emission_on() -> bool {
+    true
 }
 
 fn default_shadow_intensity() -> u8 {
@@ -142,6 +162,10 @@ impl Project {
             shadow_color: None,
             shadow_intensity: 45,
             emission_intensity: 50,
+            shading: crate::three_d::Shading::Off,
+            shadow_mode: crate::three_d::light::ShadowMode::Off,
+            bake_ao: false,
+            emission: true,
         }
     }
 

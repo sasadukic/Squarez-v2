@@ -13,7 +13,9 @@ use super::mesh::Mesh;
 pub const SUN: [f32; 3] = [-0.394, 0.788, 0.473];
 
 /// Cast-shadow rendering mode (3D effects menu, per tab).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
 pub enum ShadowMode {
     #[default]
     Off,

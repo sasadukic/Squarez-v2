@@ -452,7 +452,7 @@ fn v2_files_load_with_manual_layout_defaulting_off() {
     })
     .unwrap();
     let compressed = lz4_flex::compress_prepend_size(&payload);
-    let path = std::env::temp_dir().join("squarez_v2_mesh.sqr");
+    let path = std::env::temp_dir().join("squarez_v2_manual_layout.sqr");
     let mut bytes = b"SQR\0\x02".to_vec();
     bytes.extend(compressed);
     std::fs::write(&path, bytes).unwrap();
@@ -503,13 +503,25 @@ fn v3_files_load_with_empty_glow_and_v4_roundtrips_glow() {
     p.shadow_color = Some([30, 30, 80, 255]);
     p.shadow_intensity = 70;
     p.emission_intensity = 25;
+    p.shading = squarez::three_d::Shading::Soft;
+    p.shadow_mode = squarez::three_d::light::ShadowMode::Soft;
+    p.bake_ao = true;
+    p.emission = false;
     let path = dir.join("g.sqr");
     squarez::io::sqr::save_sqr(&p, &path).unwrap();
     let loaded = squarez::io::sqr::load_sqr(&path).unwrap();
     assert_eq!(loaded.glow_colors, vec![[255, 0, 200, 255]], "v6 roundtrip keeps glow");
     assert_eq!(loaded.shadow_color, Some([30, 30, 80, 255]), "v6 keeps the shadow color");
-    assert_eq!(loaded.shadow_intensity, 70, "v6 keeps shadow intensity");
-    assert_eq!(loaded.emission_intensity, 25, "v6 keeps emission intensity");
+    assert_eq!(loaded.shadow_intensity, 70, "v7 keeps shadow intensity");
+    assert_eq!(loaded.emission_intensity, 25, "v7 keeps emission intensity");
+    assert_eq!(loaded.shading, squarez::three_d::Shading::Soft, "v7 keeps shading");
+    assert_eq!(
+        loaded.shadow_mode,
+        squarez::three_d::light::ShadowMode::Soft,
+        "v7 keeps the shadow mode"
+    );
+    assert!(loaded.bake_ao, "v7 keeps AO");
+    assert!(!loaded.emission, "v7 keeps the emission switch");
 
     // A REAL v5 payload (separate shadow/AO colors) written via a test-side
     // mirror: an old ao_color must fold into the unified shadow color when
@@ -572,7 +584,7 @@ fn v3_files_load_with_empty_glow_and_v4_roundtrips_glow() {
     );
     assert_eq!(loaded.shadow_intensity, 45, "v5 files get the default intensity");
 
-    assert_eq!(std::fs::read(&path).unwrap()[4], 6, "current files are v6");
+    assert_eq!(std::fs::read(&path).unwrap()[4], 7, "current files are v7");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
